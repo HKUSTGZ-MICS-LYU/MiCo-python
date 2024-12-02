@@ -18,6 +18,7 @@ from tqdm import tqdm
 
 from MiCoUtils import (
     list_qlayers,
+    list_quantize_layers,
     replace_quantize_layers,
     set_to_qforward
 )
@@ -48,8 +49,12 @@ class MiCoSearch:
         random.seed(seed)
         np.random.seed(seed)
 
+        self.n_layers = len(list_quantize_layers(model))
+        replace_quantize_layers(model, 
+                                [8] * self.n_layers, 
+                                [8] * self.n_layers, 
+                                quant_aware=False)
         self.layers = list_qlayers(model)
-        self.n_layers = len(self.layers)
         self.space_size = len(self.layer_q) ** self.n_layers
         assert self.n_layers > 0, "No QLayer found! Please convert the model first."
         self.layer_macs = [layer.get_mac() for layer in self.layers]
@@ -100,7 +105,7 @@ class MiCoSearch:
         return samples
     
     def fixed_grid_sample(self, n_sample = 1):
-        assert n_sample >= len(self.wq_types), "we need at least 3 samples to cover cases"
+        assert n_sample >= len(self.wq_types), f"we need at least {len(self.wq_types)} samples to cover cases"
         samples = []
 
         # Unified Quantization Data
@@ -110,6 +115,8 @@ class MiCoSearch:
         
         constr_q = [q for q in self.layer_q if (q[0] <= q[1])]
         remain = n_sample - len(samples)
+        if remain <= 0:
+            return samples
         n_qlayers = self.n_layers // remain + 1
         all_layers = []
         while remain > 0:
@@ -197,7 +204,6 @@ class MiCoSearch:
         if epochs is None:
             epochs = self.epochs
         wq = copy.deepcopy(qscheme[0])
-        wq = [f"{int(w)}b" if w != 1.58 else "1.5b" for w in wq]
         aq = copy.deepcopy(qscheme[1])
         checkpoint = torch.load(self.pretrained_model)
         self.model.load_state_dict(checkpoint)
@@ -211,7 +217,6 @@ class MiCoSearch:
     
     def get_ptq_accuracy(self, qscheme, verbose=False):
         wq = copy.deepcopy(qscheme[0])
-        wq = [f"{int(w)}b" if w != 1.58 else "1.5b" for w in wq]
         aq = copy.deepcopy(qscheme[1])
         checkpoint = torch.load(self.pretrained_model)
         self.model.load_state_dict(checkpoint)
@@ -412,7 +417,7 @@ class MiCoSearch:
         for layer in tqdm(self.layers):
             layer_l2_error = {}
             for qbit in self.wq_types:
-                layer.qtype = f"{qbit}b"
+                layer.qtype = qbit
                 weights = layer.weight.data
                 qweights = layer.weight_quant(weights)
                 l2_norm = torch.norm(qweights - weights, p=2).item()

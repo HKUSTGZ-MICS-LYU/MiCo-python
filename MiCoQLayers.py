@@ -4,7 +4,7 @@ import torch.nn.utils.fusion as fusion
 import torch.nn.functional as F
 import copy
 
-DEFAULT_W_Q = "8b"
+DEFAULT_W_Q =8
 DEFAULT_ACT_Q = 8
 
 def activation_nquant(x: torch.Tensor, qbit = 8):
@@ -67,21 +67,13 @@ def weight_quantnb(w: torch.Tensor, qbit = 8, mode = "max"):
     u = (w * scale).round().clamp_(-(2**(qbit-1)), 2**(qbit-1) - 1)
     return u, 1/scale
 
-def weight_quant(w: torch.Tensor, qtype = "8b", mode = "max"):
-    if qtype == "1b":
+def weight_quant(w: torch.Tensor, qtype, mode = "max"):
+    if qtype == 1:
         u,s = weight_quant1b(w)
-    elif (qtype == "1.5b") or (qtype == "1.58b"):
+    elif (qtype >= 1.5) and (qtype < 2):
         u,s = weight_quant158b(w)
-    elif qtype == "2b":
-        u,s = weight_quantnb(w, 2, mode=mode)
-    elif qtype == "4b":
-        u,s = weight_quantnb(w, 4, mode=mode)
-    elif qtype == "8b":
-        u,s = weight_quantnb(w, 8, mode=mode)
-    # Here are some uncommon unaligned types
-    elif qtype.endswith('b'):
-        qbit = int(qtype[:-1])
-        u,s = weight_quantnb(w, qbit, mode=mode)
+    elif qtype >= 2:
+        u,s = weight_quantnb(w, int(qtype), mode=mode)
     else:
         raise ValueError("Invalid quantization type")
     return u,s

@@ -1,10 +1,10 @@
-from MiCoSearch import MPQSearch
+from MiCoSearch import MiCoSearch
 
 from gekko import GEKKO
 
 # Edge-MPQ Baseline NLP Searcher
 class NLPSearcher:
-    def __init__(self, search: MPQSearch, qbits: list) -> None:
+    def __init__(self, search: MiCoSearch, qbits: list) -> None:
         self.mpq = search
         self.qbits = qbits
         self.layer_macs = self.mpq.layer_macs

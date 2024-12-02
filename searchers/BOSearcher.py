@@ -25,15 +25,14 @@ from gpytorch.kernels.scale_kernel import ScaleKernel
 from gpytorch.kernels.matern_kernel import MaternKernel
 from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikelihood
 
-from MiCoSearch import MPQSearch
+from MiCoSearch import MiCoSearch
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_RESTARTS = 10
 
 class MiCoBOSearcher:
-    def __init__(self, search: MPQSearch, qbits: list) -> None:
+    def __init__(self, search: MiCoSearch) -> None:
         self.mpq = search
-        self.qbits = qbits
         self.layer_macs = self.mpq.layer_macs
         self.layer_params = self.mpq.layer_params
         self.n_layers = self.mpq.n_layers
@@ -142,5 +141,5 @@ class MiCoBOSearcher:
         # QAT on Best Scheme
         res = self.mpq.eval_scheme(best_scheme, verbose=True, ptq=ptq)
         best_name = self.mpq.get_scheme_str(best_scheme)
-        print("QAT Results: ", res)
+        print("Final Results: ", res)
         return {best_name: res}, trace

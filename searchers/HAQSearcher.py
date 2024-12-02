@@ -1,4 +1,4 @@
-from MiCoSearch import MPQSearch
+from MiCoSearch import MiCoSearch
 
 import math
 import torch
@@ -10,7 +10,7 @@ from copy import deepcopy
 from searchers.DDPG import DDPG
 
 class HAQSearcher:
-    def __init__(self, search: MPQSearch, qbits: list, seed, org_acc) -> None:
+    def __init__(self, search: MiCoSearch, qbits: list, seed, org_acc) -> None:
         self.mpq = search
         self.qbits = qbits
         self.layer_macs = self.mpq.layer_macs
@@ -238,4 +238,4 @@ class HAQSearcher:
                 value_loss = self.agent.get_value_loss()
                 policy_loss = self.agent.get_policy_loss()
                 delta = self.agent.get_delta()
-        return self.best_res
+        return self.best_res, None

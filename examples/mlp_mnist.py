@@ -2,10 +2,6 @@ import json
 import torch
 import numpy as np
 
-from torch.utils.data import DataLoader
-from torchvision import datasets, transforms
-from torch.utils.data import ConcatDataset
-
 from models import MLP
 from MiCoUtils import (
     list_quantize_layers, 
@@ -35,7 +31,7 @@ if __name__ == "__main__":
     model = MLP(in_features=256, config=config).to(device)
     n_layers = len(list_quantize_layers(model))
     print("Number of Quantizable Layers: ", n_layers)
-    weight_q = ["8b"] * n_layers
+    weight_q = [8] * n_layers
     activation_q = [8] * n_layers
     replace_quantize_layers(model, weight_q, activation_q, 
         quant_aware=False, device=device)
