@@ -1,0 +1,6 @@
+__pycache__
+data
+
+output/json/*.json
+output/ckpt/*.pth
+output/bin/*.bin
