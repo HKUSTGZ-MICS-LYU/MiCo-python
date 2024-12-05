@@ -1,5 +1,5 @@
 from models.MLP import MLP
-from models.LeNet import LeNet
+from models.LeNet import LeNet, LeNetBN
 from models.ResNet import ResNet8, ResNet18, ResNet34
 from models.ResNetAlt import resnet_alt_18, resnet_alt_34
 from models.MobileNetV2 import MobileNetV2

@@ -89,7 +89,7 @@ class SimpleRMSNorm(nn.Module):
 
 class BitLinear(nn.Linear):
 
-    def __init__(self, in_features: int, out_features: int, bias: bool = False, 
+    def __init__(self, in_features: int, out_features: int, bias: bool = True, 
                  device=None, dtype=None,
                  qat = False,
                  use_norm = False,
@@ -137,16 +137,16 @@ class BitLinear(nn.Linear):
             x_norm = SimpleRMSNorm(self.in_features)(x) if self.use_norm else x
             x_quant = x_norm + (activation_nquant(x_norm, self.act_q) - x_norm).detach()
             w_quant = w + (self.weight_quant(w) - w).detach()
-            y = F.linear(x_quant, w_quant)
+            y = F.linear(x_quant, w_quant, bias=self.bias)
             return y
         elif self.qforward is True:
             # Forward with Post Training Quantization (PTQ)
             # Only for inference
             qx = activation_nquant(x, self.act_q)
-            y = F.linear(qx, self.qw) * self.qw_scale
+            y = F.linear(qx, self.qw, bias=self.bias) * self.qw_scale
             return y
         else:
-            return F.linear(x, w)
+            return F.linear(x, w, bias=self.bias)
 
 
 class BitConv2d(nn.Conv2d):
@@ -156,7 +156,7 @@ class BitConv2d(nn.Conv2d):
                  stride = 1, 
                  padding = 0, 
                  dilation = 1, 
-                 groups= 1, bias = False, 
+                 groups= 1, bias = True, 
                  padding_mode: str = 'zeros', 
                  device=None, dtype=None,
                  qat = False,
@@ -228,16 +228,16 @@ class BitConv2d(nn.Conv2d):
             x_norm = self.rmsnorm(x) if self.use_norm else x
             x_quant = x_norm + (activation_nquant_2d(x_norm, self.act_q) - x_norm).detach()
             w_quant = w + (self.weight_quant(w) - w).detach()
-            y = F.conv2d(x_quant, w_quant, None, self.stride, self.padding, 
+            y = F.conv2d(x_quant, w_quant, self.bias, self.stride, self.padding, 
                         self.dilation, self.groups)
             return y
         elif self.qforward:
             # Forward with Post Training Quantization (PTQ)
             # Only for inference
             qx = activation_nquant_2d(x, self.act_q)
-            y = F.conv2d(qx, self.qw, None, self.stride, self.padding, 
+            y = F.conv2d(qx, self.qw, self.bias, self.stride, self.padding, 
                         self.dilation, self.groups) * self.qw_scale
             return y
         else:
-            return F.conv2d(x, w, None, self.stride, self.padding, 
+            return F.conv2d(x, w, self.bias, self.stride, self.padding, 
                     self.dilation, self.groups)

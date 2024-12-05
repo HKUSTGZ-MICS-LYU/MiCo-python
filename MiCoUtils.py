@@ -1,7 +1,9 @@
 from MiCoQLayers import BitLinear, BitConv2d
 
+import copy
 import torch
 import torch.nn as nn
+import torch.nn.utils.fusion as fusion
 
 def list_quantize_layers(model: nn.Module):
     layers = []
@@ -38,26 +40,33 @@ def replace_quantize_layers(model: nn.Module,
                             use_norm = False,
                             use_bias = False,
                             device=None):
+    
+    wlist = copy.deepcopy(weight_types_list)
+    alist = copy.deepcopy(act_types_list)
+
     for name, module in model.named_children():
         if isinstance(module, nn.Linear):
-            weight_type = weight_types_list.pop(0)
-            act_type = act_types_list.pop(0)
+            weight_type = wlist.pop(0)
+            act_type = alist.pop(0)
             weights = module.weight
-            bias = module.bias if use_bias else None
+            bias = module.bias
+            has_bias = True if (use_bias) and (module.bias is not None) else False
             setattr(
                 model, name,
-                BitLinear(module.in_features, module.out_features, bias=use_bias,
+                BitLinear(module.in_features, module.out_features, bias=has_bias,
                           qtype = weight_type, act_q = act_type, 
                           qat = quant_aware, use_norm=use_norm,
                           device=device)
             )
             getattr(model, name).weight = weights
             getattr(model, name).bias = bias
+
         elif isinstance(module, nn.Conv2d):
-            weight_type = weight_types_list.pop(0)
-            act_type = act_types_list.pop(0)
+            weight_type = wlist.pop(0)
+            act_type = alist.pop(0)
             weights = module.weight
-            bias = module.bias if use_bias else None
+            bias = module.bias
+            has_bias = True if (use_bias) and (module.bias is not None) else False
             setattr(
                 model, name,
                 BitConv2d(module.in_channels, module.out_channels, module.kernel_size, 
@@ -70,26 +79,8 @@ def replace_quantize_layers(model: nn.Module,
             getattr(model, name).bias = bias
         else:
             replace_quantize_layers(module, weight_types_list, act_types_list, 
-                                    quant_aware=quant_aware, device=device)
-    return
-
-# Note: this function will clear the weight_types_list and act_types_list
-def renew_quantize_layers(model: nn.Module,
-                            weight_types_list: list, 
-                            act_types_list: list,
-                            quant_aware = False,
-                            device=None):
-    for name, module in model.named_children():
-        if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
-            weight_type = weight_types_list.pop(0)
-            act_type = act_types_list.pop(0)
-            module.qat = quant_aware
-            module.qtype = weight_type
-            module.act_q = act_type
-            module.save_qweight()
-        else:
-            renew_quantize_layers(module, weight_types_list, act_types_list, 
-                                    quant_aware=quant_aware, device=device)     
+                                    quant_aware=quant_aware, device=device, 
+                                    use_norm=use_norm, use_bias=use_bias)
     return
 
 def set_to_qforward(model: nn.Module):
@@ -153,3 +144,10 @@ def export_layer_weights(model: nn.Module):
             if sub_data != {}:
                 data[name] = sub_data
     return data
+    
+def fuse_bitconv_bn(conv: BitConv2d, bn: nn.BatchNorm2d):
+
+    fused = fusion.fuse_conv_bn_eval(conv, bn)
+    conv.weight = fused.weight
+    conv.bias = fused.bias
+    return
