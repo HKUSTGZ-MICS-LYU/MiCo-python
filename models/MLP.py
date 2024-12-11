@@ -18,7 +18,7 @@ class MLP(MiCoModel):
         layers = []
         in_shape = in_features
         for layer_width in config["Layers"]:
-            layers.append(nn.Linear(in_shape, layer_width, bias=False))
+            layers.append(nn.Linear(in_shape, layer_width))
             layers.append(nn.ReLU())
             in_shape = layer_width
         layers.pop() # remove last ReLU

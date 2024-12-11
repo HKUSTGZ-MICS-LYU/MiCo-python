@@ -107,6 +107,9 @@ class BitLinear(nn.Linear):
         self.qforward = False
         super().__init__(in_features, out_features, bias, device, dtype)
 
+    def get_bops(self):
+        return self.get_mac() * self.qtype * self.act_q
+    
     def get_mac(self):
         return self.in_features * self.out_features
     
@@ -129,6 +132,7 @@ class BitLinear(nn.Linear):
                 "Scale": self.qw_scale.item(), 
                 "Weight": self.qw.cpu().tolist()}
     
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         w = self.weight
         if self.qat:
@@ -181,6 +185,9 @@ class BitConv2d(nn.Conv2d):
 
         self.in_w = None
         self.in_h = None
+
+    def get_bops(self):
+        return self.macs * self.qtype * self.act_q
 
     def get_mac(self):
         return self.macs

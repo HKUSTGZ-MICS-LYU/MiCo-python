@@ -45,7 +45,7 @@ class LeNetBN(MiCoModel):
         self.in_channels = in_channels
 
         layers = [
-            nn.Conv2d(in_channels, 6, (5,5), padding=2, bias=False),
+            nn.Conv2d(in_channels, 6, (5,5), padding=2),
             nn.ReLU(),
             nn.AvgPool2d((2,2), stride=2),
             nn.Conv2d(6, 16, (5,5)),

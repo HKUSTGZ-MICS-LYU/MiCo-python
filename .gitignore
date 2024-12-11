@@ -4,3 +4,4 @@ data
 output/json/*.json
 output/ckpt/*.pth
 output/bin/*.bin
+output/tvm/*
