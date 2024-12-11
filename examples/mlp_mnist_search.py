@@ -8,7 +8,7 @@ from MiCoUtils import (
 )
 from datasets import mnist
 from MiCoSearch import MiCoSearch
-from searchers import MiCoBOSearcher
+from searchers import MiCoBOSearcher, NLPSearcher
 
 
 from tqdm import tqdm
@@ -55,4 +55,14 @@ if __name__ == "__main__":
     )
 
     print("Baseline (8b) Results:", baseline_res)
-    print("Best Results:", best_res)
+    print("Best Results (BO):", best_res)
+
+    searcher = NLPSearcher(search, qbits=wq_types)
+
+    best_res = searcher.search(
+        constr_bops=constr_bops,
+        ptq=True,
+        use_max_q=True
+    )
+
+    print("Best Results (NLP):", best_res)
