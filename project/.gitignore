@@ -1,5 +1,6 @@
-main
 build
+
+main.elf
 
 model.bin
 model.h

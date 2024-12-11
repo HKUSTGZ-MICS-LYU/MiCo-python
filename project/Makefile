@@ -6,7 +6,7 @@ MICO_DIR = MiCo-Lib
 CC = gcc
 # CC = clang
 
-MICO_INCLUDES = $(MICO_DIR)/include
+MICO_INCLUDES = $(MICO_DIR)/include $(MICO_DIR)/test
 MICO_SOURCES = $(wildcard $(MICO_DIR)/src/*.c)
 
 CFLAGS = -O3
@@ -23,7 +23,8 @@ OBJS := $(addprefix $(BUILD)/,$(OBJS))
 
 $(BUILD)/%.o: %.c
 	@mkdir -p $(dir $@)
-	$(CC) $(CFLAGS) -c -o $@ $< $(addprefix -I,$(INCLUDES))
+	@echo "Compiling Source File ($<)..."
+	@$(CC) $(CFLAGS) -c -o $@ $< $(addprefix -I,$(INCLUDES))
 
 $(BUILD):
 	mkdir -p $(BUILD)
@@ -31,9 +32,6 @@ $(BUILD):
 clean:
 	rm -rf $(BUILD)
 
-build-x86: $(OBJS) $(MAIN).c
-	$(CC) $(CFLAGS) -o $(MAIN) $(OBJS) $(MAIN).c $(addprefix -I,$(INCLUDES)) $(LDFLAGS)
-
-build-rv:
-
-run-x86:
+compile: $(OBJS) $(MAIN).c
+	@echo "Linking Executable (main)..."
+	@$(CC) $(CFLAGS) -o $(MAIN).elf $(OBJS) $(MAIN).c $(addprefix -I,$(INCLUDES)) $(LDFLAGS)

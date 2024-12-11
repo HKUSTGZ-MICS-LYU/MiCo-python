@@ -35,6 +35,7 @@ class MiCoCodeGen(torch.fx.Interpreter):
 #define __MODEL_H
 
 #include "nn.h"
+#include "mico_nn.h"
 
 // load the weight data block from the {model_name}.bin file
 INCLUDE_FILE(".rodata", "./{model_name}.bin", model_weight);
@@ -185,22 +186,25 @@ void model_forward(Model* model) {{
         
         return getattr(self.model, module_name)
 
-    def add_uninitialized_tensor(self, name: str, tensor: torch.Tensor):
+    def add_uninitialized_tensor(self, name: str, tensor: torch.Tensor, quant = 0):
         """
         Add an uninitialized tensor to the C code.
         """
         self.tensors[name] = {
             "tensor": tensor,
-            "initialized": False
+            "initialized": False,
+            "quantized" : quant
         }
     
-    def add_initialized_tensor(self, name: str, tensor: torch.Tensor):
+    def add_initialized_tensor(self, name: str, tensor: torch.Tensor, quant = 0, scale = 0.0):
         """
         Add an initialized tensor to the C code.
         """
         self.tensors[name] = {
             "tensor": tensor,
-            "initialized": True
+            "initialized": True,
+            "quantized" : quant,
+            "scale" : scale
         }
 
     def add_forward_call(self, function_name: str, out: torch.Tensor, layer_name: str, input_names: List[str], parameters: List[str] = None):
@@ -286,6 +290,10 @@ void model_forward(Model* model) {{
             self.add_initialized_tensor(f"{input_names[2]}", bias)
             self.add_forward_call("MiCo_addmm_{dtype}", out, layer_name, input_names)
         
+        elif function == torch.flatten:
+            self.add_uninitialized_tensor(layer_name, out)
+            self.add_forward_call("MiCo_flatten{dim}d_{dtype}", out, layer_name, input_names)
+
         # elif function == torch.cat:
         #     self.add_uninitialized_tensor(layer_name, out)
         #     self.add_forward_call("MiCo_concat", out, layer_name, input_names)
@@ -309,8 +317,9 @@ void model_forward(Model* model) {{
             input_names.append(f"{layer_name}_bias")
 
             self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{layer_name}_weight", module.weight)
-            self.add_initialized_tensor(f"{layer_name}_bias", module.bias)
+            self.add_initialized_tensor(f"{layer_name}_weight", weight, 
+                                        quant=module.qtype, scale=module.qw_scale)
+            self.add_initialized_tensor(f"{layer_name}_bias", bias)
 
             self.add_forward_call("MiCo_bitconv2d_{dtype}", out, layer_name, input_names, [
                 module.qtype,
@@ -327,7 +336,8 @@ void model_forward(Model* model) {{
             input_names.append(f"{layer_name}_bias")
 
             self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{layer_name}_weight", weight)
+            self.add_initialized_tensor(f"{layer_name}_weight", weight, 
+                                        quant=module.qtype, scale=module.qw_scale)
             self.add_initialized_tensor(f"{layer_name}_bias", bias)
 
             self.add_forward_call("MiCo_bitlinear_{dtype}", out, layer_name, input_names, [module.qtype, module.act_q])
@@ -377,11 +387,23 @@ void model_forward(Model* model) {{
         # Pooling Functions
         elif type(module) is torch.nn.AvgPool2d:
             self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names)
-        
+            if isinstance(module.kernel_size, Tuple):
+                kernel_size = module.kernel_size[0]
+            elif isinstance(module.kernel_size, int):
+                kernel_size = module.kernel_size
+            self.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
+                                  [kernel_size, module.stride])
+        elif type(module) is torch.nn.MaxPool2d:
+            if isinstance(module.kernel_size, Tuple):
+                kernel_size = module.kernel_size[0]
+            elif isinstance(module.kernel_size, int):
+                kernel_size = module.kernel_size
+            self.add_uninitialized_tensor(layer_name, out)
+            self.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
+                                  [kernel_size, module.stride])
         # Flatten Functions
         elif type(module) is torch.nn.Flatten:
-            self.add_uninitialized_tensor(layer_name, out)
+            self.add_initialized_tensor(layer_name, out)
             self.add_forward_call("MiCo_flatten{dim}d_{dtype}", out, layer_name, input_names)
         # Linear Layers
         elif type(module) is torch.nn.Linear:
@@ -394,6 +416,11 @@ void model_forward(Model* model) {{
             self.add_initialized_tensor(f"{layer_name}_weight", weight)
             self.add_initialized_tensor(f"{layer_name}_bias", bias)
             self.add_forward_call("MiCo_linear_{dtype}", out, layer_name, input_names)
+        # Identity Layers
+        elif isinstance(module, (torch.nn.Identity, torch.nn.Dropout)):
+            self.add_initialized_tensor(layer_name, out)
+            self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
+
 
     def handle_output(self, n: torch.fx.node.Node, out: torch.Tensor):
         print("output:", n.name, out.shape, out.dtype)
@@ -435,21 +462,33 @@ void model_forward(Model* model) {{
             raise ValueError("No example inputs provided. Please call forward() at least once.")
 
         # === Generate the tensor structs and initialize routines for the tensors in the C code. ===
-        for name, tensor in self.tensors.items():
-            initialized = tensor["initialized"]
-            tensor = tensor["tensor"]
+        for name, tensor_dict in self.tensors.items():
+            initialized = tensor_dict["initialized"]
+            quantized = tensor_dict["quantized"]
+            tensor = tensor_dict["tensor"]
 
             if tensor is not None:
                 dim = tensor.dim()
-                dtype_str = MiCoCodeGen.get_dtype_str(tensor.dtype)
+                if quantized == 0:
+                    dtype_str = MiCoCodeGen.get_dtype_str(tensor.dtype)
+                else:
+                    dtype_str = f"Q{quantized}"
                 self.model_struct.append(f"Tensor{dim}D_{dtype_str} {name};")
 
                 for i in range(dim):
                     self.model_init.append(f"model->{name}.shape[{i}] = {tensor.shape[i]};")
 
                 if initialized:
-                    self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
-                    self.weight_content += tensor.detach().numpy().tobytes()
+                    if quantized == 0:
+                        self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
+                        self.weight_content += tensor.detach().numpy().tobytes()
+                    else:
+                        # TODO： Modify this part
+                        scale = tensor_dict["scale"]
+                        self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
+                        self.weight_content += tensor.detach().numpy().tobytes()
+                        self.model_init.append(f"model->{name}.scale = {scale};")
+
                 else:
                     n_size = tensor.nelement() * tensor.element_size()
                     self.model_init.append(f"model->{name}.data = (float *)malloc({n_size});")
@@ -506,28 +545,38 @@ if __name__ == "__main__":
     import torch.nn as nn
     import torch.nn.functional as F
     import MiCoUtils as mico
-    # from models import LeNet
+    from models import MLP, LeNet, CmsisCNN, VGG
 
     torch.manual_seed(0)
 
-    m = nn.Sequential(
-        nn.Linear(28*28, 128),
-        nn.ReLU(),
-        nn.Linear(128, 64),
-        nn.ReLU(),
-        nn.Linear(64, 10)
-    )
+    # example_input = torch.randn(1, 256)
+    # example_input = torch.randn(1, 1, 28, 28)
+    example_input = torch.randn(1, 3, 32, 32)
+
+    # config = {
+    #     "Layers": [64, 64, 64, 10],
+    # }
+    # m = MLP(in_features=256, config=config)
+    # ckpt = torch.load("output/ckpt/mlp_mnist.pth")
+
+    # m = LeNet(1)
+    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+
+    m = CmsisCNN(in_channels=3)
+    ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
+
+    # m = VGG(in_channels=3, num_class=10)
+
+    m.load_state_dict(ckpt)
     # mico.replace_quantize_layers(m, 
     #                             [8]*m.n_layers, 
     #                             [8]*m.n_layers, 
     #                             quant_aware=False,
     #                             use_bias=True)
-
+    # mico.set_to_qforward(m)
     m.eval()
 
     m = MiCoCodeGen(m)
-
-    example_input = torch.randn(1, 28*28)
 
     m.forward(example_input)
     m.print_graph()

@@ -242,8 +242,8 @@ class BitConv2d(nn.Conv2d):
             # Forward with Post Training Quantization (PTQ)
             # Only for inference
             qx = activation_nquant_2d(x, self.act_q)
-            y = F.conv2d(qx, self.qw, self.bias, self.stride, self.padding, 
-                        self.dilation, self.groups) * self.qw_scale
+            y = F.conv2d(qx, self.qw * self.qw_scale, self.bias, self.stride, self.padding, 
+                        self.dilation, self.groups)
             return y
         else:
             return F.conv2d(x, w, self.bias, self.stride, self.padding, 

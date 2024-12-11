@@ -16,17 +16,17 @@ class CmsisCNN(MiCoModel):
         self.in_channels = in_channels
 
         layers = [
-            nn.Conv2d(in_channels, 32, (5,5), padding=2, bias=False),
+            nn.Conv2d(in_channels, 32, (5,5), padding=2),
             nn.ReLU(),
-            nn.MaxPool2d(2,2),
-            nn.Conv2d(32, 32, (5,5), padding=2, bias=False),
+            nn.MaxPool2d((2,2),2),
+            nn.Conv2d(32, 32, (5,5), padding=2),
             nn.ReLU(),
-            nn.MaxPool2d(2,2),
-            nn.Conv2d(32, 64, (5,5), padding=2, bias=False),
+            nn.MaxPool2d((2,2),2),
+            nn.Conv2d(32, 64, (5,5), padding=2),
             nn.ReLU(),
-            nn.MaxPool2d(2,2),
+            nn.MaxPool2d((2,2),2),
             nn.Flatten(),
-            nn.Linear(1024, 10, bias=False),
+            nn.Linear(1024, 10),
         ]
         self.layers = nn.Sequential(*layers)
         self.n_layers = 4 # 3 conv2d + 1 linear

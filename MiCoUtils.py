@@ -71,7 +71,7 @@ def replace_quantize_layers(model: nn.Module,
                 model, name,
                 BitConv2d(module.in_channels, module.out_channels, module.kernel_size, 
                           module.stride, module.padding, module.dilation, module.groups, 
-                          bias = use_bias, qtype = weight_type, act_q = act_type,
+                          bias = has_bias, qtype = weight_type, act_q = act_type,
                           qat = quant_aware, use_norm=use_norm,
                           device=device)
             )

@@ -2,21 +2,21 @@ import json
 import torch
 import numpy as np
 
-from models import LeNetBN, LeNet
+from models import CmsisCNN
 from MiCoUtils import (
     list_quantize_layers, 
     replace_quantize_layers,
     set_to_qforward,
     export_layer_weights
 )
-from datasets import mnist
+from datasets import cifar10
 
 from tqdm import tqdm
 
-num_epoch = 1
+num_epoch = 5
 batch_size = 64
 
-model_name = "lenet_mnist"
+model_name = "cmsiscnn_cifar10"
 
 torch.manual_seed(0)
 torch.cuda.manual_seed(0)
@@ -26,7 +26,7 @@ if __name__ == "__main__":
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Using Device", device)
 
-    model = LeNet(in_channels=1).to(device)
+    model = CmsisCNN(in_channels=3).to(device)
     n_layers = len(list_quantize_layers(model))
     print("Number of Quantizable Layers: ", n_layers)
     weight_q = [8] * n_layers
@@ -34,9 +34,7 @@ if __name__ == "__main__":
     replace_quantize_layers(model, weight_q, activation_q, 
         quant_aware=False, device=device, use_bias=True)
 
-    train_loader, test_loader = mnist(batch_size=batch_size, num_works=0, resize=28)
-
-    # Training
+    train_loader, test_loader = cifar10(batch_size=batch_size, num_works=0)
     res = model.train_loop(num_epoch, train_loader, test_loader, verbose=True)
     torch.save(model.state_dict(), f'output/ckpt/{model_name}.pth')
     print("Model Results: ", res)
