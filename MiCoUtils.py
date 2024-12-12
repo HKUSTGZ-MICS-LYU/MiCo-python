@@ -1,6 +1,7 @@
 from MiCoQLayers import BitLinear, BitConv2d
 
 import copy
+import struct
 import torch
 import torch.nn as nn
 import torch.nn.utils.fusion as fusion
@@ -151,3 +152,54 @@ def fuse_bitconv_bn(conv: BitConv2d, bn: nn.BatchNorm2d):
     conv.weight = fused.weight
     conv.bias = fused.bias
     return
+
+
+def weight_export(weight, qtype):
+    if qtype == 8:
+        return struct.pack(f'{len(weight)}b', *weight)
+    elif qtype == 4:
+        data = []
+        num_loop = len(weight) // 2
+        for i in range(num_loop):
+            w = ((weight[i*2+1] & 0xF) << 4) | (weight[i*2] & 0xF)
+            data.append(w)
+        if len(weight) % 2 == 1:
+            w = weight[-1] & 0xF
+            data.append(w)
+    elif (qtype <=2) and (qtype > 1):
+        data = []
+        num_loop = len(weight) // 4
+        for i in range(num_loop):
+            w = (weight[i*4] & 0x3) | \
+                ((weight[i*4+1] & 0x3) << 2) | \
+                ((weight[i*4+2] & 0x3) << 4) | \
+                ((weight[i*4+3] & 0x3) << 6)
+            data.append(w)
+        rem = len(weight) % 4
+        w = 0
+        if rem != 0:
+            for i in range(rem):
+                w |= (weight[-rem+i] & 0x3) << (i*2)
+            data.append(w)
+    # elif qtype == "1.5b":
+        # TODO: 1.58-bit compression, 5 weights in 8-bit
+        # pass
+    elif qtype == 1:
+        data = []
+        num_loop = len(weight) // 8
+        for i in range(num_loop):
+            binary = ""
+            for b in range(8):
+                binary += "1" if weight[i*8+b] < 0 else "0"
+            data.append(int(binary[::-1], 2))
+        rem = len(weight) % 8
+        if rem != 0:
+            binary = ""
+            for b in range(rem):
+                binary += "1" if weight[-rem+b] < 0 else "0"
+            for b in range(8-rem):
+                binary += "0"
+            data.append(int(binary[::-1], 2))
+    else:
+        raise NotImplementedError
+    return struct.pack(f'{len(data)}B', *data)

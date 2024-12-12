@@ -10,7 +10,8 @@ import torch.fx
 import jinja2
 import tabulate
 
-from MiCoQLayers import BitConv2d, BitLinear
+from MiCoQLayers import BitConv2d, BitLinear, weight_quant
+from MiCoUtils import weight_export
 
 '''
 Modified Trace Module to Support BitConv2d and BitLinear
@@ -254,7 +255,8 @@ void model_forward(Model* model) {{
         # get all the related information
         function = n.target
         layer_name = n.name
-        input_names = [n.name for n in self.node_info[n.name][0]]
+        input_names = [n.name for n in self.node_info[n.name][0] \
+                       if type(n) is not int]
         input_args = n.args
         
         # Math operations - Pointwise Ops
@@ -291,9 +293,9 @@ void model_forward(Model* model) {{
             self.add_forward_call("MiCo_addmm_{dtype}", out, layer_name, input_names)
         
         elif function == torch.flatten:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_flatten{dim}d_{dtype}", out, layer_name, input_names)
-
+            self.add_initialized_tensor(layer_name, out)
+            self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
+        
         # elif function == torch.cat:
         #     self.add_uninitialized_tensor(layer_name, out)
         #     self.add_forward_call("MiCo_concat", out, layer_name, input_names)
@@ -464,31 +466,31 @@ void model_forward(Model* model) {{
         # === Generate the tensor structs and initialize routines for the tensors in the C code. ===
         for name, tensor_dict in self.tensors.items():
             initialized = tensor_dict["initialized"]
-            quantized = tensor_dict["quantized"]
+            qbit = tensor_dict["quantized"]
             tensor = tensor_dict["tensor"]
 
             if tensor is not None:
                 dim = tensor.dim()
-                if quantized == 0:
+                if qbit == 0:
                     dtype_str = MiCoCodeGen.get_dtype_str(tensor.dtype)
                 else:
-                    dtype_str = f"Q{quantized}"
+                    dtype_str = f"Q{qbit}"
                 self.model_struct.append(f"Tensor{dim}D_{dtype_str} {name};")
 
                 for i in range(dim):
                     self.model_init.append(f"model->{name}.shape[{i}] = {tensor.shape[i]};")
 
                 if initialized:
-                    if quantized == 0:
+                    if qbit == 0:
                         self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
                         self.weight_content += tensor.detach().numpy().tobytes()
                     else:
                         # TODO： Modify this part
-                        scale = tensor_dict["scale"]
-                        self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
-                        self.weight_content += tensor.detach().numpy().tobytes()
+                        qweight, scale = weight_quant(tensor, qbit)
+                        self.model_init.append(f"model->{name}.data = (qbyte *)(model_weight_data + {len(self.weight_content)});")
+                        self.weight_content += weight_export(
+                            qweight.flatten().cpu().to(dtype=int).tolist(), qbit)
                         self.model_init.append(f"model->{name}.scale = {scale};")
-
                 else:
                     n_size = tensor.nelement() * tensor.element_size()
                     self.model_init.append(f"model->{name}.data = (float *)malloc({n_size});")
@@ -549,21 +551,21 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    # example_input = torch.randn(1, 256)
+    example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    example_input = torch.randn(1, 3, 32, 32)
+    # example_input = torch.randn(1, 3, 32, 32)
 
-    # config = {
-    #     "Layers": [64, 64, 64, 10],
-    # }
-    # m = MLP(in_features=256, config=config)
-    # ckpt = torch.load("output/ckpt/mlp_mnist.pth")
+    config = {
+        "Layers": [64, 64, 64, 10],
+    }
+    m = MLP(in_features=256, config=config)
+    ckpt = torch.load("output/ckpt/mlp_mnist.pth")
 
     # m = LeNet(1)
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
-    m = CmsisCNN(in_channels=3)
-    ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
+    # m = CmsisCNN(in_channels=3)
+    # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
     # m = VGG(in_channels=3, num_class=10)
 
