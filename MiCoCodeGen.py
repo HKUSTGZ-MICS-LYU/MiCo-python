@@ -449,7 +449,7 @@ void model_forward(Model* model) {{
 
         return out
 
-    def convert(self, output_directory: str = "./", model_name: str = "model"):
+    def convert(self, output_directory: str = "./", model_name: str = "model", verbose = False):
         """
         Convert the model to a C model.
 
@@ -513,7 +513,13 @@ void model_forward(Model* model) {{
 
         model_struct_str = "\n".join(model_struct)
         model_init_str = "\n".join(model_init)
-        model_forward_str = "\n".join(model_forward)
+        if verbose:
+            model_forward_str = ""
+            for line in model_forward:
+                model_forward_str += f"printf(\"{line[len(INDENT):line.find('(')]}\\n\");\n"
+                model_forward_str += f"{line}\n"
+        else:
+            model_forward_str = "\n".join(model_forward)
 
         model_h_path = os.path.join(output_directory, f"{model_name}.h")
         model_bin_path = os.path.join(output_directory, f"{model_name}.bin")
@@ -551,25 +557,26 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    example_input = torch.randn(1, 256)
-    # example_input = torch.randn(1, 1, 28, 28)
+    # example_input = torch.randn(1, 256)
+    example_input = torch.randn(1, 1, 28, 28)
     # example_input = torch.randn(1, 3, 32, 32)
 
     config = {
         "Layers": [64, 64, 64, 10],
     }
-    m = MLP(in_features=256, config=config)
-    ckpt = torch.load("output/ckpt/mlp_mnist.pth")
+    # m = MLP(in_features=256, config=config)
+    # ckpt = torch.load("output/ckpt/mlp_mnist.pth")
 
-    # m = LeNet(1)
-    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    m = LeNet(1)
+    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
+    m.load_state_dict(ckpt)
+
     # m = VGG(in_channels=3, num_class=10)
 
-    m.load_state_dict(ckpt)
     # mico.replace_quantize_layers(m, 
     #                             [8]*m.n_layers, 
     #                             [8]*m.n_layers, 
@@ -583,4 +590,4 @@ if __name__ == "__main__":
     m.forward(example_input)
     m.print_graph()
 
-    m.convert("project", "model")
+    m.convert("project", "model", verbose = True)

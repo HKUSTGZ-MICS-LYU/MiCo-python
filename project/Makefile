@@ -14,6 +14,8 @@ TARGET ?= host # host, rv
 
 ifeq ($(OPT), unroll)
 	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_unrolled/*.c)
+else ifeq ($(OPT), im2col)
+	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/im2col_conv2d/*.c)
 endif
 
 CFLAGS = -O3
@@ -28,11 +30,13 @@ MAIN = main
 MABI?=ilp32
 MARCH?=rv32imc
 RISCV_PREFIX = riscv64-unknown-elf
-RISCV_PATH = $(MICO_DIR)/riscv
 RISCV_SOURCE ?= 
-LDSCRIPT = $(MICO_DIR)/riscv/riscv.ld
 
-ifeq ($(TARGET), rv)
+# VexiiRiscv Related
+VEXII_PATH = $(MICO_DIR)/vexii
+VEXII_LD = $(MICO_DIR)/vexii/vexii.ld
+
+ifeq ($(TARGET), vexii)
 	CC = $(RISCV_PREFIX)-gcc
 	OBJDUMP = $(RISCV_PREFIX)-objdump
 
@@ -40,13 +44,17 @@ ifeq ($(TARGET), rv)
 	CFLAGS += -DRISCV -DTEST_NUM=1
 	CFLAGS += -fno-common -fno-inline
 	CFLAGS += -Wno-implicit-int -Wno-implicit-function-declaration
-	CFLAGS += -I${RISCV_PATH}/ -I${RISCV_PATH}/driver
+	CFLAGS += -I${VEXII_PATH}/ -I${VEXII_PATH}/driver
 
 	LDFLAGS += -march=$(MARCH) -mabi=$(MABI) -mcmodel=medany
-	LDFLAGS += -nostdlib -nostartfiles -ffreestanding -Wl,-Bstatic,-T,$(LDSCRIPT),-Map,$(BUILD)/$(MAIN).map,--print-memory-usage
+	LDFLAGS += -nostdlib -nostartfiles -ffreestanding -Wl,-Bstatic,-T,$(VEXII_LD),-Map,$(BUILD)/$(MAIN).map,--print-memory-usage
 	LDFLAGS += -L./ -nolibc -lm -lc -lgcc
 
-	RISCV_SOURCE = $(wildcard $(RISCV_PATH)/*.c) $(wildcard $(RISCV_PATH)/*.S)
+	RISCV_SOURCE = $(wildcard $(VEXII_PATH)/*.c) $(wildcard $(VEXII_PATH)/*.S)
+	ifeq ($(OPT), simd)
+		MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_simd/*.c)
+		RISCV_SOURCE += $(wildcard ${VEXII_PATH}/mico/*.S)
+	endif
 endif
 
 OBJS := $(MICO_SOURCES) $(RISCV_SOURCE)
@@ -78,5 +86,8 @@ $(BUILD):
 
 clean:
 	rm -rf $(BUILD)
+	rm -f *.elf *.asm
 
 compile: $(BUILD) $(MAIN).elf $(MAIN).asm
+
+all: compile
