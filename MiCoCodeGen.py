@@ -11,8 +11,7 @@ import jinja2
 import tabulate
 
 from MiCoQLayers import BitConv2d, BitLinear, weight_quant
-from MiCoUtils import weight_export
-
+from MiCoUtils import weight_export, fuse_model
 '''
 Modified Trace Module to Support BitConv2d and BitLinear
 '''
@@ -506,7 +505,7 @@ void model_forward(Model* model) {{
         # create the output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
 
-        INDENT = "  "
+        INDENT = "    "
         model_struct = [f"{INDENT}{line}" for line in self.model_struct]
         model_init = [f"{INDENT}{line}" for line in self.model_init]
         model_forward = [f"{INDENT}{line}" for line in self.model_forward]
@@ -516,7 +515,7 @@ void model_forward(Model* model) {{
         if verbose:
             model_forward_str = ""
             for line in model_forward:
-                model_forward_str += f"printf(\"{line[len(INDENT):line.find('(')]}\\n\");\n"
+                model_forward_str += f"{INDENT}printf(\"{line[len(INDENT):line.find('(')]}\\n\");\n"
                 model_forward_str += f"{line}\n"
         else:
             model_forward_str = "\n".join(model_forward)
@@ -558,8 +557,8 @@ if __name__ == "__main__":
     torch.manual_seed(0)
 
     # example_input = torch.randn(1, 256)
-    example_input = torch.randn(1, 1, 28, 28)
-    # example_input = torch.randn(1, 3, 32, 32)
+    # example_input = torch.randn(1, 1, 28, 28)
+    example_input = torch.randn(1, 3, 32, 32)
 
     config = {
         "Layers": [64, 64, 64, 10],
@@ -567,22 +566,23 @@ if __name__ == "__main__":
     # m = MLP(in_features=256, config=config)
     # ckpt = torch.load("output/ckpt/mlp_mnist.pth")
 
-    m = LeNet(1)
-    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    # m = LeNet(1)
+    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
-    m.load_state_dict(ckpt)
+    m = VGG(in_channels=3, num_class=10)
+    ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
-    # m = VGG(in_channels=3, num_class=10)
-
-    # mico.replace_quantize_layers(m, 
-    #                             [8]*m.n_layers, 
-    #                             [8]*m.n_layers, 
-    #                             quant_aware=False,
-    #                             use_bias=True)
-    # mico.set_to_qforward(m)
+    m.load_state_dict(ckpt) 
+    m = fuse_model(m)
+    mico.replace_quantize_layers(m, 
+                                [8]*m.n_layers, 
+                                [8]*m.n_layers, 
+                                quant_aware=False,
+                                use_bias=True)
+    mico.set_to_qforward(m)
     m.eval()
 
     m = MiCoCodeGen(m)
@@ -590,4 +590,4 @@ if __name__ == "__main__":
     m.forward(example_input)
     m.print_graph()
 
-    m.convert("project", "model", verbose = True)
+    m.convert("project", "model", verbose = False)

@@ -10,11 +10,11 @@ MICO_SOURCES = $(wildcard $(MICO_DIR)/src/*.c)
 MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico/*.c)
 
 OPT ?=
-TARGET ?= host # host, rv
+TARGET ?= host # host, vexii
 
-ifeq ($(OPT), unroll)
+ifneq ($(filter unroll, $(OPT)),)
 	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_unrolled/*.c)
-else ifeq ($(OPT), im2col)
+else ifneq ($(filter im2col, $(OPT)),)
 	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/im2col_conv2d/*.c)
 endif
 
@@ -33,8 +33,8 @@ RISCV_PREFIX = riscv64-unknown-elf
 RISCV_SOURCE ?= 
 
 # VexiiRiscv Related
-VEXII_PATH = $(MICO_DIR)/vexii
-VEXII_LD = $(MICO_DIR)/vexii/vexii.ld
+VEXII_PATH = $(MICO_DIR)/targets/vexii
+VEXII_LD = $(MICO_DIR)/targets/vexii/vexii.ld
 
 ifeq ($(TARGET), vexii)
 	CC = $(RISCV_PREFIX)-gcc
@@ -51,7 +51,7 @@ ifeq ($(TARGET), vexii)
 	LDFLAGS += -L./ -nolibc -lm -lc -lgcc
 
 	RISCV_SOURCE = $(wildcard $(VEXII_PATH)/*.c) $(wildcard $(VEXII_PATH)/*.S)
-	ifeq ($(OPT), simd)
+	ifneq ($(filter simd, $(OPT)),)
 		MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_simd/*.c)
 		RISCV_SOURCE += $(wildcard ${VEXII_PATH}/mico/*.S)
 	endif

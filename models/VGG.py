@@ -17,35 +17,35 @@ class VGG(MiCoModel):
         self.num_block = 3
         features = [
             # Block 1
-            nn.Conv2d(in_channels, 64, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(64, affine=False),
+            nn.Conv2d(in_channels, 64, kernel_size=3, padding=1),
+            nn.BatchNorm2d(64),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             # Block 2
-            nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(128, affine=False),
+            nn.Conv2d(64, 128, kernel_size=3, padding=1),
+            nn.BatchNorm2d(128),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
             # Block 3
-            nn.Conv2d(128, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256, affine=False),
+            nn.Conv2d(128, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
             nn.ReLU(),
             # Block 4
-            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256, affine=False),
+            nn.Conv2d(256, 256, kernel_size=3, padding=1),
+            nn.BatchNorm2d(256),
             nn.ReLU(),
             nn.MaxPool2d(kernel_size=2, stride=2),
         ]
         classifier = [
             # Classifier
             nn.Flatten(),
-            nn.Linear(4096, 4096, bias=False),
+            nn.Linear(4096, 4096),
             nn.ReLU(),
             nn.Dropout(),
-            nn.Linear(4096, 4096, bias=False),
+            nn.Linear(4096, 4096),
             nn.ReLU(),
             nn.Dropout(),
-            nn.Linear(4096, num_class, bias=False)
+            nn.Linear(4096, num_class)
         ]
         layers = features + classifier
         self.layers = nn.Sequential(*layers)

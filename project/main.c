@@ -1,4 +1,8 @@
+#ifdef RISCV
+#include "sim_stdlib.h"
+#else
 #include <stdio.h>
+#endif
 
 #include "model.h"
 
@@ -18,7 +22,6 @@ int main(){
     for (int t=0; t < TEST_NUM; t++){
 
         printf("Set Input Data\n");
-        // model.x.data = test_data[t];
         model.x.data = test_input[t];
 
         printf("Forward Model\n");
@@ -27,6 +30,7 @@ int main(){
         size_t label[1];
         MiCo_argmax2d_f32(label, &model.output);
         printf("Predicted Label: %ld, Correct Label: %d\n", label[0], test_label[t]);
+        // MiCo_print_tensor2d_f32(&model.output);
         if (label[0] == test_label[t]){
             correct++;
         }

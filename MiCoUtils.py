@@ -145,14 +145,6 @@ def export_layer_weights(model: nn.Module):
             if sub_data != {}:
                 data[name] = sub_data
     return data
-    
-def fuse_bitconv_bn(conv: BitConv2d, bn: nn.BatchNorm2d):
-
-    fused = fusion.fuse_conv_bn_eval(conv, bn)
-    conv.weight = fused.weight
-    conv.bias = fused.bias
-    return
-
 
 def weight_export(weight, qtype):
     if qtype == 8:
@@ -203,3 +195,37 @@ def weight_export(weight, qtype):
     else:
         raise NotImplementedError
     return struct.pack(f'{len(data)}B', *data)
+
+# Fuse Conv2D+BatchNorm2D layers
+# Note: This function should be called before replacing layers into Q-layers
+# Also you need to make sure Conv2D+BatchNorm2D are in Sequential containers
+def fuse_model(model: nn.Module):
+    model.eval()
+    # Recursively fuse Conv2D + BatchNorm2D layers
+    for name, module in model.named_children():
+        if isinstance(module, nn.Sequential):
+            # Traverse the sequential container
+            new_module = nn.Sequential()
+            skip_next = False
+            for i, sub_module in enumerate(module):
+                if skip_next:
+                    skip_next = False
+                    continue
+                if isinstance(sub_module, nn.Conv2d):
+                    # Check if the next module is a BatchNorm2d
+                    if i + 1 < len(module) and isinstance(module[i + 1], nn.BatchNorm2d):
+                        # Fuse the Conv2d and BatchNorm2d layers
+                        fused_layer = fusion.fuse_conv_bn_eval(sub_module, 
+                                                               module[i + 1])
+                        new_module.append(fused_layer)
+                        skip_next = True  # Skip the next BatchNorm2d layer
+                    else:
+                        new_module.append(sub_module)
+                else:
+                    new_module.append(sub_module)
+            setattr(model, name, new_module)
+        else:
+            # If the module is not a Sequential, recursively fuse its children
+            fuse_model(module)
+
+    return model
