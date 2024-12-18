@@ -54,6 +54,9 @@ class MiCoSearch:
                                 [8] * self.n_layers, 
                                 [8] * self.n_layers, 
                                 quant_aware=False)
+        # Test Model
+        self.base_res = model.test(test_loader)
+        
         self.layers = list_qlayers(model)
         self.space_size = len(self.layer_q) ** self.n_layers
         assert self.n_layers > 0, "No QLayer found! Please convert the model first."
@@ -320,9 +323,13 @@ class MiCoSearch:
                 subspace.append(sample)
         return subspace
 
-    def get_subspace_genetic(self, constr_bops, 
+    def get_subspace_genetic(self, constr_bops, constr_size = None,
                             roi_range : float = 0.2, min_space_size = 1,
                             use_max_q = False, max_gen = 100, prune = True):
+        
+        if constr_size is None:
+            constr_size = self.get_model_size([[8]*self.n_layers, [8]*self.n_layers])
+
         subspace = []
         # Constrain AQ >= WQ
         constr_q = [q for q in self.layer_q if q[0] <= q[1]] if prune else self.layer_q

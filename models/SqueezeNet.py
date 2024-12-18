@@ -25,20 +25,20 @@ class Fire(nn.Module):
 
         super().__init__()
         self.squeeze = nn.Sequential(
-            nn.Conv2d(in_channel, squzee_channel, 1, bias=False),
-            nn.BatchNorm2d(squzee_channel, affine=False),
+            nn.Conv2d(in_channel, squzee_channel, 1),
+            nn.BatchNorm2d(squzee_channel),
             nn.ReLU(inplace=True)
         )
 
         self.expand_1x1 = nn.Sequential(
-            nn.Conv2d(squzee_channel, int(out_channel / 2), 1, bias=False),
-            nn.BatchNorm2d(int(out_channel / 2), affine=False),
+            nn.Conv2d(squzee_channel, int(out_channel / 2), 1),
+            nn.BatchNorm2d(int(out_channel / 2)),
             nn.ReLU(inplace=True)
         )
 
         self.expand_3x3 = nn.Sequential(
-            nn.Conv2d(squzee_channel, int(out_channel / 2), 3, padding=1, bias=False),
-            nn.BatchNorm2d(int(out_channel / 2), affine=False),
+            nn.Conv2d(squzee_channel, int(out_channel / 2), 3, padding=1),
+            nn.BatchNorm2d(int(out_channel / 2)),
             nn.ReLU(inplace=True)
         )
 
@@ -58,8 +58,8 @@ class SqueezeNet(MiCoModel):
 
         super(SqueezeNet, self).__init__()
         self.stem = nn.Sequential(
-            nn.Conv2d(in_channels, 96, 3, padding=1, bias=False),
-            nn.BatchNorm2d(96, affine=False),
+            nn.Conv2d(in_channels, 96, 3, padding=1),
+            nn.BatchNorm2d(96),
             nn.ReLU(inplace=True),
             nn.MaxPool2d(2, 2)
         )
@@ -73,7 +73,7 @@ class SqueezeNet(MiCoModel):
         self.fire8 = Fire(384, 512, 64)
         self.fire9 = Fire(512, 512, 64)
 
-        self.conv10 = nn.Conv2d(512, class_num, 1, bias=False)
+        self.conv10 = nn.Conv2d(512, class_num, 1)
         self.avg = nn.AdaptiveAvgPool2d(1)
         self.maxpool = nn.MaxPool2d(2, 2)
 

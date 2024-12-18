@@ -71,5 +71,5 @@ class NLPSearcher:
         name = self.mpq.get_scheme_str(qscheme)
         print("Scheme: ", name)
         res = self.mpq.eval_scheme(qscheme, verbose=True, ptq=ptq)
-        return res
+        return {name:res}
     

@@ -19,15 +19,15 @@ class LinearBottleNeck(nn.Module):
         super().__init__()
 
         self.residual = nn.Sequential(
-            nn.Conv2d(in_channels, in_channels * t, 1, bias=False),
+            nn.Conv2d(in_channels, in_channels * t, 1),
             nn.BatchNorm2d(in_channels * t),
             nn.ReLU6(inplace=True),
 
-            nn.Conv2d(in_channels * t, in_channels * t, 3, stride=stride, padding=1, groups=in_channels * t, bias=False),
+            nn.Conv2d(in_channels * t, in_channels * t, 3, stride=stride, padding=1, groups=in_channels * t),
             nn.BatchNorm2d(in_channels * t),
             nn.ReLU6(inplace=True),
 
-            nn.Conv2d(in_channels * t, out_channels, 1, bias=False),
+            nn.Conv2d(in_channels * t, out_channels, 1),
             nn.BatchNorm2d(out_channels)
         )
 
@@ -50,7 +50,7 @@ class MobileNetV2(MiCoModel):
         super().__init__()
 
         self.pre = nn.Sequential(
-            nn.Conv2d(3, 32, 1, padding=1, bias=False),
+            nn.Conv2d(3, 32, 1, padding=1),
             nn.BatchNorm2d(32),
             nn.ReLU6(inplace=True)
         )
@@ -64,12 +64,12 @@ class MobileNetV2(MiCoModel):
         self.stage7 = LinearBottleNeck(160, 320, 1, 6)
 
         self.conv1 = nn.Sequential(
-            nn.Conv2d(320, 1280, 1, bias=False),
+            nn.Conv2d(320, 1280, 1),
             nn.BatchNorm2d(1280),
             nn.ReLU6(inplace=True)
         )
 
-        self.conv2 = nn.Conv2d(1280, num_classes, 1, bias=False)
+        self.conv2 = nn.Conv2d(1280, num_classes, 1)
 
     def forward(self, x):
         x = self.pre(x)

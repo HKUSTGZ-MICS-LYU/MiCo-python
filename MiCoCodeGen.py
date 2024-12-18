@@ -254,6 +254,7 @@ void model_forward(Model* model) {{
         # get all the related information
         function = n.target
         layer_name = n.name
+        # print(self.node_info[n.name][0])
         input_names = [n.name for n in self.node_info[n.name][0] \
                        if type(n) is not int]
         input_args = n.args
@@ -301,7 +302,15 @@ void model_forward(Model* model) {{
         
     def handle_call_method(self, n: torch.fx.node.Node, out: torch.Tensor):
         print("call method:", n.name, n.target)
-        raise NotImplementedError()
+        method = n.target
+        if method == "size":
+            self.add_initialized_tensor(n.name, out)
+            self.add_forward_call("MiCo_CONNECT", out, n.name, [n.name])
+        elif method == "view":
+            self.add_initialized_tensor(n.name, out)
+            self.add_forward_call("MiCo_CONNECT", out, n.name, [n.name])
+        else:
+            raise NotImplementedError()
 
     def handle_call_module(self, n: torch.fx.node.Node, out: torch.Tensor):
         print("call module:", n.name, n.target)
@@ -552,7 +561,7 @@ if __name__ == "__main__":
     import torch.nn as nn
     import torch.nn.functional as F
     import MiCoUtils as mico
-    from models import MLP, LeNet, CmsisCNN, VGG
+    from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, ResNetAlt
 
     torch.manual_seed(0)
 
@@ -577,12 +586,12 @@ if __name__ == "__main__":
 
     m.load_state_dict(ckpt) 
     m = fuse_model(m)
-    mico.replace_quantize_layers(m, 
-                                [8]*m.n_layers, 
-                                [8]*m.n_layers, 
-                                quant_aware=False,
-                                use_bias=True)
-    mico.set_to_qforward(m)
+    # mico.replace_quantize_layers(m, 
+    #                             [8]*m.n_layers, 
+    #                             [8]*m.n_layers, 
+    #                             quant_aware=False,
+    #                             use_bias=True)
+    # mico.set_to_qforward(m)
     m.eval()
 
     m = MiCoCodeGen(m)

@@ -140,13 +140,14 @@ class HAQSearcher:
             assert len(self.strategy) == self.n_layers
             sample = self.mpq.tuple_to_sample(self.strategy)
             res = self.mpq.eval_scheme(sample, ptq=ptq)
+            name = self.mpq.get_scheme_str(sample)
             acc = res['Accuracy']
             reward = self.reward(acc)
             if reward > self.best_reward:
                 self.best_reward = reward
                 print('New best policy: {}, reward: {:.3f}, acc: {:.3f}'.format(
                     self.strategy, self.best_reward, acc))
-                self.best_res = res
+                self.best_res = {name:res}
             obs = self.layer_embedding[self.cur_ind, :].copy()  # actually the same as the last state
             done = True
             self.action_radio_button = not self.action_radio_button
@@ -176,7 +177,7 @@ class HAQSearcher:
             ptq = False):
         
         num_episode = search_budget
-        warm_up = num_episode // 2
+        warm_up = n_init
 
         best_reward = -math.inf
         best_policy = []
