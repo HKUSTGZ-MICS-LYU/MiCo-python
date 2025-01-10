@@ -90,4 +90,7 @@ clean:
 
 compile: $(BUILD) $(MAIN).elf $(MAIN).asm
 
+run_host: $(MAIN).elf
+	./$(MAIN).elf
+
 all: compile
