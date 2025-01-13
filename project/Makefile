@@ -12,6 +12,7 @@ MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico/*.c)
 OPT ?=
 TARGET ?= host # host, vexii
 
+# Software Optimization
 ifneq ($(filter unroll, $(OPT)),)
 	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_unrolled/*.c)
 else ifneq ($(filter im2col, $(OPT)),)
@@ -25,6 +26,8 @@ INCLUDES = $(MICO_INCLUDES) ./
 
 BUILD = build
 MAIN = main
+
+TEST_NUM ?= 1 # Not used by host
 
 # RISC-V
 RISCV_PREFIX = riscv64-unknown-elf
