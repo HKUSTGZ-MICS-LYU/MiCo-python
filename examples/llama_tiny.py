@@ -30,7 +30,7 @@ if __name__ == "__main__":
     model = TinyLLaMa1M().to(device)
     n_layers = len(list_quantize_layers(model))
     print("Number of Quantizable Layers: ", n_layers)
-    weight_q = ["8b"] * n_layers
+    weight_q = [8] * n_layers
     activation_q = [8] * n_layers
     replace_quantize_layers(model, weight_q, activation_q, 
         quant_aware=False, use_norm=False, device=device)
