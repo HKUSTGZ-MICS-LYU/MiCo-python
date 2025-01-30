@@ -122,3 +122,23 @@ def cifar100(batch_size=32, num_works = 0, shuffle = True, augment = True):
     test_loader = DataLoader(test_data, batch_size, shuffle=shuffle, num_workers=num_works)
 
     return train_loader, test_loader
+
+def tinystories(max_seq_len, vocab_size, device, batch_size=32, num_works=0):
+    from TinyStories import TinyStoriesTask
+    train_loader = TinyStoriesTask.iter_batches(
+        batch_size=batch_size, 
+        max_seq_len=max_seq_len,
+        vocab_size=vocab_size,
+        device=device,
+        vocab_source="data/tinystories",
+        split="train")
+    
+    test_loader = TinyStoriesTask.iter_batches(
+        batch_size=batch_size, 
+        max_seq_len=max_seq_len,
+        vocab_size=vocab_size,
+        device=device,
+        vocab_source="data/tinystories",
+        split="val")
+    
+    return train_loader, test_loader

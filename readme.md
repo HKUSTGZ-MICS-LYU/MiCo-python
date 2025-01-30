@@ -2,6 +2,17 @@
 
 This is the Python codebase for MiCo Framework. (W.I.P.)
 
+## Pre-requisite
+
+```shell
+# 
+conda create -n mico_env python=3.10
+conda activate mico_env
+
+conda install pygmo
+pip install -r requirements.txt
+```
+
 ## Getting Start
 
 **To run Mixed Precision Search**:

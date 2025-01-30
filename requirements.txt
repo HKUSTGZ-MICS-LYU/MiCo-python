@@ -1,0 +1,9 @@
+torch
+torchvision
+botorch
+gekko
+matplotlib
+
+# for LLaMa
+requests
+sentencepiece
