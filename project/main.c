@@ -4,11 +4,15 @@
 #include <stdio.h>
 #endif
 
+#ifdef RISCV_ROCKET
+#include <riscv-pk/encoding.h>
+#endif
+
 #include "model.h"
 
-// #include "mlp_test_data.h"
+#include "mlp_test_data.h"
 // #include "lenet_test_mnist.h"
-#include "test_cifar10.h"
+// #include "test_cifar10.h"
 
 int main(){
 
