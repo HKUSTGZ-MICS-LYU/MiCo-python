@@ -41,7 +41,8 @@ class NLPSearcher:
 
     def search(self, constr_bops=None, constr_size=None, ptq=False, use_max_q=False):
         self.calculate_w(qbits=min(self.qbits), max_bops=use_max_q)
-        m = GEKKO()
+        m = GEKKO(remote=False)
+        print(self.n_layers)
         q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
 
         if constr_bops is not None:

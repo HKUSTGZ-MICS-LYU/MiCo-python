@@ -18,7 +18,7 @@ from torch.quasirandom import SobolEngine
 
 from botorch import fit_gpytorch_mll
 from botorch.models import SingleTaskGP
-from botorch.acquisition import LogExpectedImprovement
+from botorch.acquisition import LogExpectedImprovement, UpperConfidenceBound
 
 from gpytorch.constraints import Interval
 from gpytorch.kernels.scale_kernel import ScaleKernel
@@ -41,7 +41,8 @@ class MiCoBOSearcher:
     def search(self, search_budget, data_path:str, 
             constr_bops=None, constr_size=None,
             n_init : int = None, use_max_q = False,
-            ptq = False, SAMPLE_MIN  = 1000):
+            ptq = False, SAMPLE_MIN  = 1000, prune = False,
+            init_method = 'grid', roi = 0.2):
         if n_init is None:
             n_init = search_budget // 2
         assert n_init < search_budget, "n_init should be less than search_budget"
@@ -53,7 +54,10 @@ class MiCoBOSearcher:
                 data = json.load(f)
         
         # Initial Samples
-        samples = self.mpq.fixed_grid_sample(n_init)
+        if init_method == 'rand':
+            samples = self.mpq.rand_sample(n_init)
+        elif init_method == 'grid':
+            samples = self.mpq.fixed_grid_sample(n_init)
         X_data = []
         Y_data = []
         for qscheme in samples:
@@ -87,6 +91,7 @@ class MiCoBOSearcher:
 
             best_Y = max(Y_data[n_init:]) if len(Y_data) > n_init else max(Y_data)
             acq = LogExpectedImprovement(regressor, best_f=best_Y)
+            # acq = UpperConfidenceBound(regressor, beta=0.1)
 
             qscheme = None
             acc_pred = 0.0
@@ -96,7 +101,7 @@ class MiCoBOSearcher:
                 samples += self.mpq.get_subspace_genetic(constr_bops, 
                                               min_space_size=SAMPLE_MIN,
                                               use_max_q=use_max_q,
-                                              prune=not ptq)
+                                              prune=prune, roi_range=0.2)
             vecs = np.array([self.mpq.sample_to_vec(sample) for sample in samples])
             vec_tensor = torch.tensor(vecs, dtype=torch.float64, device=DEVICE) / 8 # Normalize X
             acq_vals = acq(

@@ -70,6 +70,7 @@ class MobileNetV2(MiCoModel):
         )
 
         self.conv2 = nn.Conv2d(1280, num_classes, 1)
+        self.n_layers = len(self.get_qlayers())
 
     def forward(self, x):
         x = self.pre(x)
@@ -83,7 +84,8 @@ class MobileNetV2(MiCoModel):
         x = self.conv1(x)
         x = F.adaptive_avg_pool2d(x, 1)
         x = self.conv2(x)
-        x = x.view(x.size(0), -1)
+        # x = x.view(x.size(0), -1)
+        x = torch.flatten(x, 1)
 
         return x
 

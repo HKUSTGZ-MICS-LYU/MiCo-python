@@ -11,7 +11,7 @@ import jinja2
 import tabulate
 
 from MiCoQLayers import BitConv2d, BitLinear, weight_quant
-from MiCoUtils import weight_export, fuse_model
+from MiCoUtils import weight_export, fuse_model, fuse_model_seq
 '''
 Modified Trace Module to Support BitConv2d and BitLinear
 '''
@@ -264,7 +264,7 @@ void model_forward(Model* model) {{
         # Math operations - Pointwise Ops
         if function == operator.__add__:
             self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_add_{dtype}", out, layer_name, input_names)
+            self.add_forward_call("MiCo_add{dim}d_{dtype}", out, layer_name, input_names)
         
         elif function == operator.__mul__:
             self.add_uninitialized_tensor(layer_name, out)
@@ -294,6 +294,39 @@ void model_forward(Model* model) {{
             self.add_initialized_tensor(f"{input_names[2]}", bias)
             self.add_forward_call("MiCo_addmm_{dtype}", out, layer_name, input_names)
         
+        # Pooling Functions
+        elif function == torch.nn.functional.avg_pool2d:
+            self.add_uninitialized_tensor(layer_name, out)
+            if isinstance(input_args[1], Tuple):
+                kernel_size = input_args[1][0]
+            elif isinstance(input_args[1], int):
+                kernel_size = input_args[1]
+            if len(input_args) > 2:
+                stride = input_args[2]
+            else:
+                stride = 1
+            self.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
+                                  [kernel_size, stride])
+        elif function == torch.nn.functional.max_pool2d:
+            self.add_uninitialized_tensor(layer_name, out)
+            if isinstance(input_args[1], Tuple):
+                kernel_size = input_args[1][0]
+            elif isinstance(input_args[1], int):
+                kernel_size = input_args[1]
+            if len(input_args) > 2:
+                stride = input_args[2]
+            else:
+                stride = 1
+            self.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names,
+                                  [kernel_size, stride])
+        elif function == torch.nn.functional.adaptive_avg_pool2d:
+            self.add_uninitialized_tensor(layer_name, out)
+            if isinstance(input_args[1], Tuple):
+                output_size = input_args[1][0]
+            elif isinstance(input_args[1], int):
+                output_size = input_args[1]
+            self.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
+
         elif function == torch.flatten:
             self.add_initialized_tensor(layer_name, out)
             self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
@@ -564,19 +597,19 @@ if __name__ == "__main__":
     import torch.nn as nn
     import torch.nn.functional as F
     import MiCoUtils as mico
-    from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, ResNetAlt
+    from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, ResNet8, MobileNetV2
 
     torch.manual_seed(0)
 
-    example_input = torch.randn(1, 256)
+    # example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    # example_input = torch.randn(1, 3, 32, 32)
+    example_input = torch.randn(1, 3, 32, 32)
 
-    config = {
-        "Layers": [64, 64, 64, 10],
-    }
-    m = MLP(in_features=256, config=config)
-    ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
+    # config = {
+    #     "Layers": [64, 64, 64, 10],
+    # }
+    # m = MLP(in_features=256, config=config)
+    # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
 
     # m = LeNet(1)
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
@@ -587,11 +620,16 @@ if __name__ == "__main__":
     # m = VGG(in_channels=3, num_class=10)
     # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
-    m.load_state_dict(ckpt) 
+    # m = ResNet8()
+
+    m = MobileNetV2(10)
+    ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
+
+    m.load_state_dict(ckpt)
     m = fuse_model(m)
     mico.replace_quantize_layers(m, 
-                                # [8]*m.n_layers, 
-                                [8, 4, 2, 1],
+                                [8]*m.n_layers, 
+                                # [8, 4, 2, 1],
                                 [8]*m.n_layers, 
                                 quant_aware=False,
                                 use_bias=True)

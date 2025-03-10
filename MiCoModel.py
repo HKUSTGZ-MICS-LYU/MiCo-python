@@ -3,6 +3,7 @@ from torch import nn
 import numpy as np
 
 from tqdm import tqdm
+from MiCoUtils import list_quantize_layers
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -10,6 +11,9 @@ class MiCoModel(nn.Module):
 
     def __init__(self):
         super(MiCoModel, self).__init__()
+
+    def get_qlayers(self):
+        return list_quantize_layers(self)
 
     def test(self, test_loader):
         self.eval()

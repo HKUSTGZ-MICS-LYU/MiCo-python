@@ -22,6 +22,9 @@ endif
 CFLAGS = -O3
 LDFLAGS = -lm
 
+# (Optional) Address Sanitizer
+# CFLAGS += -fsanitize=address -static-libasan
+
 INCLUDES = $(MICO_INCLUDES) ./
 
 BUILD = build

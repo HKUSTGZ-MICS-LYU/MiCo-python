@@ -197,9 +197,41 @@ def weight_export(weight, qtype):
     return struct.pack(f'{len(data)}B', *data)
 
 # Fuse Conv2D+BatchNorm2D layers
+# Note: DeepSeek generated, not sure if it fully works.
+def fuse_model(model: nn.Module):
+
+    model.eval()
+    for name, module in model.named_children():
+        fuse_model(module)
+        
+        children = list(module.named_children())
+        new_children = []
+        i = 0
+        while i < len(children):
+            child_name, child_module = children[i]
+            if isinstance(child_module, nn.Conv2d):
+                if i + 1 < len(children):
+                    next_name, next_module = children[i + 1]
+                    if isinstance(next_module, nn.BatchNorm2d):
+                        fused_conv = fusion.fuse_conv_bn_eval(child_module, next_module)
+                        new_children.append((child_name, fused_conv))
+                        i += 2
+                        continue
+            new_children.append((child_name, child_module))
+            i += 1
+        
+        if len(new_children) != len(children):
+            for child_name, _ in children:
+                delattr(module, child_name)
+            for new_name, new_module in new_children:
+                module.add_module(new_name, new_module)
+    
+    return model
+
+# Old version of fuse_model
 # Note: This function should be called before replacing layers into Q-layers
 # Also you need to make sure Conv2D+BatchNorm2D are in Sequential containers
-def fuse_model(model: nn.Module):
+def fuse_model_seq(model: nn.Module):
     model.eval()
     # Recursively fuse Conv2D + BatchNorm2D layers
     for name, module in model.named_children():
@@ -226,6 +258,6 @@ def fuse_model(model: nn.Module):
             setattr(model, name, new_module)
         else:
             # If the module is not a Sequential, recursively fuse its children
-            fuse_model(module)
+            fuse_model_seq(module)
 
     return model
