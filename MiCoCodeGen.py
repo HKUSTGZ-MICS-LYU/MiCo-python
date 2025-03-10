@@ -256,9 +256,16 @@ void model_forward(Model* model) {{
         # get all the related information
         function = n.target
         layer_name = n.name
-        # print(self.node_info[n.name][0])
-        input_names = [n.name for n in self.node_info[n.name][0] \
-                       if type(n) is not int]
+        input_names = []
+        for node in self.node_info[n.name][0]:
+            # print(n, type(n))
+            if type(node) is int:
+                pass
+            elif type(node) is torch.fx.immutable_collections.immutable_list:
+                input_names += [i.name for i in node]
+            else:
+                input_names.append(node.name)
+        
         input_args = n.args
         
         # Math operations - Pointwise Ops
@@ -268,7 +275,7 @@ void model_forward(Model* model) {{
         
         elif function == operator.__mul__:
             self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_mul_{dtype}", out, layer_name, input_names)
+            self.add_forward_call("MiCo_mul{dim}d_{dtype}", out, layer_name, input_names)
         
         # Convolution Layers
 
@@ -329,11 +336,12 @@ void model_forward(Model* model) {{
 
         elif function == torch.flatten:
             self.add_initialized_tensor(layer_name, out)
+            print(input_names)
             self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
         
-        # elif function == torch.cat:
-        #     self.add_uninitialized_tensor(layer_name, out)
-        #     self.add_forward_call("MiCo_concat", out, layer_name, input_names)
+        elif function == torch.cat:
+            self.add_uninitialized_tensor(layer_name, out)
+            self.add_forward_call("MiCo_concat{dim}d_{dtype}", out, layer_name, input_names)
         
     def handle_call_method(self, n: torch.fx.node.Node, out: torch.Tensor):
         print("call method:", n.name, n.target)
@@ -446,6 +454,13 @@ void model_forward(Model* model) {{
             self.add_uninitialized_tensor(layer_name, out)
             self.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
                                   [kernel_size, module.stride])
+        elif type(module) is torch.nn.AdaptiveAvgPool2d:
+            if isinstance(module.output_size, Tuple):
+                output_size = module.output_size[0]
+            elif isinstance(module.output_size, int):
+                output_size = module.output_size
+            self.add_uninitialized_tensor(layer_name, out)
+            self.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
         # Flatten Functions
         elif type(module) is torch.nn.Flatten:
             self.add_initialized_tensor(layer_name, out)
@@ -622,18 +637,21 @@ if __name__ == "__main__":
 
     # m = ResNet8()
 
-    m = MobileNetV2(10)
-    ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
+    # m = MobileNetV2(10)
+    # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
+
+    m = SqueezeNet(class_num=10)
+    ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
 
     m.load_state_dict(ckpt)
     m = fuse_model(m)
-    mico.replace_quantize_layers(m, 
-                                [8]*m.n_layers, 
-                                # [8, 4, 2, 1],
-                                [8]*m.n_layers, 
-                                quant_aware=False,
-                                use_bias=True)
-    mico.set_to_qforward(m)
+    # mico.replace_quantize_layers(m, 
+    #                             [8]*m.n_layers, 
+    #                             # [8, 4, 2, 1],
+    #                             [8]*m.n_layers, 
+    #                             quant_aware=False,
+    #                             use_bias=True)
+    # mico.set_to_qforward(m)
     
     m.eval()
     m = MiCoCodeGen(m)

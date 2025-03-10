@@ -76,6 +76,7 @@ class SqueezeNet(MiCoModel):
         self.conv10 = nn.Conv2d(512, class_num, 1)
         self.avg = nn.AdaptiveAvgPool2d(1)
         self.maxpool = nn.MaxPool2d(2, 2)
+        self.n_layers = len(self.get_qlayers())
 
     def forward(self, x):
         x = self.stem(x)
@@ -95,6 +96,7 @@ class SqueezeNet(MiCoModel):
         c10 = self.conv10(f9)
 
         x = self.avg(c10)
-        x = x.view(x.size(0), -1)
+        x = torch.flatten(x, 1)
+        # x = x.view(x.size(0), -1)
 
         return x
