@@ -11,7 +11,7 @@ import jinja2
 import tabulate
 
 from MiCoQLayers import BitConv2d, BitLinear, weight_quant
-from MiCoUtils import weight_export, fuse_model, fuse_model_seq
+from MiCoUtils import weight_export, fuse_model, fuse_model_seq, get_model_macs
 '''
 Modified Trace Module to Support BitConv2d and BitLinear
 '''
@@ -574,9 +574,11 @@ void model_forward(Model* model) {{
         model_init_str = "\n".join(model_init)
         if verbose:
             model_forward_str = ""
+            func_count = 0
             for line in model_forward:
-                model_forward_str += f"{INDENT}printf(\"{line[len(INDENT):line.find('(')]}\\n\");\n"
+                model_forward_str += f"{INDENT}printf(\"{func_count}:{line[len(INDENT):line.find('(')]}\\n\");\n"
                 model_forward_str += f"{line}\n"
+                func_count += 1
         else:
             model_forward_str = "\n".join(model_forward)
 
@@ -612,7 +614,8 @@ if __name__ == "__main__":
     import torch.nn as nn
     import torch.nn.functional as F
     import MiCoUtils as mico
-    from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, ResNet8, MobileNetV2
+    from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet,\
+          resnet_alt_8, MobileNetV2
 
     torch.manual_seed(0)
 
@@ -640,19 +643,21 @@ if __name__ == "__main__":
     # m = MobileNetV2(10)
     # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
 
-    m = SqueezeNet(class_num=10)
-    ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
+    # m = SqueezeNet(class_num=10)
+    # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
+
+    m = resnet_alt_8(10)
+    ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
     m.load_state_dict(ckpt)
     m = fuse_model(m)
-    # mico.replace_quantize_layers(m, 
-    #                             [8]*m.n_layers, 
-    #                             # [8, 4, 2, 1],
-    #                             [8]*m.n_layers, 
-    #                             quant_aware=False,
-    #                             use_bias=True)
-    # mico.set_to_qforward(m)
-    
+    mico.replace_quantize_layers(m, 
+                                [8]*m.n_layers, 
+                                # [8, 4, 2, 1],
+                                [8]*m.n_layers, 
+                                quant_aware=False,
+                                use_bias=True)
+    mico.set_to_qforward(m)
     m.eval()
     m = MiCoCodeGen(m)
 

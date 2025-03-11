@@ -43,6 +43,7 @@ class BasicBlock(nn.Module):
 
         #shortcut
         self.shortcut = nn.Sequential()
+        self.relu = nn.ReLU(inplace=True)
 
         #the shortcut output dimension is not the same with residual function
         #use 1*1 convolution to match the dimension
@@ -53,7 +54,7 @@ class BasicBlock(nn.Module):
             )
 
     def forward(self, x):
-        return nn.ReLU(inplace=True)(self.residual_function(x) + self.shortcut(x))
+        return self.relu(self.residual_function(x) + self.shortcut(x))
 
 class BottleNeck(nn.Module):
     """Residual block for resnet over 50 layers
@@ -74,6 +75,7 @@ class BottleNeck(nn.Module):
         )
 
         self.shortcut = nn.Sequential()
+        self.relu = nn.ReLU(inplace=True)
 
         if stride != 1 or in_channels != out_channels * BottleNeck.expansion:
             self.shortcut = nn.Sequential(
@@ -82,7 +84,7 @@ class BottleNeck(nn.Module):
             )
 
     def forward(self, x):
-        return nn.ReLU(inplace=True)(self.residual_function(x) + self.shortcut(x))
+        return self.relu(self.residual_function(x) + self.shortcut(x))
 
 class ResNetAlt(MiCoModel):
 
@@ -101,6 +103,8 @@ class ResNetAlt(MiCoModel):
         self.conv5_x = self._make_layer(block, 512, num_block[3], 2)
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+
+        self.n_layers = len(self.get_qlayers())
 
     def _make_layer(self, block, out_channels, num_blocks, stride):
         """make resnet layers(by layer i didnt mean this 'layer' was the
@@ -134,11 +138,17 @@ class ResNetAlt(MiCoModel):
         output = self.conv4_x(output)
         output = self.conv5_x(output)
         output = self.avg_pool(output)
-        output = output.view(output.size(0), -1)
+        # output = output.view(output.size(0), -1)
+        output = torch.flatten(output, 1)
         output = self.fc(output)
 
         return output
-                
+
+def resnet_alt_8(n_class=100):
+    """ return a ResNet 8 object
+    """
+    return ResNetAlt(BasicBlock, [1, 1, 1, 1], num_classes=n_class)
+
 def resnet_alt_18(n_class=100):
     """ return a ResNet 18 object
     """
