@@ -45,10 +45,28 @@ def replace_quantize_layers(model: nn.Module,
     wlist = copy.deepcopy(weight_types_list)
     alist = copy.deepcopy(act_types_list)
 
+    __replace_layer(model,
+                    wlist, 
+                    alist,
+                    quant_aware,
+                    use_norm,
+                    use_bias,
+                    device)
+    
+    return
+
+def __replace_layer(model: nn.Module,
+            weight_types_list: list, 
+            act_types_list: list,
+            quant_aware = False,
+            use_norm = False,
+            use_bias = False,
+            device=None):
+    
     for name, module in model.named_children():
         if isinstance(module, nn.Linear):
-            weight_type = wlist.pop(0)
-            act_type = alist.pop(0)
+            weight_type = weight_types_list.pop(0)
+            act_type = act_types_list.pop(0)
             weights = module.weight
             bias = module.bias
             has_bias = True if (use_bias) and (module.bias is not None) else False
@@ -63,8 +81,8 @@ def replace_quantize_layers(model: nn.Module,
             getattr(model, name).bias = bias
 
         elif isinstance(module, nn.Conv2d):
-            weight_type = wlist.pop(0)
-            act_type = alist.pop(0)
+            weight_type = weight_types_list.pop(0)
+            act_type = act_types_list.pop(0)
             weights = module.weight
             bias = module.bias
             has_bias = True if (use_bias) and (module.bias is not None) else False
@@ -79,7 +97,7 @@ def replace_quantize_layers(model: nn.Module,
             getattr(model, name).weight = weights
             getattr(model, name).bias = bias
         else:
-            replace_quantize_layers(module, weight_types_list, act_types_list, 
+            __replace_layer(module, weight_types_list, act_types_list, 
                                     quant_aware=quant_aware, device=device, 
                                     use_norm=use_norm, use_bias=use_bias)
     return

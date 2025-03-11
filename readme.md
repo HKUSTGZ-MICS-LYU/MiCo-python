@@ -51,6 +51,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | LeNet | Linear, Conv2D | Supported | Supported |
 | CNN   | Linear, Conv2D | Supported | Supported |
 | VGG   | Linear, Conv2D | Supported | Supported |
+| ResNet | Linear, BottleNeck (Conv2D) | Supported | Supported |
 | MobileNetV2 | Linear, BottleNeck (Conv2D) | Supported | Supported |
 | SqueezeNet | Linear, Conv2D | Supported | Supported |
 | LLaMa | Transformers (Linear) | Supported | Not Yet |
