@@ -9,8 +9,12 @@ DEFAULT_ACT_Q = 8
 
 def activation_nquant(x: torch.Tensor, qbit = 8):
     if qbit == 1:
+        # TODO: This is the most straightforward binarization
         x_absmean = x.abs().mean(dim=-1, keepdim=True)
-        y = x.sign() * x_absmean
+        y = x.sign()
+        y = y * x_absmean
+        # Replace 0.0 with -x_absmean
+        y = torch.where(y == 0.0, -x_absmean, y)
     elif qbit < 2:
         x_absmean = x.abs().mean(dim=-1, keepdim=True)
         scale = 1.0 / x_absmean.clamp_(min=1e-5)
