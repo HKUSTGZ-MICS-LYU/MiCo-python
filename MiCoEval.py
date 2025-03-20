@@ -35,7 +35,9 @@ class MiCoEval:
     def __init__(self, model: MiCoModel, 
                  epochs: int, train_loader, test_loader, 
                  pretrained_model,
-                 lr=0.0001, model_name = "", objective='ptq_acc'):
+                 lr=0.0001, model_name = "", 
+                 objective='ptq_acc',
+                 constraint='bops'):
         
         self.model = model
         self.epochs = epochs
@@ -49,6 +51,7 @@ class MiCoEval:
 
         # Initial Conversion and Test
         res = self.eval_ptq([8]*self.n_layers*2)
+        self.baseline_acc = res
         self.layers = model.get_qlayers()
         assert self.n_layers > 0, "No QLayer found! Please convert the model first."
         
@@ -56,6 +59,7 @@ class MiCoEval:
         self.layer_params = [layer.get_params() for layer in self.layers]
         
         self.set_eval(objective)
+        self.set_constraint(constraint)
 
         print("Model:", model._get_name())
         print("Number of QLayers: ", self.n_layers)
@@ -66,17 +70,23 @@ class MiCoEval:
     
     def set_eval(self, objective: str):
         self.objective = objective
-        if self.objective == 'ptq_acc':
-            self.eval = self.eval_ptq
-        elif self.objective == 'qat_acc':
-            self.eval = self.eval_qat
-        elif self.objective == 'bops':
-            self.eval = self.eval_bops
-        elif self.objective == 'latency_bitfusion':
-            self.eval = lambda scheme: self.eval_latency(scheme, 'bitfusion')
-        elif self.objective == 'latency_mico':
-            self.eval = lambda scheme: self.eval_latency(scheme, 'mico')
+        self.eval = self.eval_dict()[objective]
+        return
     
+    def set_constraint(self, constraint: str):
+        self.constraint = constraint
+        self.constr = self.eval_dict()[constraint]
+        return
+
+    def eval_dict(self):
+        return {
+            'ptq_acc': self.eval_ptq,
+            'qat_acc': self.eval_qat,
+            'bops': self.eval_bops,
+            'latency_bitfusion': lambda scheme: self.eval_latency(scheme, 'bitfusion'),
+            'latency_mico': lambda scheme: self.eval_latency(scheme, 'mico')
+        }
+
     def load_pretrain(self):
         ckpt = torch.load(self.pretrained_model)
         self.model.load_state_dict(ckpt)
@@ -105,7 +115,6 @@ class MiCoEval:
         bops = np.dot(wq*aq, self.layer_macs)
         return bops
 
-    # TODO: Implement latency evaluation
     def eval_latency(self, scheme: list, target: str = 'bitfusion'):
 
         wq = scheme[:self.n_layers]
@@ -115,6 +124,7 @@ class MiCoEval:
 
         if target == 'bitfusion':
             res = sim_bitfusion(self.model_name, wq, aq)
+        # TODO: Implement latency evaluation
         elif target == 'mico':
             res = sim_mico(wq, aq)
         else:
@@ -136,6 +146,8 @@ if __name__ == "__main__":
     train_loader, test_loader = cifar10(shuffle=False)
     evaluator = MiCoEval(model, 10, train_loader, test_loader, 
                          "output/ckpt/vgg_cifar10.pth", model_name="vgg")
-    evaluator.set_eval("latency_bitfusion")
     res = evaluator.eval([8]*model.n_layers*2)
-    print(res)
+    print("Accuracy:", res)
+    res = evaluator.constr([8]*model.n_layers*2)
+    print("BOPs:", res)
+
