@@ -83,6 +83,7 @@ class MiCoEval:
             'ptq_acc': self.eval_ptq,
             'qat_acc': self.eval_qat,
             'bops': self.eval_bops,
+            'size': self.eval_size,
             'latency_bitfusion': lambda scheme: self.eval_latency(scheme, 'bitfusion'),
             'latency_mico': lambda scheme: self.eval_latency(scheme, 'mico')
         }
@@ -114,6 +115,12 @@ class MiCoEval:
         aq = np.array(scheme[self.n_layers:])
         bops = np.dot(wq*aq, self.layer_macs)
         return bops
+
+    def eval_size(self, scheme:list):
+        size = 0
+        wq = np.array(scheme[:self.n_layers])
+        size = np.dot(wq, self.layer_params)
+        return size
 
     def eval_latency(self, scheme: list, target: str = 'bitfusion'):
 

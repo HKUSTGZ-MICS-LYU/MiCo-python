@@ -1,7 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.utils.fusion as fusion
-import torch.nn.functional as F
 
 import numpy as np
 
@@ -101,7 +99,7 @@ class MiCoBOSearcher:
                 samples += self.mpq.get_subspace_genetic(constr_bops, 
                                               min_space_size=SAMPLE_MIN,
                                               use_max_q=use_max_q,
-                                              prune=prune, roi_range=0.2)
+                                              prune=prune, roi_range=roi)
             vecs = np.array([self.mpq.sample_to_vec(sample) for sample in samples])
             vec_tensor = torch.tensor(vecs, dtype=torch.float64, device=DEVICE) / 8 # Normalize X
             acq_vals = acq(
