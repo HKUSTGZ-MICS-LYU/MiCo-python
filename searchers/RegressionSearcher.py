@@ -3,6 +3,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from MiCoEval import MiCoEval
+from searchers.QSearcher import QSearcher
 from searchers.SearchUtils import (
     random_sample, grid_sample
 )
@@ -11,7 +12,7 @@ from xgboost import XGBRegressor
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 
-class RegressionSearcher:
+class RegressionSearcher(QSearcher):
 
     NUM_SAMPLES = 1000
 
@@ -20,11 +21,10 @@ class RegressionSearcher:
                  qtypes: list = [4,5,6,7,8],
                  model_type: str = "xgb") -> None:
         
-        self.evaluator = evaluator
+        super().__init__(evaluator, n_inits, qtypes)
+
         self.n_layers = evaluator.model.n_layers
         self.dims = self.n_layers * 2
-        self.n_inits = n_inits
-        self.qtypes = qtypes
         if model_type == "gp":
             self.model = GaussianProcessRegressor()
         elif model_type == "rf":

@@ -1,15 +1,16 @@
 from MiCoEval import MiCoEval
+from searchers.QSearcher import QSearcher
 
 from gekko import GEKKO
 from copy import deepcopy
 
 # Edge-MPQ Baseline NLP Searcher
-class NLPSearcher:
+class NLPSearcher(QSearcher):
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
                  qtypes: list = [4,5,6,7,8]) -> None:
-        
-        self.evaluator = evaluator
+        super().__init__(evaluator, n_inits, qtypes)
+
         self.qbits = qtypes
         self.layer_macs = self.evaluator.layer_macs
         self.layer_params = self.evaluator.layer_macs
