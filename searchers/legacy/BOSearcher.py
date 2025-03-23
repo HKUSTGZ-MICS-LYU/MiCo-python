@@ -28,7 +28,7 @@ from MiCoSearch import MiCoSearch
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NUM_RESTARTS = 10
 
-class MiCoBOSearcher:
+class BOSearcher:
     def __init__(self, search: MiCoSearch) -> None:
         self.mpq = search
         self.layer_macs = self.mpq.layer_macs

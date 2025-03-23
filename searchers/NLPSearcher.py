@@ -1,6 +1,7 @@
 from MiCoEval import MiCoEval
 
 from gekko import GEKKO
+from copy import deepcopy
 
 # Edge-MPQ Baseline NLP Searcher
 class NLPSearcher:
@@ -57,13 +58,29 @@ class NLPSearcher:
         print("Calculating Layer-wise W...")
         self.calculate_w(qbits=min(self.qbits))
         m = GEKKO(remote=False)
-        # FIXME: It's not working somehow, weird
-        q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
+        m.options.IMODE = 3
+        m.options.SOLVER = 1
 
-        total_bops = m.sum([(q_vars[i] * q_vars[i]) * self.layer_macs[i] 
-                    for i in range(self.n_layers)])
+        # Manual SOS1
+        # q_vars = []
+        # for i in range(self.n_layers):
+        #     b = m.Array(m.Var, len(self.qbits), lb=0, ub=1, integer=True)
+        #     m.Equation(m.sum(b) == 1)
+        #     q = m.sum([self.qbits[j] * b[j] for j in range(len(self.qbits))])
+        #     q_vars.append(q)
+
+        # Integer Method
+        # q_vars = [m.CV(lb=min(self.qbits), ub=max(self.qbits), integer=True) \
+        #           for i in range(self.n_layers)]
+
+        # SOS1 Method
+        q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
+        for i in range(self.n_layers):
+            # We need to start from the highest bitwidth
+            q_vars[i].value = max(self.qbits) 
         
-        m.Equation(total_bops <= constr_value)
+        m.Equation(m.sum([(q_vars[i]**2) * self.layer_macs[i] 
+                        for i in range(self.n_layers)]) <= constr_value)
         
         total_w = m.sum([q_vars[i] * self.layer_w[i] for i in range(self.n_layers)])
 
@@ -71,7 +88,6 @@ class NLPSearcher:
         
         print("Searching with BOPS Constraint:", constr_value)
 
-        # m.options.IMODE = 3
         m.solve(disp=True)
 
         def convert_q(q):

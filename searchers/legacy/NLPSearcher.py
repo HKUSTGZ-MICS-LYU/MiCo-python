@@ -46,14 +46,13 @@ class NLPSearcher:
         q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
 
         if constr_bops is not None:
-            m.Equation(m.sum([(q_vars[i] * q_vars[i] + q_vars[i] + q_vars[i]) * 
-                          self.layer_macs[i] 
+            m.Equation(m.sum([(q_vars[i]**2) * self.layer_macs[i] 
                           for i in range(self.n_layers)]) <= constr_bops)
         if constr_size is not None:
             m.Equation(m.sum([q_vars[i] * self.layer_params[i] 
                               for i in range(self.n_layers)]) <= constr_size)
 
-        m.Minimize(m.sum([(q_vars[i] * q_vars[i]) * self.layer_w[i]
+        m.Minimize(m.sum([q_vars[i] * self.layer_w[i]
                      for i in range(self.n_layers)]))
 
         m.options.IMODE = 3
