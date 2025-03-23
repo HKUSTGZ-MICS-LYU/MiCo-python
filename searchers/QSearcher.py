@@ -16,6 +16,7 @@ class QSearcher(ABC):
         self.evaluator = evaluator
         self.n_inits = n_inits
         self.qtypes = qtypes
+        self.best_trace = []
         return
 
 
