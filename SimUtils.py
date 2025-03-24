@@ -5,21 +5,7 @@ import subprocess
 
 PWD = os.getcwd()
 
-def sim_bitfusion(model_name: str, wq: list, aq: list):
-
-    # Check if bitfusion is installed
-    if not os.path.exists(f'{PWD}/hw/bitfusion'):
-        error = "Bitfusion not installed. Please install bitfusion first."
-        raise FileNotFoundError(error)
-
-    json_name = f'{model_name}.json'
-
-    config = {
-        "model_name": model_name,
-        "wq": wq,
-        "aq": aq
-    }
-
+def run_bitfusion_sim(json_name, config):
     with open(f'{PWD}/hw/bitfusion/configs/{json_name}', 'w') as f:
         json.dump(config, f)
 
@@ -37,12 +23,53 @@ def sim_bitfusion(model_name: str, wq: list, aq: list):
         elif line.startswith('Energy: '):
             result['energy'] = float(line.split(' ')[1])
     assert 'cycles' in result, "Bitfusion simulation failed!"
-    # TODO: We could add another arg to select the output key
     return result['cycles']
+
+def sim_bitfusion(model_name: str, wq: list, aq: list):
+
+    # Check if bitfusion is installed
+    if not os.path.exists(f'{PWD}/hw/bitfusion'):
+        error = "Bitfusion not installed. Please install bitfusion first."
+        raise FileNotFoundError(error)
+
+    json_name = f'{model_name}.json'
+
+    config = {
+        "model_name": model_name,
+        "wq": wq,
+        "aq": aq
+    }
+    return run_bitfusion_sim(json_name, config)
 
 def sim_mico(wq:list, aq:list):
     pass
 
+def benchmark_bitfusion(N:int, M:int, K:int):
+
+    # Check if bitfusion is installed
+    if not os.path.exists(f'{PWD}/hw/bitfusion'):
+        error = "Bitfusion not installed. Please install bitfusion first."
+        raise FileNotFoundError(error)
+
+    json_name = 'benchmark.json'
+
+    config = {
+        "model_name": "matmul",
+        "n": N,
+        "m": M,
+        "k": K
+    }
+    qa = [2, 4, 8]
+    qb = [2, 4, 8]
+    res = []
+    for i in range(len(qa)):
+        for j in range(len(qb)):
+            config['aq'] = [qa[i]]
+            config['wq'] = [qb[j]]
+            cycles = run_bitfusion_sim(json_name, config)
+            print(f"QAxQB: {qa[i]}x{qb[j]}, Cycles: {cycles}")
+            res.append((N, M, K, qa[i], qb[j], cycles))
+    return res
 
 def benchmark_mico(N: int, M: int, K: int, mico_script="sim_small_mico.sh"):
     
