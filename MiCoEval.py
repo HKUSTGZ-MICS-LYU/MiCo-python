@@ -7,21 +7,10 @@ import numpy as np
 
 from matplotlib import pyplot as plt
 
-import os
-import copy
-import json
-import random
-import itertools 
+import time
 import warnings
 
 from tqdm import tqdm
-
-from MiCoUtils import (
-    list_qlayers,
-    list_quantize_layers,
-    replace_quantize_layers,
-    set_to_qforward
-)
 
 from MiCoModel import MiCoModel
 from SimUtils import sim_bitfusion, sim_mico
@@ -48,18 +37,18 @@ class MiCoEval:
 
         self.model_name = model_name
         self.n_layers = self.model.n_layers
+        
+        self.set_eval(objective)
+        self.set_constraint(constraint)
 
         # Initial Conversion and Test
-        res = self.eval_ptq([8]*self.n_layers*2)
+        res = self.eval([8]*self.n_layers*2)
         self.baseline_acc = res
         self.layers = model.get_qlayers()
         assert self.n_layers > 0, "No QLayer found! Please convert the model first."
         
         self.layer_macs = [layer.get_mac() for layer in self.layers]
         self.layer_params = [layer.get_params() for layer in self.layers]
-        
-        self.set_eval(objective)
-        self.set_constraint(constraint)
 
         print("Model:", model._get_name())
         print("Number of QLayers: ", self.n_layers)
@@ -82,10 +71,12 @@ class MiCoEval:
         return {
             'ptq_acc': self.eval_ptq,
             'qat_acc': self.eval_qat,
+            'torchao_acc': self.eval_torchao,
             'bops': self.eval_bops,
             'size': self.eval_size,
             'latency_bitfusion': lambda scheme: self.eval_latency(scheme, 'bitfusion'),
-            'latency_mico': lambda scheme: self.eval_latency(scheme, 'mico')
+            'latency_mico': lambda scheme: self.eval_latency(scheme, 'mico'),
+            'latency_torchao': lambda scheme: self.eval_latency(scheme, 'torchao')
         }
 
     def load_pretrain(self):
@@ -108,6 +99,13 @@ class MiCoEval:
         self.model.train_loop(self.epochs, self.train_loader, self.lr)
         return self.model.test(self.test_loader)['TestAcc']
     
+    def eval_torchao(self, scheme: list):
+        wq = scheme[:self.n_layers]
+        aq = scheme[self.n_layers:]
+        self.load_pretrain()
+        self.model.set_qscheme_torchao([wq, aq])
+        return self.model.test(self.test_loader)['TestAcc']
+
     # Classic Bit Operation Counts
     def eval_bops(self, scheme: list):
         bops = 0
@@ -134,9 +132,14 @@ class MiCoEval:
         # TODO: Implement latency evaluation
         elif target == 'mico':
             res = sim_mico(wq, aq)
+        elif target == 'torchao':
+            self.model.set_qscheme_torchao([wq, aq])
+            start_time = time.time()
+            self.model.test(self.test_loader)
+            end_time = time.time()
+            res = end_time - start_time
         else:
             raise ValueError(f"Target \"{target}\" not supported.")
-        
         return res
     
 # Test

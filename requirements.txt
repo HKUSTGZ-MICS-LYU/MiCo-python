@@ -7,3 +7,6 @@ matplotlib
 # for LLaMa
 requests
 sentencepiece
+
+# for torch native quantization
+torchao

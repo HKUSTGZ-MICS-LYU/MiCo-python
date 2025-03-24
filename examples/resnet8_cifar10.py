@@ -1,3 +1,4 @@
+import time
 import json
 import torch
 import numpy as np
@@ -5,6 +6,7 @@ import numpy as np
 from models import resnet_alt_8
 from MiCoUtils import (
     list_quantize_layers, 
+    list_qlayers,
     replace_quantize_layers,
     set_to_qforward,
     export_layer_weights,
@@ -36,28 +38,43 @@ if __name__ == "__main__":
     #     quant_aware=False, device=device, use_bias=True)
 
     train_loader, test_loader = cifar10(batch_size=batch_size, num_works=8)
-    res = model.train_loop(num_epoch, train_loader, test_loader, verbose=True)
-    torch.save(model.state_dict(), f'output/ckpt/{model_name}.pth')
+    # res = model.train_loop(num_epoch, train_loader, test_loader, verbose=True)
+    # torch.save(model.state_dict(), f'output/ckpt/{model_name}.pth')
     # print("Model Results: ", res)
 
     # Load Test
-    # ckpt = torch.load(f'output/ckpt/{model_name}.pth')
-    # model.load_state_dict(ckpt)
-
-    res = model.test(test_loader)
-    print("Model Test Results: ", res)
+    ckpt = torch.load(f'output/ckpt/{model_name}.pth')
+    model.load_state_dict(ckpt)
 
     # Fuse Model
-    model = fuse_model(model)
+    # model = fuse_model(model)
+    # res = model.test(test_loader)
+    # print("Model Fused Test Results: ", res)
+
+    start_time = time.time()
     res = model.test(test_loader)
-    print("Model Fused Test Results: ", res)
+    end_time = time.time()
+    print("Model Test Results: ", res)
+    print("Model Test Time: ", end_time - start_time)
+
+    model.set_qscheme_torchao([[8] * n_layers, [8] * n_layers], device=device)
+    start_time = time.time()
+    res = model.test(test_loader)
+    end_time = time.time()
+    print("Model Torch AO Test Results: ", res)
+    print("Model Torch AO Test Time: ", end_time - start_time)
+
+    # Need to reload if torchao is used
+    model = resnet_alt_8(n_class=10).to(device)
+    ckpt = torch.load(f'output/ckpt/{model_name}.pth')
+    model.load_state_dict(ckpt)
 
     weight_q = [8] * n_layers
     activation_q = [8] * n_layers
-    replace_quantize_layers(model, weight_q, activation_q, 
-        quant_aware=False, device=device, use_bias=True)
+    model.set_qscheme(
+        [weight_q, activation_q], 
+        qat=False, device=device, use_bias=True)
 
-    set_to_qforward(model)
     res = model.test(test_loader)
     print("Model Quantized Test Results: ", res)
 

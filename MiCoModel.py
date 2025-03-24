@@ -1,4 +1,5 @@
 import torch
+from torchao import autoquant
 from torch import nn
 import numpy as np
 
@@ -6,13 +7,13 @@ from tqdm import tqdm
 from MiCoUtils import (
     list_quantize_layers, 
     set_to_qforward, 
-    replace_quantize_layers)
+    replace_quantize_layers,
+    replace_quantize_layers_torchao)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class MiCoModel(nn.Module):
     n_layers: int
-    
     def __init__(self):
         super(MiCoModel, self).__init__()
 
@@ -25,6 +26,15 @@ class MiCoModel(nn.Module):
                                 device=device, use_bias=use_bias)
         if not qat:
             set_to_qforward(self)
+        return
+    
+    def set_qscheme_torchao(self, qscheme,device=device):
+        replace_quantize_layers_torchao(self, qscheme[0], qscheme[1], device=device)
+        return
+    
+    def torchao_autoquant(self, example_input: torch.Tensor):
+        autoquant(self)
+        self(example_input)
         return
 
     def test(self, test_loader):

@@ -13,7 +13,7 @@ from datasets import mnist
 
 from tqdm import tqdm
 
-num_epoch = 5
+num_epoch = 1
 batch_size = 64
 
 torch.manual_seed(0)
@@ -31,10 +31,9 @@ if __name__ == "__main__":
     model = MLP(in_features=256, config=config).to(device)
     n_layers = len(list_quantize_layers(model))
     print("Number of Quantizable Layers: ", n_layers)
-    weight_q = [8, 4, 2, 1]
-    activation_q = [8] * n_layers
-    replace_quantize_layers(model, weight_q, activation_q, 
-        quant_aware=True, device=device)
+    weight_q = [8, 8, 8, 8]
+    activation_q = [4, 4, 4, 4]
+    model.set_qscheme([weight_q, activation_q], qat=True)
 
     train_loader, test_loader = mnist(batch_size=batch_size, num_works=0, resize=16)
     res = model.train_loop(num_epoch, train_loader, test_loader, verbose=True)

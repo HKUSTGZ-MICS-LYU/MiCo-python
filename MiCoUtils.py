@@ -6,6 +6,15 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.fusion as fusion
 
+from torchao.quantization.quant_api import(
+    quantize_,
+    Int4DynamicActivationInt4WeightConfig,
+    Int8DynamicActivationInt4WeightConfig,
+    Int8DynamicActivationInt8WeightConfig,
+    Int4WeightOnlyConfig,
+    Int8WeightOnlyConfig,
+)
+
 def list_quantize_layers(model: nn.Module):
     layers = []
     for name, module in model.named_children():
@@ -33,7 +42,53 @@ def list_qlayers_names(model: nn.Module):
             layers += list_quantize_layers(module)
     return layers
 
-# Note: this function will clear the weight_types_list and act_types_list
+def torchao_quantize(qw, qa):
+    if (qw == 8) and (qa == 8):
+        return Int8DynamicActivationInt8WeightConfig()
+    elif (qw == 4) and (qa == 8):
+        return Int8DynamicActivationInt4WeightConfig()
+    elif (qw == 4) and (qa == 4):
+        return Int4DynamicActivationInt4WeightConfig()
+    elif (qw == 8) and (qa == 4):
+        raise NotImplementedError
+    elif (qw == 8) and (qa == 32):
+        return Int8WeightOnlyConfig()
+    elif (qw == 4) and (qa == 32):
+        return Int4WeightOnlyConfig()
+    else:
+        raise NotImplementedError
+
+# Note: Torch AO only quantizes linear layers
+def replace_quantize_layers_torchao(model: nn.Module,
+                            weight_types_list: list, 
+                            act_types_list: list,
+                            device=None):
+    
+    wlist = copy.deepcopy(weight_types_list)
+    alist = copy.deepcopy(act_types_list)
+
+    __replace_layer_torchao(model,
+                            wlist,
+                            alist,
+                            device)
+
+
+def __replace_layer_torchao(model: nn.Module,
+                            weight_types_list: list, 
+                            act_types_list: list,
+                            device):
+
+    for name, module in model.named_children():
+        if isinstance(module, nn.Linear):
+            weight_type = weight_types_list.pop(0)
+            act_type = act_types_list.pop(0)
+            quantize_(module, torchao_quantize(weight_type, act_type), 
+                      device=device)
+        else:
+            __replace_layer_torchao(
+                module, weight_types_list, act_types_list, device)
+
+
 def replace_quantize_layers(model: nn.Module,
                             weight_types_list: list, 
                             act_types_list: list,
