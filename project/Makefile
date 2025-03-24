@@ -75,6 +75,8 @@ clean:
 
 compile: $(BUILD) $(MAIN).elf $(MAIN).asm
 
+recompile: clean compile
+
 run_host: $(MAIN).elf
 	./$(MAIN).elf
 

@@ -8,9 +8,7 @@
 #include "mico_nn.h"
 #include "mico_qnn.h"
 
-#define N 4
-#define M 10
-#define K 1024
+#include "matmul_test.h"
 
 int main(){
     Tensor2D_Q8 x, w;
