@@ -13,6 +13,7 @@ class VGG(MiCoModel):
     def __init__(self, in_channels: int, num_class = 100) -> None:
         super(VGG, self).__init__()
 
+        self.default_dataset = "CIFAR10"
         self.in_channels = in_channels
         self.num_block = 3
         features = [

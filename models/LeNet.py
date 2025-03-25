@@ -31,6 +31,8 @@ class LeNet(MiCoModel):
         ]
         self.layers = nn.Sequential(*layers)
         self.n_layers = 5 # 2 conv2d + 3 linear
+        self.default_dataset = "LENET_MNIST"
+
         return
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:

@@ -57,6 +57,7 @@ class Bottleneck(nn.Module):
                           kernel_size=1, stride=stride),
                 nn.BatchNorm2d(self.expansion*planes)
             )
+        self.default_dataset = "CIFAR100"
 
     def forward(self, x):
         out = F.relu(self.bn1(self.conv1(x)))

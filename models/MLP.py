@@ -14,6 +14,7 @@ class MLP(MiCoModel):
 
         self.config = config
         self.in_features = in_features
+        self.default_dataset = "MLP_MNIST"
 
         layers = []
         in_shape = in_features

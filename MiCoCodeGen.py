@@ -33,7 +33,7 @@ class MiCoCodeGen(torch.fx.Interpreter):
 
     MODEL_H_TEMPLATE = """#ifndef __MODEL_H
 #define __MODEL_H
-
+#define {model_dataset}
 #include "nn.h"
 #include "mico_nn.h"
 /*
@@ -585,8 +585,14 @@ void model_forward(Model* model) {{
         model_h_path = os.path.join(output_directory, f"{model_name}.h")
         model_bin_path = os.path.join(output_directory, f"{model_name}.bin")
 
+        if hasattr(self.model, "default_dataset"):
+            model_dataset = self.model.default_dataset
+        else:
+            model_dataset = "DEFAULT_DATASET"
+
         with open(model_h_path, "w") as f:
             f.write(MiCoCodeGen.MODEL_H_TEMPLATE.format(
+                model_dataset=model_dataset,
                 model_name=model_name,
                 model_struct=model_struct_str,
                 model_init=model_init_str,
@@ -619,15 +625,15 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    # example_input = torch.randn(1, 256)
+    example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    example_input = torch.randn(1, 3, 32, 32)
+    # example_input = torch.randn(1, 3, 32, 32)
 
-    # config = {
-    #     "Layers": [64, 64, 64, 10],
-    # }
-    # m = MLP(in_features=256, config=config)
-    # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
+    config = {
+        "Layers": [64, 64, 64, 10],
+    }
+    m = MLP(in_features=256, config=config)
+    ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
 
     # m = LeNet(1)
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
@@ -646,22 +652,21 @@ if __name__ == "__main__":
     # m = SqueezeNet(class_num=10)
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
 
-    m = resnet_alt_8(10)
-    ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
+    # m = resnet_alt_8(10)
+    # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
+
+    weight_q = [8, 8, 8, 8]
+    activation_q = [8, 8, 8, 8]
+
 
     m.load_state_dict(ckpt)
+    m.set_qscheme([weight_q, activation_q])
     m = fuse_model(m)
-    mico.replace_quantize_layers(m, 
-                                [8]*m.n_layers, 
-                                # [8, 4, 2, 1],
-                                [8]*m.n_layers, 
-                                quant_aware=False,
-                                use_bias=True)
-    mico.set_to_qforward(m)
     m.eval()
+
     m = MiCoCodeGen(m)
 
     m.forward(example_input)
     m.print_graph()
 
-    m.convert("project", "model", verbose = False)
+    m.convert("project", "model", verbose = True)

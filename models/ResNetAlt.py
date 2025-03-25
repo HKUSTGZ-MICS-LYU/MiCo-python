@@ -103,6 +103,7 @@ class ResNetAlt(MiCoModel):
         self.conv5_x = self._make_layer(block, 512, num_block[3], 2)
         self.avg_pool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512 * block.expansion, num_classes)
+        self.default_dataset = "CIFAR100"
 
         self.n_layers = len(self.get_qlayers())
 

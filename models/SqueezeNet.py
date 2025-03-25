@@ -77,6 +77,7 @@ class SqueezeNet(MiCoModel):
         self.avg = nn.AdaptiveAvgPool2d(1)
         self.maxpool = nn.MaxPool2d(2, 2)
         self.n_layers = len(self.get_qlayers())
+        self.default_dataset = "CIFAR100"
 
     def forward(self, x):
         x = self.stem(x)

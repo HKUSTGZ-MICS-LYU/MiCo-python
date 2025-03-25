@@ -34,6 +34,7 @@ class LinearBottleNeck(nn.Module):
         self.stride = stride
         self.in_channels = in_channels
         self.out_channels = out_channels
+        self.default_dataset = "CIFAR10"
 
     def forward(self, x):
 
