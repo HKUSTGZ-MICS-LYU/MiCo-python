@@ -4,3 +4,4 @@ from .RegressionSearcher import RegressionSearcher
 from .NLPSearcher import NLPSearcher
 from .BayesSearcher import BayesSearcher
 from .HAQSearcher import HAQSearcher
+from .MiCoSearcher import MiCoSearcher

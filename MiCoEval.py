@@ -1,7 +1,5 @@
 import torch
-import torch.nn as nn
-import torch.nn.utils.fusion as fusion
-import torch.nn.functional as F
+from torch.utils.data.dataloader import DataLoader
 
 import numpy as np
 
@@ -13,8 +11,11 @@ import warnings
 from tqdm import tqdm
 
 from MiCoModel import MiCoModel
+from MiCoCodeGen import MiCoCodeGen
+from MiCoUtils import fuse_model
 from SimUtils import sim_bitfusion, sim_mico
 
+from copy import deepcopy
 
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -22,7 +23,9 @@ warnings.filterwarnings("ignore")
 
 class MiCoEval:
     def __init__(self, model: MiCoModel, 
-                 epochs: int, train_loader, test_loader, 
+                 epochs: int, 
+                 train_loader: DataLoader, 
+                 test_loader: DataLoader, 
                  pretrained_model,
                  lr=0.0001, model_name = "", 
                  objective='ptq_acc',
@@ -49,6 +52,10 @@ class MiCoEval:
         
         self.layer_macs = [layer.get_mac() for layer in self.layers]
         self.layer_params = [layer.get_params() for layer in self.layers]
+        self.input_size = self.train_loader.dataset[0][0].shape
+
+        # A Regression Model for Hardware Latency
+        self.latency_model = None
 
         print("Model:", model._get_name())
         print("Number of QLayers: ", self.n_layers)
@@ -76,6 +83,7 @@ class MiCoEval:
             'size': self.eval_size,
             'latency_bitfusion': lambda scheme: self.eval_latency(scheme, 'bitfusion'),
             'latency_mico': lambda scheme: self.eval_latency(scheme, 'mico'),
+            'latency_mico_proxy': lambda scheme: self.eval_latency(scheme, 'mico_proxy'),
             'latency_torchao': lambda scheme: self.eval_latency(scheme, 'torchao')
         }
 
@@ -83,6 +91,9 @@ class MiCoEval:
         ckpt = torch.load(self.pretrained_model)
         self.model.load_state_dict(ckpt)
         return
+
+    def set_proxy(self, model):
+        self.latency_model = model
 
     def eval_ptq(self, scheme: list):
         wq = scheme[:self.n_layers]
@@ -113,6 +124,23 @@ class MiCoEval:
         aq = np.array(scheme[self.n_layers:])
         bops = np.dot(wq*aq, self.layer_macs)
         return bops
+    
+    def eval_pred_latency(self, scheme: list):
+
+        assert self.latency_model is not None, "Latency model not set."
+
+        pred_latency = 0
+        wq = np.array(scheme[:self.n_layers])
+        aq = np.array(scheme[self.n_layers:])
+        macs = np.array(self.layer_macs)
+        bmacs = macs * np.max([aq, wq], axis=0)
+        wloads = macs * wq
+        aloads = macs * aq
+
+        X = np.column_stack((bmacs, wloads, aloads))
+        pred_latency = self.latency_model.predict(X)
+        pred_latency = np.sum(pred_latency)
+        return pred_latency
 
     def eval_size(self, scheme:list):
         size = 0
@@ -129,9 +157,18 @@ class MiCoEval:
 
         if target == 'bitfusion':
             res = sim_bitfusion(self.model_name, wq, aq)
-        # TODO: Implement latency evaluation
         elif target == 'mico':
-            res = sim_mico(wq, aq)
+            gen_model = deepcopy(self.model)
+            gen_model = fuse_model(gen_model)
+            gen_model.set_qscheme([wq, aq])
+            codegen = MiCoCodeGen(gen_model)
+            example_input = torch.randn(1, *self.input_size).to(DEVICE)
+            codegen.forward(example_input)
+            codegen.convert()
+            codegen.build()
+            res = sim_mico()
+        elif target == 'mico_proxy':
+            res = self.eval_pred_latency(scheme)
         elif target == 'torchao':
             self.model.set_qscheme_torchao([wq, aq])
             start_time = time.time()
@@ -140,11 +177,13 @@ class MiCoEval:
             res = end_time - start_time
         else:
             raise ValueError(f"Target \"{target}\" not supported.")
+        if res is None:
+            raise ValueError(f"Error in simulating the model on {target}.")
         return res
     
 # Test
 if __name__ == "__main__":
-    from models import LeNet, VGG
+    from models import MLP, LeNet, VGG
     from datasets import mnist, cifar10
 
     # model = LeNet(1)
@@ -152,12 +191,19 @@ if __name__ == "__main__":
     # evaluator = MiCoEval(model, 10, train_loader, test_loader, 
     #                      "output/ckpt/lenet_mnist.pth", model_name="lenet")
     
-    model = VGG(3, num_class=10)
-    train_loader, test_loader = cifar10(shuffle=False)
+    # model = VGG(3, num_class=10)
+    # train_loader, test_loader = cifar10(shuffle=False)
+    # evaluator = MiCoEval(model, 10, train_loader, test_loader, 
+    #                      "output/ckpt/vgg_cifar10.pth", model_name="vgg")
+    # res = evaluator.eval([8]*model.n_layers*2)
+    # print("Accuracy:", res)
+    # res = evaluator.constr([8]*model.n_layers*2)
+    # print("BOPs:", res)
+
+    model = MLP(256, config={"Layers": [64, 64, 64, 10]})
+    train_loader, test_loader = mnist(shuffle=False, resize=16)
     evaluator = MiCoEval(model, 10, train_loader, test_loader, 
-                         "output/ckpt/vgg_cifar10.pth", model_name="vgg")
-    res = evaluator.eval([8]*model.n_layers*2)
-    print("Accuracy:", res)
-    res = evaluator.constr([8]*model.n_layers*2)
-    print("BOPs:", res)
+                        "output/ckpt/mlp_mnist.pth", model_name="mlp")
+    res = evaluator.eval_latency([8]*model.n_layers*2, 'mico')
+    print("Latency:", res)
 

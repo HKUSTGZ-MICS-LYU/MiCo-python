@@ -41,8 +41,28 @@ def sim_bitfusion(model_name: str, wq: list, aq: list):
     }
     return run_bitfusion_sim(json_name, config)
 
-def sim_mico(wq:list, aq:list):
-    pass
+def sim_mico(mico_type = "small"):
+
+    mico_script = f"sim_{mico_type}_mico.sh"
+    # Run the benchmark
+    cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
+        f'sh {mico_script} ../../project/main.elf'
+
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    output = proc.stdout.readlines()
+    if proc.stderr:
+        print("Error in simulating the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    for line in output:
+        line = str(line.decode())
+        # print(line)
+        if line.startswith('[info] Execution Time: '):
+            cycles = int(line.split(': ')[1])
+            return cycles
+    return None
+
 
 def benchmark_bitfusion(N:int, M:int, K:int):
 

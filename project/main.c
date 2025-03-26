@@ -10,9 +10,17 @@
 
 #include "model.h"
 
+#ifdef MLP_MNIST
 #include "mlp_test_data.h"
-// #include "lenet_test_mnist.h"
-// #include "test_cifar10.h"
+#endif
+
+#ifdef LENET_MNIST
+#include "lenet_test_mnist.h"
+#endif
+
+#ifdef CIFAR10
+#include "test_cifar10.h"
+#endif
 
 int main(){
 

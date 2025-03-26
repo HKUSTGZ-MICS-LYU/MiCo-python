@@ -176,23 +176,23 @@ def unset_qforward(model: nn.Module):
             unset_qforward(module)
     return
 
-WEIGHT_SIZE = {
-    "1b": 1,
-    "1.5b": 1.6, # Consider 5 weights compressed into 8 bits
-    "2b": 2,
-    "3b": 3,
-    "4b": 4,
-    "5b": 5,
-    "6b": 6,
-    "7b": 7,
-    "8b": 8
-}
+# WEIGHT_SIZE = {
+#     "1b": 1,
+#     "1.5b": 1.6, # Consider 5 weights compressed into 8 bits
+#     "2b": 2,
+#     "3b": 3,
+#     "4b": 4,
+#     "5b": 5,
+#     "6b": 6,
+#     "7b": 7,
+#     "8b": 8
+# }
 
 def get_model_size(model: nn.Module):
     size = 0
     for name, module in model.named_children():
         if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
-            size += module.weight.numel() * WEIGHT_SIZE[module.qtype]
+            size += module.weight.numel() * module.qtype
         else:
             size += get_model_size(module)
     return size

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 
+from tqdm import tqdm
 import numpy as np
 
 from matplotlib import pyplot as plt
@@ -9,7 +10,7 @@ from MiCoEval import MiCoEval
 from searchers.QSearcher import QSearcher
 
 from searchers.SearchUtils import (
-    random_sample, grid_sample, random_sample_min_max
+    random_sample, grid_sample
 )
 
 from botorch import fit_gpytorch_mll
@@ -21,7 +22,7 @@ from gpytorch.kernels.scale_kernel import ScaleKernel
 from gpytorch.kernels.matern_kernel import MaternKernel
 from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikelihood
 
-class BayesSearcher(QSearcher):
+class MiCoSearcher(QSearcher):
 
     NUM_SAMPLES = 10000
 
@@ -43,16 +44,21 @@ class BayesSearcher(QSearcher):
         return random_sample(n_samples, self.qtypes, self.dims)
     
     def initial(self, n_samples: int):
-        return random_sample_min_max(n_samples, self.qtypes, self.dims)
+        return grid_sample(n_samples, self.qtypes, self.dims)
     
     def select(self, X, constr_value):
-        X = [x for x in X if self.evaluator.constr(x) <= constr_value]
+        constrs = []
+        for x in X:
+            constrs.append(self.evaluator.constr(x))
+        constrs = np.array(constrs) <= constr_value
+        X = np.array(X)
+        X = X[constrs].tolist()
         return X
 
     def search(self, n_iter: int, target: str, 
                constr: str = None, 
                constr_value = None):
-        
+
         self.evaluator.set_eval(target)
         if constr:
             self.evaluator.set_constraint(constr)
@@ -86,9 +92,13 @@ class BayesSearcher(QSearcher):
 
             X = []
             if constr:
+                timeout_count = 0
                 while len(X) == 0:
                     X = self.sample(self.NUM_SAMPLES)
                     X = self.select(X, constr_value)
+                    timeout_count += 1
+                    if timeout_count > 10:
+                        raise ValueError("Cannot find any feasible solution. Please consider relaxing the constraint.")
             else:
                 X = self.sample(self.NUM_SAMPLES)
 
