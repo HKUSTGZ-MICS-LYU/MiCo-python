@@ -47,7 +47,7 @@ def sim_mico(mico_type = "small"):
     # Run the benchmark
     cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
         f'sh {mico_script} ../../project/main.elf'
-
+    print("Running MiCo simulation...")
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
     output = proc.stdout.readlines()

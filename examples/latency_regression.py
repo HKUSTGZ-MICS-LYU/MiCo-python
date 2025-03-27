@@ -2,6 +2,7 @@ import csv
 import numpy as np
 
 from sklearn.linear_model import LinearRegression
+from sklearn.ensemble import RandomForestRegressor
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_percentage_error, r2_score
 
@@ -19,12 +20,24 @@ def regression(X, y):
     print("Coefficent:", reg.coef_.tolist())
     print("MAPE:", mean_absolute_percentage_error(y_test, y_pred))
     print("R2:", r2_score(y_test, y_pred))
-    print('-'*32)
+    return
+
+def rf_regression(X, y):
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=TEST_SIZE, random_state=RANDOM_SEED)
+    
+    reg = RandomForestRegressor()
+    reg.fit(X_train, y_train)
+    y_pred = reg.predict(X_test)
+
+    print("Random Forest:")
+    print("MAPE:", mean_absolute_percentage_error(y_test, y_pred))
+    print("R2:", r2_score(y_test, y_pred))
     return
 
 if __name__ == '__main__':
     
-    with open('benchmark_results/bitfusion.csv', 'r') as f:
+    with open('benchmark_results/mico_cacheless.csv', 'r') as f:
         csv_data = csv.reader(f)
         data = []
         next(csv_data) # skip header
@@ -50,6 +63,8 @@ if __name__ == '__main__':
     y = latency
 
     regression(X, y)
+    rf_regression(X, y)
+    print("-"*32)
 
     # Regression with BOPs
     print("Regression with BOPs")
@@ -60,9 +75,13 @@ if __name__ == '__main__':
     y = latency
 
     regression( X, y)
+    rf_regression(X, y)
+    print("-"*32)
+    
 
     # Regression with Max BOPs
     print("Regression with Max BOPs")
+
     MACS = N * M * K
     BOPS = MACS * np.max([QA, QW], axis=0)
 
@@ -70,7 +89,8 @@ if __name__ == '__main__':
     y = latency
 
     regression( X, y)
-
+    rf_regression(X, y)
+    print("-"*32)
 
     # Regression with Composite Max BOPs
     print("Regression with Composite Max BOPs")
@@ -84,4 +104,5 @@ if __name__ == '__main__':
     y = latency
 
     regression(X, y)
-
+    rf_regression(X, y)
+    print("-"*32)

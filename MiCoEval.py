@@ -56,6 +56,7 @@ class MiCoEval:
 
         # A Regression Model for Hardware Latency
         self.latency_model = None
+        self.mico_target = "small"
 
         print("Model:", model._get_name())
         print("Number of QLayers: ", self.n_layers)
@@ -94,6 +95,9 @@ class MiCoEval:
 
     def set_proxy(self, model):
         self.latency_model = model
+
+    def set_mico_target(self, mico_type: str):
+        self.mico_target = mico_type
 
     def eval_ptq(self, scheme: list):
         wq = scheme[:self.n_layers]
@@ -158,6 +162,7 @@ class MiCoEval:
         if target == 'bitfusion':
             res = sim_bitfusion(self.model_name, wq, aq)
         elif target == 'mico':
+            assert self.mico_target is not None, "MiCo Target not set."
             gen_model = deepcopy(self.model)
             gen_model = fuse_model(gen_model)
             gen_model.set_qscheme([wq, aq])
@@ -165,8 +170,11 @@ class MiCoEval:
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
             codegen.forward(example_input)
             codegen.convert()
-            codegen.build()
-            res = sim_mico()
+            if self.mico_target == "high": 
+                codegen.build(target="mico_fpu")
+            else:
+                codegen.build(target="mico")
+            res = sim_mico(self.mico_target)
         elif target == 'mico_proxy':
             res = self.eval_pred_latency(scheme)
         elif target == 'torchao':

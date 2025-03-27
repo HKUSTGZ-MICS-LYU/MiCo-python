@@ -8,8 +8,7 @@ if __name__ == '__main__':
     Ms = [32, 64, 128]
     Ks = [32, 64, 128]
 
-    mico_config = "small"
-
+    mico_config = "cacheless"
 
     dataset = []
     sweep = tqdm(total=len(Ns) * len(Ms) * len(Ks))

@@ -28,17 +28,21 @@ if __name__ == "__main__":
     train_loader, test_loader = mnist(shuffle=False, resize=16)
     evaluator = MiCoEval(model, 10, train_loader, test_loader, 
                          "output/ckpt/mlp_mnist.pth")
-    proxy = get_mico_proxy()
+    
+    mico_target = "high"
+
+    proxy = get_mico_proxy(mico_target)
     evaluator.set_proxy(proxy)
+    evaluator.set_mico_target(mico_target)
 
     dim = model.n_layers * 2
-    bitwidths = [2, 4, 8]
+    bitwidths = [1, 2, 4, 8]
     max_latency = evaluator.eval_pred_latency([8] * dim)
     print("INT8 Predicted Latency:", max_latency)
-    min_latency = evaluator.eval_pred_latency([2] * dim)
-    print("INT2 Predicted Latency:", min_latency)
+    min_latency = evaluator.eval_pred_latency([1] * dim)
+    print("INT1 Predicted Latency:", min_latency)
 
-    for model in ["mico"]:
+    for model in ["mico", "haq"]:
         random.seed(0)
         np.random.seed(0)
         print("Model Type:", model)
@@ -64,7 +68,7 @@ if __name__ == "__main__":
                 model_type=model)
 
         res_x, res_y = searcher.search(
-            20, 'ptq_acc', 'latency_mico_proxy', max_latency*0.9)
+            20, 'ptq_acc', 'latency_mico_proxy', max_latency*0.75)
         
         print(f"Best Scheme: {res_x}")
         print(f"Best Accuracy: {res_y}")
