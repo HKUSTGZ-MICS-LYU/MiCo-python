@@ -50,7 +50,7 @@ extern size_t model_weight_start[];
 extern size_t model_weight_end[];
 
 // Profiler Timer
-extern long QMATMUL_TIMER;
+extern long QMATMUL_TIMER, QUANT_TIMER, IM2COL_TIMER;
 
 typedef struct {{
 {model_struct}
@@ -580,8 +580,10 @@ void model_forward(Model* model) {{
         # Insert Profiler
         start_profiler = [f"{INDENT}long profile_time = MiCo_time();"]
         end_profiler = [f"{INDENT}profile_time = MiCo_time() - profile_time;",
-                        f"{INDENT}printf(\"Execution Time: %ld\\n\", profile_time);"
-                        f"{INDENT}printf(\"QMatMul Time: %ld\\n\", QMATMUL_TIMER);"]
+                        f"{INDENT}printf(\"Execution Time: %ld\\n\", profile_time);",
+                        f"{INDENT}printf(\"QMatMul Time: %ld\\n\", QMATMUL_TIMER);",
+                        f"{INDENT}printf(\"Quantization Time: %ld\\n\", QUANT_TIMER);",
+                        f"{INDENT}printf(\"Im2Col Time: %ld\\n\", IM2COL_TIMER);"]
         model_forward = start_profiler + model_forward + end_profiler
 
         model_struct_str = "\n".join(model_struct)
@@ -674,10 +676,7 @@ if __name__ == "__main__":
     # example_input = torch.randn(1, 1, 28, 28)
     # example_input = torch.randn(1, 3, 32, 32)
 
-    config = {
-        "Layers": [64, 64, 64, 10],
-    }
-    m = MLP(in_features=256, config=config)
+    m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     ckpt = torch.load("output/ckpt/mlp_mnist.pth")
 
     # m = LeNet(1)
@@ -700,8 +699,8 @@ if __name__ == "__main__":
     # m = resnet_alt_8(10)
     # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
-    weight_q = [2, 2, 2, 2]
-    activation_q = [2, 2, 2, 2]
+    weight_q = [8] * m.n_layers
+    activation_q = [8] * m.n_layers
 
     m.load_state_dict(ckpt)
     m.set_qscheme([weight_q, activation_q])
@@ -714,4 +713,4 @@ if __name__ == "__main__":
     m.print_graph()
 
     m.convert("project", "model", verbose = False)
-    m.build("project", "mico")
+    m.build("project", "mico_fpu")
