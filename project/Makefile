@@ -10,7 +10,7 @@ MICO_SOURCES = $(wildcard $(MICO_DIR)/src/*.c)
 MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico/*.c)
 
 OPT ?=
-TARGET ?= host # host, vexii
+TARGET ?= host
 
 # Software Optimization
 ifneq ($(filter unroll, $(OPT)),)
@@ -24,6 +24,10 @@ LDFLAGS = -lm
 
 # (Optional) Address Sanitizer
 # CFLAGS += -fsanitize=address -static-libasan
+
+ifeq ($(TARGET), host)
+	CFLAGS += -DUSE_HOST
+endif
 
 INCLUDES = $(MICO_INCLUDES) ./
 
