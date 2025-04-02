@@ -14,7 +14,7 @@ class CmsisCNN(MiCoModel):
         super(CmsisCNN, self).__init__()
 
         self.in_channels = in_channels
-
+        self.default_dataset = "CIFAR10"
         layers = [
             nn.Conv2d(in_channels, 32, (5,5), padding=2),
             nn.ReLU(),

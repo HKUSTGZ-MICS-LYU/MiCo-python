@@ -219,7 +219,37 @@ def export_layer_weights(model: nn.Module):
                 data[name] = sub_data
     return data
 
-def weight_export(weight, qtype):
+def weight_export(weight: torch.Tensor, qtype: int, align_to=32):
+    """
+    Export weights to binary format with K-dimension aligned to multiple of `align_to`
+    
+    Args:
+        weight: Weight array to export
+        qtype: Quantization type (1, 2, 4, or 8 bits)
+        align_to: Alignment boundary (default 32)
+        
+    Returns:
+        Binary packed data
+    """
+    # For 2D weights, ensure K dimension is aligned
+    if len(weight.shape) > 1:
+        print(f"Exporting Weight shape: {weight.shape}")
+        weight = weight.flatten(start_dim=1)
+        M, K = weight.shape
+        if K % align_to != 0:
+            # Calculate padding needed
+            pad_size = align_to - (K % align_to)
+            # Create padded weight array
+            padded_weight = torch.zeros((M, K + pad_size), dtype=weight.dtype)
+            padded_weight[:, :K] = weight
+            print(f"Padding weight from {weight.shape} to {padded_weight.shape}")
+            # Flatten for processing
+            weight = padded_weight.flatten()
+        else:
+            # Flatten the already aligned weight
+            weight = weight.flatten()
+    weight = weight.cpu().to(int).tolist()
+    # Process based on quantization type
     if qtype == 8:
         return struct.pack(f'{len(weight)}b', *weight)
     elif qtype == 4:
@@ -231,7 +261,8 @@ def weight_export(weight, qtype):
         if len(weight) % 2 == 1:
             w = weight[-1] & 0xF
             data.append(w)
-    elif (qtype <=2) and (qtype > 1):
+        return struct.pack(f'{len(data)}B', *data)
+    elif qtype == 2:
         data = []
         num_loop = len(weight) // 4
         for i in range(num_loop):
@@ -241,14 +272,12 @@ def weight_export(weight, qtype):
                 ((weight[i*4+3] & 0x3) << 6)
             data.append(w)
         rem = len(weight) % 4
-        w = 0
         if rem != 0:
+            w = 0
             for i in range(rem):
                 w |= (weight[-rem+i] & 0x3) << (i*2)
             data.append(w)
-    # elif qtype == "1.5b":
-        # TODO: 1.58-bit compression, 5 weights in 8-bit
-        # pass
+        return struct.pack(f'{len(data)}B', *data)
     elif qtype == 1:
         data = []
         num_loop = len(weight) // 8
@@ -265,9 +294,9 @@ def weight_export(weight, qtype):
             for b in range(8-rem):
                 binary += "0"
             data.append(int(binary[::-1], 2))
+        return struct.pack(f'{len(data)}B', *data)
     else:
-        raise NotImplementedError
-    return struct.pack(f'{len(data)}B', *data)
+        raise NotImplementedError(f"Quantization type {qtype} not supported")
 
 # Fuse Conv2D+BatchNorm2D layers
 # Note: DeepSeek generated, not sure if it fully works.

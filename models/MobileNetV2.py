@@ -72,6 +72,7 @@ class MobileNetV2(MiCoModel):
 
         self.conv2 = nn.Conv2d(1280, num_classes, 1)
         self.n_layers = len(self.get_qlayers())
+        self.default_dataset = "CIFAR100"
 
     def forward(self, x):
         x = self.pre(x)

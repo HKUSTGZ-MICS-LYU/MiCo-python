@@ -5,6 +5,8 @@ import numpy as np
 
 from matplotlib import pyplot as plt
 
+import os
+import json
 import time
 import warnings
 
@@ -29,7 +31,8 @@ class MiCoEval:
                  pretrained_model,
                  lr=0.0001, model_name = "", 
                  objective='ptq_acc',
-                 constraint='bops'):
+                 constraint='bops',
+                 output_json='output/json/mico_eval.json') -> None:
         
         self.model = model
         self.epochs = epochs
@@ -38,14 +41,20 @@ class MiCoEval:
         self.pretrained_model = pretrained_model
         self.lr = lr
 
+        self.output_json = output_json
         self.model_name = model_name
         self.n_layers = self.model.n_layers
+        
+        self.data_trace = {}
+        if os.path.exists(self.output_json):
+            with open(self.output_json, 'r') as f:
+                self.data_trace = json.load(f)
         
         self.set_eval(objective)
         self.set_constraint(constraint)
 
         # Initial Conversion and Test
-        res = self.eval([8]*self.n_layers*2)
+        res = self.eval_f([8]*self.n_layers*2)
         self.baseline_acc = res
         self.layers = model.get_qlayers()
         assert self.n_layers > 0, "No QLayer found! Please convert the model first."
@@ -65,9 +74,26 @@ class MiCoEval:
         print("INT8 Model Accuracy: ", res)
         return
     
+    def eval(self, scheme: list):
+        res = None
+        if str(scheme) in self.data_trace:
+            if self.objective in self.data_trace[str(scheme)]:
+                res = self.data_trace[str(scheme)][self.objective]
+        if res is None:
+            res = self.eval_f(scheme)
+            if str(scheme) not in self.data_trace:
+                self.data_trace[str(scheme)] = {}
+            if self.objective not in self.data_trace[str(scheme)]:
+                self.data_trace[str(scheme)][self.objective] = res
+            with open(self.output_json, 'w') as f:
+                json.dump(self.data_trace, f, indent=4)
+        else:
+            print("[MiCoEval] Found result in cache.")
+        return res
+
     def set_eval(self, objective: str):
         self.objective = objective
-        self.eval = self.eval_dict()[objective]
+        self.eval_f = self.eval_dict()[objective]
         return
     
     def set_constraint(self, constraint: str):
@@ -84,7 +110,7 @@ class MiCoEval:
             'size': self.eval_size,
             'latency_bitfusion': lambda scheme: self.eval_latency(scheme, 'bitfusion'),
             'latency_mico': lambda scheme: self.eval_latency(scheme, 'mico'),
-            'latency_mico_proxy': lambda scheme: self.eval_latency(scheme, 'mico_proxy'),
+            'latency_proxy': lambda scheme: self.eval_latency(scheme, 'proxy'),
             'latency_torchao': lambda scheme: self.eval_latency(scheme, 'torchao')
         }
 
@@ -175,7 +201,7 @@ class MiCoEval:
             else:
                 codegen.build(target="mico")
             res = sim_mico(self.mico_target)
-        elif target == 'mico_proxy':
+        elif target == 'proxy':
             res = self.eval_pred_latency(scheme)
         elif target == 'torchao':
             self.model.set_qscheme_torchao([wq, aq])

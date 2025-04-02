@@ -91,7 +91,9 @@ def benchmark_bitfusion(N:int, M:int, K:int):
             res.append((N, M, K, qa[i], qb[j], cycles))
     return res
 
-def benchmark_mico(N: int, M: int, K: int, mico_script="sim_small_mico.sh"):
+def benchmark_mico(N: int, M: int, K: int, 
+                   mico_script="sim_small_mico.sh",
+                   mico_main="matmul_test"):
     
     # Check if mico is installed
     if not os.path.exists(f'{PWD}/hw/VexiiMico'):
@@ -101,13 +103,13 @@ def benchmark_mico(N: int, M: int, K: int, mico_script="sim_small_mico.sh"):
     res = []
 
     # Set Matmul Size
-    with open(f"{PWD}/project/MiCo-Lib/test/matmul_test.h", "w") as f:
+    with open(f"{PWD}/project/MiCo-Lib/test/{mico_main}.h", "w") as f:
         f.write(f"#define N {N}\n")
         f.write(f"#define M {M}\n")
         f.write(f"#define K {K}\n")
 
     # Compile the benchmark
-    make_cmd = 'make recompile MAIN=matmul_test TARGET=vexii MARCH=rv32imc OPT=simd'
+    make_cmd = f'make recompile MAIN={mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
     cmd = f'cd {PWD}/project' + ' && ' + make_cmd
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -120,7 +122,7 @@ def benchmark_mico(N: int, M: int, K: int, mico_script="sim_small_mico.sh"):
     
     # Run the benchmark
     cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
-        f'sh {mico_script} ../../project/matmul_test.elf'
+        f'sh {mico_script} ../../project/{mico_main}.elf'
 
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -142,5 +144,5 @@ def benchmark_mico(N: int, M: int, K: int, mico_script="sim_small_mico.sh"):
 
 # Test
 if __name__ == "__main__":
-    res = benchmark_mico(32, 32, 32)
+    res = benchmark_mico(32, 32, 32, mico_main="bitlinear_test")
     print(res)

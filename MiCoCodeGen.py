@@ -551,11 +551,9 @@ void model_forward(Model* model) {{
                         self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
                         self.weight_content += tensor.detach().numpy().tobytes()
                     else:
-                        # TODO: Modify this part
                         qweight, scale = weight_quant(tensor, qbit)
                         self.model_init.append(f"model->{name}.data = (qbyte *)(model_weight_data + {len(self.weight_content)});")
-                        self.weight_content += weight_export(
-                            qweight.flatten().cpu().to(dtype=int).tolist(), qbit)
+                        self.weight_content += weight_export(qweight, qbit)
                         self.model_init.append(f"model->{name}.scale = {scale};")
                 else:
                     n_size = tensor.nelement() * tensor.element_size()
@@ -672,31 +670,32 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    example_input = torch.randn(1, 256)
+    # example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    # example_input = torch.randn(1, 3, 32, 32)
+    example_input = torch.randn(1, 3, 32, 32)
 
-    m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
-    ckpt = torch.load("output/ckpt/mlp_mnist.pth")
+    # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
+    # ckpt = torch.load("output/ckpt/mlp_mnist.pth")
 
     # m = LeNet(1)
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
-    # m = CmsisCNN(in_channels=3)
-    # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
+    m = CmsisCNN(in_channels=3)
+    ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
     # m = VGG(in_channels=3, num_class=10)
     # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
-    # m = ResNet8()
-
     # m = MobileNetV2(10)
     # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
+    # m.default_dataset = "CIFAR10"
 
     # m = SqueezeNet(class_num=10)
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
+    # m.default_dataset = "CIFAR10"
 
     # m = resnet_alt_8(10)
+    # m.default_dataset = "CIFAR10"
     # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
     weight_q = [8] * m.n_layers
@@ -712,5 +711,5 @@ if __name__ == "__main__":
     m.forward(example_input)
     m.print_graph()
 
-    m.convert("project", "model", verbose = False)
+    m.convert("project", "model", verbose = True)
     m.build("project", "mico_fpu")

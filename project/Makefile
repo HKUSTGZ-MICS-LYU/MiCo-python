@@ -45,6 +45,10 @@ RISCV_SOURCE ?=
 include $(MICO_DIR)/targets/vexii.mk
 # Chipyard Related
 include $(MICO_DIR)/targets/rocket.mk
+# x86 SIMD Related
+include $(MICO_DIR)/targets/x86.mk
+# OpenMP Related
+include $(MICO_DIR)/targets/openmp.mk
 
 OBJS := $(MICO_SOURCES) $(RISCV_SOURCE)
 OBJS := $(OBJS:.c=.o)

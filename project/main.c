@@ -22,6 +22,10 @@
 #include "test_cifar10.h"
 #endif
 
+#ifdef CIFAR100
+#include "test_cifar100.h"
+#endif
+
 int main(){
 
     Model model;
