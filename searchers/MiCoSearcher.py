@@ -10,7 +10,8 @@ from MiCoEval import MiCoEval
 from searchers.QSearcher import QSearcher
 
 from searchers.SearchUtils import (
-    random_sample, grid_sample
+    random_sample, random_sample_min_max, 
+    grid_sample, near_constr_sample
 )
 
 from botorch import fit_gpytorch_mll
@@ -24,7 +25,8 @@ from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikeliho
 
 class MiCoSearcher(QSearcher):
 
-    NUM_SAMPLES = 10000
+    NUM_SAMPLES = 1000
+    constr_value : float = None
 
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
@@ -41,10 +43,15 @@ class MiCoSearcher(QSearcher):
         return
     
     def sample(self, n_samples: int):
-        return random_sample(n_samples, self.qtypes, self.dims)
+        return near_constr_sample(n_samples=n_samples,
+                                 qtypes=self.qtypes,
+                                 dims=self.dims,
+                                 constr_func=self.evaluator.constr,
+                                 constr_value=self.constr_value)
     
     def initial(self, n_samples: int):
-        return grid_sample(n_samples, self.qtypes, self.dims)
+        # return grid_sample(n_samples, self.qtypes, self.dims)
+        return random_sample_min_max(n_samples, self.qtypes, self.dims)
     
     def select(self, X, constr_value):
         constrs = []
@@ -62,6 +69,7 @@ class MiCoSearcher(QSearcher):
         self.evaluator.set_eval(target)
         if constr:
             self.evaluator.set_constraint(constr)
+            self.constr_value = constr_value
         
         # Initialize the search space
         sampled_X = self.initial(self.n_inits)

@@ -81,9 +81,9 @@ class BayesSearcher(QSearcher):
             mll = ExactMarginalLogLikelihood(gpr.likelihood, gpr)
             fit_gpytorch_mll(mll)
 
-            max_Y = max(Y_tensor)
-            acq = LogExpectedImprovement(gpr, best_f=max_Y)
-
+            # max_Y = max(Y_tensor)
+            # acq = LogExpectedImprovement(gpr, best_f=max_Y)
+            acq = UpperConfidenceBound(gpr, beta=0.1)
             X = []
             if constr:
                 while len(X) == 0:

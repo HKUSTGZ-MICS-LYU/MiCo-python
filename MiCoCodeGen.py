@@ -665,8 +665,8 @@ if __name__ == "__main__":
     import torch.nn as nn
     import torch.nn.functional as F
     import MiCoUtils as mico
-    from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet,\
-          resnet_alt_8, MobileNetV2
+    from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, MobileNetV2, \
+          resnet_alt_8, resnet_alt_18 
 
     torch.manual_seed(0)
 
@@ -698,6 +698,9 @@ if __name__ == "__main__":
     # m.default_dataset = "CIFAR10"
     # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
+    m = resnet_alt_18(100)
+    ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
+
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
 
@@ -712,4 +715,4 @@ if __name__ == "__main__":
     m.print_graph()
 
     m.convert("project", "model", verbose = True)
-    m.build("project", "mico_fpu")
+    m.build("project", "host")

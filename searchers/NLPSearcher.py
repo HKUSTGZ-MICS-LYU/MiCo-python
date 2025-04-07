@@ -34,8 +34,8 @@ class NLPSearcher(QSearcher):
             scheme = [8] * self.n_layers * 2
             scheme[i] = qbits
             scheme[self.n_layers + i] = qbits
-            acc = self.evaluator.eval_ptq(scheme)
-            bops = self.evaluator.eval_bops(scheme)
+            acc = self.evaluator.eval(scheme)
+            bops = self.evaluator.constr(scheme)
             print(f"Layer {i} Quantized Acc: {acc:.3f}, BOPS: {bops}")
             delta_ops = (int8_bops - bops) / BOPS_UNIT
             delta_acc = int8_acc - acc
