@@ -22,41 +22,42 @@ import torch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-def from_zoo(name: str):
+def from_zoo(name: str, shuffle = False, batch_size: int = 32):
 
     model = None
     train_loader, test_loader = None, None
     if name == "mlp_mnist":
-        model = MLP(256, config={"Layers": [64, 64, 64, 10]})
-        train_loader, test_loader = mnist(shuffle=False, resize=16)
+        model = MLP(256, config={"Layers": [64, 64, 64, 10]}).to(device)
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, resize=16)
     elif name == "lenet_mnist":
-        model = LeNet(1)
-        train_loader, test_loader = mnist(shuffle=False)
+        model = LeNet(1).to(device)
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size)
     elif name == "cmsiscnn_cifar10":
-        model = CmsisCNN(3)
-        train_loader, test_loader = cifar10(shuffle=False)
+        model = CmsisCNN(3).to(device)
+        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size)
     elif name == "vgg_cifar10":
-        model = VGG(3)
-        train_loader, test_loader = cifar10(shuffle=False)
+        model = VGG(3).to(device)
+        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size)
     elif name == "resnet8_cifar100":
-        model = resnet_alt_8(100)
-        train_loader, test_loader = cifar100(shuffle=False)
+        model = resnet_alt_8(100).to(device)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
     elif name == "resnet18_cifar100":
-        model = resnet_alt_18(100)
-        train_loader, test_loader = cifar100(shuffle=False)
+        model = resnet_alt_18(100).to(device)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
     elif name == "mobilenetv2_cifar100":
-        model = MobileNetV2()
-        train_loader, test_loader = cifar100(shuffle=False)
+        model = MobileNetV2().to(device)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
     elif name == "squeezenet_cifar100":
-        model = SqueezeNet()
-        train_loader, test_loader = cifar100(shuffle=False)
+        model = SqueezeNet().to(device)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
     elif name == "tinyllama":
-        model = TinyLLaMa1M()
+        model = TinyLLaMa1M().to(device)
         train_loader, test_loader = tinystories(
             max_seq_len=model.params.max_seq_len,
             vocab_size=model.params.vocab_size,
             device=device,
-            shuffle=False)
+            batch_size=batch_size,
+            shuffle=shuffle)
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader
