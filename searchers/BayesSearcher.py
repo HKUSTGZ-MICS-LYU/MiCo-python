@@ -23,7 +23,7 @@ from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikeliho
 
 class BayesSearcher(QSearcher):
 
-    NUM_SAMPLES = 10000
+    NUM_SAMPLES = 1000
 
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
@@ -86,9 +86,13 @@ class BayesSearcher(QSearcher):
             acq = UpperConfidenceBound(gpr, beta=0.1)
             X = []
             if constr:
+                timeout_count = 0
                 while len(X) == 0:
                     X = self.sample(self.NUM_SAMPLES)
                     X = self.select(X, constr_value)
+                    timeout_count += 1
+                    if timeout_count > 10:
+                        raise ValueError("Cannot find any feasible solution. Please consider relaxing the constraint.")
             else:
                 X = self.sample(self.NUM_SAMPLES)
 

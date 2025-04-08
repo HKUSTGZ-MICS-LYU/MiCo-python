@@ -1,8 +1,7 @@
 import torch
+import argparse
 import random
 import numpy as np
-
-import sys
 
 from matplotlib import pyplot as plt
 
@@ -18,10 +17,18 @@ from searchers import (
     NLPSearcher, HAQSearcher, MiCoSearcher
 )
 
-N_SEARCH = 40
-CONSTR_RATIO = 0.5
+argsparse = argparse.ArgumentParser()
+argsparse.add_argument("model_name", type=str)
+argsparse.add_argument("-n", "--n-search", type=int, default=40)
+argsparse.add_argument("-c", "--constraint", type=float, default=0.5)
+argsparse.add_argument("-t", "--trails", type=int, default=5)
 
-model_name = sys.argv[1]
+args = argsparse.parse_args()
+
+model_name = args.model_name
+N_SEARCH = args.n_search
+CONSTR_RATIO = args.constraint
+TRAILS = args.trails
 
 if __name__ == "__main__":
 
@@ -41,9 +48,9 @@ if __name__ == "__main__":
 
     res_data = {}
 
-    for seed in [0,1,2,3,4]:
+    for seed in range(TRAILS):
         
-        for model in ["bo", "mico", "haq", "nlp"]:
+        for model in ["bo", "haq", "nlp", "xgb", "mico"]:
             
             if model not in res_data:
                 res_data[model] = []
@@ -79,7 +86,7 @@ if __name__ == "__main__":
             print(f"Best Scheme: {res_x}")
             print(f"Best Accuracy: {res_y}")
             res = evaluator.eval_bops(res_x)
-            print(f"MPQ Real Latency: {res}")
+            print(f"MPQ Real Latency: {res} ({res / max_bops:.2%})")
 
             res_data[model].append(searcher.best_trace)
 
@@ -89,5 +96,5 @@ if __name__ == "__main__":
         plt.plot(avg_trace, label=model)
 
     plt.legend()
-    plt.savefig(f"output/figs/{model_name}_search.pdf")
+    plt.savefig(f"output/figs/{model_name}_search_{CONSTR_RATIO}.pdf")
     plt.show()

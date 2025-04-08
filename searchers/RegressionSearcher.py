@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 from MiCoEval import MiCoEval
 from searchers.QSearcher import QSearcher
 from searchers.SearchUtils import (
-    random_sample, grid_sample
+    random_sample, random_sample_min_max, grid_sample
 )
 
 from xgboost import XGBRegressor
@@ -42,7 +42,8 @@ class RegressionSearcher(QSearcher):
         return random_sample(n_samples, self.qtypes, self.dims)
     
     def initial(self, n_samples: int):
-        return grid_sample(n_samples, self.qtypes, self.dims)
+        # return grid_sample(n_samples, self.qtypes, self.dims)
+        return random_sample_min_max(n_samples, self.qtypes, self.dims)
     
     def select(self, X, constr_value):
         X = [x for x in X if self.evaluator.constr(x) <= constr_value]

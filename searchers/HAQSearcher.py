@@ -104,12 +104,24 @@ class HAQSearcher(QSearcher):
         cur_constr = self.mpq.constr(sample)
         return cur_constr
     
+    def use_action_wall(self, target_value):
+        
+        min_scheme = [self.min_bit] * self.mpq.n_layers * 2
+        min_scheme[0] = self.max_bit
+        min_scheme[self.mpq.n_layers] = self.max_bit
+        min_scheme[self.mpq.n_layers - 1] = self.max_bit
+        min_scheme[-1] = self.max_bit
+        return self.mpq.constr(min_scheme) < target_value
+
     def _final_action_wall(self, target_value):
 
         min_bops = self.mpq.constr([self.min_bit] * self.mpq.n_layers * 2)
         cur_constr = self._cur_constr()
         print('before action_wall: ', self.strategy, min_bops, cur_constr)
         self.qbits = sorted(self.qbits, reverse=True)
+
+        keep_first_last_layer = self.use_action_wall(target_value)
+
         while min_bops < cur_constr and target_value < cur_constr:
             for i, n_bit in enumerate(reversed(self.strategy)):
                 if n_bit[1] > self.min_bit:
@@ -119,7 +131,8 @@ class HAQSearcher(QSearcher):
                         if b < abit:
                             self.strategy[-(i+1)][1] = b
                             break
-                self._keep_first_last_layer()
+                if keep_first_last_layer:
+                    self._keep_first_last_layer()
 
                 cur_constr = self._cur_constr()
                 if target_value >= cur_constr:
@@ -131,8 +144,9 @@ class HAQSearcher(QSearcher):
                         if b < wbit:
                             self.strategy[-(i+1)][0] = b
                             break
-                
-                self._keep_first_last_layer()
+                if keep_first_last_layer:
+                    self._keep_first_last_layer()
+                    
                 cur_constr = self._cur_constr()
                 if target_value >= self._cur_constr():
                     break

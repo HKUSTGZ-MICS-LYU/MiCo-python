@@ -23,6 +23,10 @@ from gpytorch.kernels.scale_kernel import ScaleKernel
 from gpytorch.kernels.matern_kernel import MaternKernel
 from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikelihood
 
+
+from xgboost import XGBRegressor
+from sklearn.gaussian_process import GaussianProcessRegressor
+
 class MiCoSearcher(QSearcher):
 
     NUM_SAMPLES = 1000
@@ -39,6 +43,7 @@ class MiCoSearcher(QSearcher):
         self.n_layers = evaluator.model.n_layers
         self.dims = self.n_layers * 2
         self.qtypes = qtypes
+        self.roi = 0.2 # Start with 20% ROI
 
         return
     
@@ -47,9 +52,15 @@ class MiCoSearcher(QSearcher):
                                  qtypes=self.qtypes,
                                  dims=self.dims,
                                  constr_func=self.evaluator.constr,
-                                 constr_value=self.constr_value)
+                                 constr_value=self.constr_value,
+                                 roi=self.roi)
     
     def initial(self, n_samples: int):
+        # return near_constr_sample(n_samples=n_samples,
+        #                          qtypes=self.qtypes,
+        #                          dims=self.dims,
+        #                          constr_func=self.evaluator.constr,
+        #                          constr_value=self.constr_value)
         # return grid_sample(n_samples, self.qtypes, self.dims)
         return random_sample_min_max(n_samples, self.qtypes, self.dims)
     
@@ -83,20 +94,10 @@ class MiCoSearcher(QSearcher):
 
         final_x = None
         final_y = None
-        for _ in range(n_iter):
+        for i in range(n_iter):
             
-            X_tensor = torch.tensor(sampled_X, dtype=torch.float)
-            Y_tensor = torch.tensor(sampled_y, dtype=torch.float).unsqueeze(-1)
-
-            gpr = SingleTaskGP(X_tensor, Y_tensor, 
-                            covar_module=ScaleKernel(MaternKernel(
-                                nu=2.5, lengthscale_constraint=Interval(0.005, 4.0)
-                            )))
-            mll = ExactMarginalLogLikelihood(gpr.likelihood, gpr)
-            fit_gpytorch_mll(mll)
-
-            max_Y = max(Y_tensor)
-            acq = LogExpectedImprovement(gpr, best_f=max_Y)
+            self.roi = 0.2 + 0.4 * (i / n_iter)
+            print("ROI:", self.roi)
 
             X = []
             if constr:
@@ -110,11 +111,8 @@ class MiCoSearcher(QSearcher):
             else:
                 X = self.sample(self.NUM_SAMPLES)
 
-            acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
-            best = torch.argmax(acq_val)
-            best_x = X[best]
-            best_y = gpr.posterior(
-                torch.tensor([best_x], dtype=torch.float)).mean.item()
+            # best_x, best_y = self.bayes_opt(sampled_X, sampled_y, X)
+            best_x, best_y = self.xgb_opt(sampled_X, sampled_y, X)
             
             print("Predicted Best Scheme:", best_x)
             print("Predicted Best Result:", best_y)
@@ -136,3 +134,37 @@ class MiCoSearcher(QSearcher):
             constr_x = self.evaluator.constr(final_x)
             print(f"Constraint Value: {constr_x} ({constr_x/constr_value:.2f})")
         return final_x, final_y
+
+    def bayes_opt(self, sampled_X, sampled_y, X):
+
+        X_tensor = torch.tensor(sampled_X, dtype=torch.float)
+        Y_tensor = torch.tensor(sampled_y, dtype=torch.float).unsqueeze(-1)
+
+        gpr = SingleTaskGP(X_tensor, Y_tensor, 
+                            covar_module=ScaleKernel(MaternKernel(
+                                nu=2.5, lengthscale_constraint=Interval(0.005, 4.0)
+                            )))
+        mll = ExactMarginalLogLikelihood(gpr.likelihood, gpr)
+        fit_gpytorch_mll(mll)
+
+        max_Y = max(Y_tensor)
+        acq = LogExpectedImprovement(gpr, best_f=max_Y)
+        acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
+        best = torch.argmax(acq_val)
+        best_x = X[best]
+        best_y = gpr.posterior(
+                torch.tensor([best_x], dtype=torch.float)).mean.item()
+            
+        return best_x,best_y
+    
+    def xgb_opt(self, sampled_X, sampled_y, X):
+        xgb = XGBRegressor()
+
+        xgb.fit(sampled_X, sampled_y)
+        y_pred = xgb.predict(X)
+        best_idx = np.argmax(y_pred)
+        best_x = X[best_idx]
+        best_y = y_pred[best_idx]
+
+        return best_x, best_y
+    
