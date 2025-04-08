@@ -61,8 +61,7 @@ class MiCoEval:
         
         self.layer_macs = [layer.get_mac() for layer in self.layers]
         self.layer_params = [layer.get_params() for layer in self.layers]
-        self.input_size = self.train_loader.dataset[0][0].shape
-
+        
         # A Regression Model for Hardware Latency
         self.latency_model = None
         self.mico_target = "small"
@@ -193,6 +192,7 @@ class MiCoEval:
             gen_model = fuse_model(gen_model)
             gen_model.set_qscheme([wq, aq])
             codegen = MiCoCodeGen(gen_model)
+            self.input_size = self.train_loader.dataset[0][0].shape
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
             codegen.forward(example_input)
             codegen.convert()
