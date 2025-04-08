@@ -56,8 +56,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             max_seq_len=model.params.max_seq_len,
             vocab_size=model.params.vocab_size,
             device=device,
-            batch_size=batch_size,
-            shuffle=shuffle)
+            batch_size=batch_size)
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader

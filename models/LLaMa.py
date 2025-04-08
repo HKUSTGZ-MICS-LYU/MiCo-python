@@ -225,7 +225,6 @@ class Transformer(MiCoModel):
         super().__init__()
         self.params = params
         self.vocab_size = params.vocab_size
-        self.n_layers = params.n_layers
 
         self.train_loader = None
         self.test_loader = None
@@ -255,6 +254,7 @@ class Transformer(MiCoModel):
 
         # Initialize attribute for the loss of the last forward call. This will be set if the forward is called with a targets tensor.
         self.last_loss = None
+        self.n_layers = len(self.get_qlayers())
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
