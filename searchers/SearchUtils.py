@@ -30,13 +30,36 @@ def grid_sample(n_samples: int, qtypes: list, dims: int):
         min_bw = min(qtypes)
         X.append([min_bw] * dims)
 
+    remain = n_samples - 2
+    n_layers = dims // 2
+
+    # layers to be covered per initial sample
+    layers_per_sample = n_layers // remain
+    if layers_per_sample == 0:
+        layers_per_sample = 1
+    
+    layer_idxs = []
+
+    qtypes_l_max = [q for q in qtypes if q != max_bw]
+
     # Random Bitwidth Results
     while len(X) < n_samples:
         x = [max_bw] * dims
-        # Random Mutate
-        for i in range(dims):
-            if random.random() < 0.5:
-                x[i] = random.choice(qtypes)
+        layer_sel = []
+        if len(layer_idxs) == 0:
+            layer_idxs = list(range(n_layers))
+            random.shuffle(layer_idxs)
+        for i in range(layers_per_sample):
+            if len(layer_idxs) == 0:
+                break
+            idx = layer_idxs.pop()
+            layer_sel.append(idx)
+
+        for sel in layer_sel:
+
+            x[sel] = random.choice(qtypes_l_max)
+            x[sel+n_layers] = random.choice(qtypes_l_max)
+
         if x not in X:
             X.append(x)
     return X

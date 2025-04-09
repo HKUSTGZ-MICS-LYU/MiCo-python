@@ -61,8 +61,8 @@ class MiCoSearcher(QSearcher):
         #                          dims=self.dims,
         #                          constr_func=self.evaluator.constr,
         #                          constr_value=self.constr_value)
-        # return grid_sample(n_samples, self.qtypes, self.dims)
-        return random_sample_min_max(n_samples, self.qtypes, self.dims)
+        return grid_sample(n_samples, self.qtypes, self.dims)
+        # return random_sample_min_max(n_samples, self.qtypes, self.dims)
     
     def select(self, X, constr_value):
         constrs = []
@@ -96,7 +96,7 @@ class MiCoSearcher(QSearcher):
         final_y = None
         for i in range(n_iter):
             
-            self.roi = 0.2 + 0.4 * (i / n_iter)
+            self.roi = 0.2 + 0.3 * (i / n_iter)
             print("ROI:", self.roi)
 
             X = []
