@@ -52,6 +52,8 @@ class MiCoEval:
         
         self.set_eval(objective)
         self.set_constraint(constraint)
+        
+        self.load_pretrain()
 
         # Initial Conversion and Test
         res = self.eval_f([8]*self.n_layers*2)
@@ -127,14 +129,14 @@ class MiCoEval:
     def eval_ptq(self, scheme: list):
         wq = scheme[:self.n_layers]
         aq = scheme[self.n_layers:]
-        self.load_pretrain()
+        # self.load_pretrain()
         self.model.set_qscheme([wq, aq])
         return self.model.test(self.test_loader)['TestAcc']
     
     def eval_qat(self, scheme: list):
         wq = scheme[:self.n_layers]
         aq = scheme[self.n_layers:]
-        self.load_pretrain()
+        # self.load_pretrain()
         self.model.set_qscheme([wq, aq], qat=True)
         self.model.train_loop(self.epochs, self.train_loader, self.lr)
         return self.model.test(self.test_loader)['TestAcc']
@@ -142,7 +144,7 @@ class MiCoEval:
     def eval_torchao(self, scheme: list):
         wq = scheme[:self.n_layers]
         aq = scheme[self.n_layers:]
-        self.load_pretrain()
+        # self.load_pretrain()
         self.model.set_qscheme_torchao([wq, aq])
         return self.model.test(self.test_loader)['TestAcc']
 

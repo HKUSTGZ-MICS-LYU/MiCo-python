@@ -7,6 +7,7 @@ from tqdm import tqdm
 from MiCoUtils import (
     list_quantize_layers, 
     set_to_qforward, 
+    unset_qforward,
     replace_quantize_layers,
     replace_quantize_layers_torchao)
 
@@ -29,6 +30,7 @@ class MiCoModel(nn.Module):
         return
     
     def set_qscheme_torchao(self, qscheme,device=device):
+        unset_qforward(self)
         replace_quantize_layers_torchao(self, qscheme[0], qscheme[1], device=device)
         return
     
