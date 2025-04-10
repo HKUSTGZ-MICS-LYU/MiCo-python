@@ -28,7 +28,7 @@ from xgboost import XGBRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.ensemble import RandomForestRegressor
 
-from searchers.Ensemble.Models import RFGPEnsemble, RFModel
+from searchers.Ensemble.Models import MPGPEnsemble, RFModel
 
 class MiCoSearcher(QSearcher):
 
@@ -167,7 +167,7 @@ class MiCoSearcher(QSearcher):
         X_tensor = torch.tensor(sampled_X, dtype=torch.float)
         Y_tensor = torch.tensor(sampled_y, dtype=torch.float).unsqueeze(-1)
 
-        model = RFGPEnsemble(X_tensor, Y_tensor)
+        model = MPGPEnsemble(X_tensor, Y_tensor)
 
         max_Y = max(Y_tensor)
         acq = LogExpectedImprovement(model, best_f=max_Y)

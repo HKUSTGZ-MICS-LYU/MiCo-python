@@ -1,1 +1,1 @@
-from .Models import RFGPEnsemble, RFModel
+from .Models import MPGPEnsemble, RFModel

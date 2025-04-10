@@ -134,3 +134,83 @@ class RFGPEnsemble(Model):
         if posterior_transform is not None:
             posterior = posterior_transform(posterior)
         return posterior
+
+
+def transform_input(X: Tensor) -> Tensor:
+    n_layers = X.shape[-1] // 2
+    if len(X.shape) == 2:
+        X_wq = X[:, :n_layers]
+        X_aq = X[:, n_layers:2*n_layers]
+        new_Xw = torch.zeros(X.shape[0], n_layers-1)
+        new_Xa = torch.zeros(X.shape[0], n_layers-1)
+
+        # Multiply adjacent bits in the input
+        for i in range(n_layers - 1):
+            new_Xw[:, i] = X_wq[:, i] * X_wq[:, i + 1]
+            new_Xa[:, i] = X_aq[:, i] * X_aq[:, i + 1]
+        new_X = torch.cat((new_Xw, new_Xa), dim=-1)
+    elif len(X.shape) == 3:
+        X_wq = X[:, :, :n_layers]
+        X_aq = X[:, :, n_layers:2*n_layers]
+        new_Xw = torch.zeros(X.shape[0], X.shape[1], n_layers-1)
+        new_Xa = torch.zeros(X.shape[0], X.shape[1], n_layers-1)
+
+        # Multiply adjacent bits in the input
+        for i in range(n_layers - 1):
+            new_Xw[:, :, i] = X_wq[:, :, i] * X_wq[:, :, i + 1]
+            new_Xa[:, :, i] = X_aq[:, :, i] * X_aq[:, :, i + 1]
+        new_X = torch.cat((new_Xw, new_Xa), dim=-1)
+    else:
+        raise ValueError("Input tensor must be either 2D or 3D.")
+    return new_X
+
+class MPGPEnsemble(Model):
+    _num_outputs: int
+
+    def __init__(self, train_X: Tensor, train_Y: Tensor):
+        super(MPGPEnsemble, self).__init__()
+        self._num_outputs = train_Y.shape[-1]
+
+        # First model is a Random Forest
+        self.rf = RFModel(train_X, train_Y)
+
+        # Second model is a GP
+        covar = ScaleKernel(MaternKernel())
+        self.gp1 = SingleTaskGP(train_X, train_Y, covar_module=covar)
+        self.mll1 = ExactMarginalLogLikelihood(self.gp1.likelihood, self.gp1)
+        fit_gpytorch_mll(self.mll1)
+
+        # Third model is a GP with Transformed Input
+
+        # Multiply adjacent bits in the input
+        X_trans = transform_input(train_X)
+
+        covar2 = ScaleKernel(MaternKernel())
+        self.gp2 = SingleTaskGP(X_trans, train_Y, covar_module=covar2)
+        self.mll2 = ExactMarginalLogLikelihood(self.gp2.likelihood, self.gp2)
+        fit_gpytorch_mll(self.mll2)
+
+        return
+    
+    @property
+    def num_outputs(self) -> int:
+        return self._num_outputs
+
+    def posterior(
+        self,
+        X: Tensor,
+        output_indices: Optional[list[int]] = None,
+        observation_noise: Union[bool, Tensor] = False,
+        posterior_transform: Optional[PosteriorTransform] = None,
+    ) -> AveragePosterior:
+        if output_indices:
+            X = X[..., output_indices]
+
+        rf_pos = self.rf.posterior(X)
+        gp1_pos = self.gp1.posterior(X)
+        gp2_pos = self.gp2.posterior(transform_input(X))
+        posterior = AveragePosterior([rf_pos, gp1_pos, gp2_pos])
+
+        if posterior_transform is not None:
+            posterior = posterior_transform(posterior)
+        return posterior
