@@ -26,6 +26,9 @@ from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikeliho
 
 from xgboost import XGBRegressor
 from sklearn.gaussian_process import GaussianProcessRegressor
+from sklearn.ensemble import RandomForestRegressor
+
+from searchers.Ensemble.Models import RFGPEnsemble, RFModel
 
 class MiCoSearcher(QSearcher):
 
@@ -112,7 +115,9 @@ class MiCoSearcher(QSearcher):
                 X = self.sample(self.NUM_SAMPLES)
 
             # best_x, best_y = self.bayes_opt(sampled_X, sampled_y, X)
-            best_x, best_y = self.xgb_opt(sampled_X, sampled_y, X)
+            # best_x, best_y = self.xgb_opt(sampled_X, sampled_y, X)
+            # best_x, best_y = self.rf_opt(sampled_X, sampled_y, X)
+            best_x, best_y = self.bayes_ensemble_opt(sampled_X, sampled_y, X)
             
             print("Predicted Best Scheme:", best_x)
             print("Predicted Best Result:", best_y)
@@ -155,7 +160,24 @@ class MiCoSearcher(QSearcher):
         best_y = gpr.posterior(
                 torch.tensor([best_x], dtype=torch.float)).mean.item()
             
-        return best_x,best_y
+        return best_x, best_y
+    
+    def bayes_ensemble_opt(self, sampled_X, sampled_y, X):
+
+        X_tensor = torch.tensor(sampled_X, dtype=torch.float)
+        Y_tensor = torch.tensor(sampled_y, dtype=torch.float).unsqueeze(-1)
+
+        model = RFGPEnsemble(X_tensor, Y_tensor)
+
+        max_Y = max(Y_tensor)
+        acq = LogExpectedImprovement(model, best_f=max_Y)
+        acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
+        best = torch.argmax(acq_val)
+        best_x = X[best]
+        best_x_tensor = torch.tensor(best_x, dtype=torch.float).view(1, -1)
+        best_y = model.posterior(best_x_tensor).mean.item()
+            
+        return best_x, best_y
     
     def xgb_opt(self, sampled_X, sampled_y, X):
         xgb = XGBRegressor()
@@ -168,3 +190,13 @@ class MiCoSearcher(QSearcher):
 
         return best_x, best_y
     
+    def rf_opt(self, sampled_X, sampled_y, X):
+        rf = RandomForestRegressor()
+
+        rf.fit(sampled_X, sampled_y)
+        y_pred = rf.predict(X)
+        best_idx = np.argmax(y_pred)
+        best_x = X[best_idx]
+        best_y = y_pred[best_idx]
+
+        return best_x, best_y
