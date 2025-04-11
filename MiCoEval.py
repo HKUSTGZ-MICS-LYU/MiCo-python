@@ -63,7 +63,15 @@ class MiCoEval:
         
         self.layer_macs = [layer.get_mac() for layer in self.layers]
         self.layer_params = [layer.get_params() for layer in self.layers]
-        
+        self.layer_types = []
+        for layer in self.layers:
+            if isinstance(layer, torch.nn.Conv2d):
+                self.layer_types.append(1) # 1 for Conv2d
+            elif isinstance(layer, torch.nn.Linear):
+                self.layer_types.append(0) # 0 for Linear
+            else:
+                self.layer_types.append(-1) # Unknown layer type
+
         # A Regression Model for Hardware Latency
         self.latency_model = None
         self.mico_target = "small"
@@ -136,9 +144,9 @@ class MiCoEval:
     def eval_qat(self, scheme: list):
         wq = scheme[:self.n_layers]
         aq = scheme[self.n_layers:]
-        # self.load_pretrain()
+        self.load_pretrain()
         self.model.set_qscheme([wq, aq], qat=True)
-        self.model.train_loop(self.epochs, self.train_loader, self.lr)
+        self.model.train_loop(self.epochs, self.train_loader, self.test_loader, self.lr)
         return self.model.test(self.test_loader)['TestAcc']
     
     def eval_torchao(self, scheme: list):
@@ -156,6 +164,15 @@ class MiCoEval:
         bops = np.dot(wq*aq, self.layer_macs)
         return bops
     
+    def eval_cbops(self, scheme: list):
+        cbops = 0
+        wq = np.array(scheme[:self.n_layers])
+        aq = np.array(scheme[self.n_layers:])
+        max_q = np.max([aq, wq], axis=0)
+        load_q = aq + wq
+        cbops = np.dot(max_q+load_q, self.layer_macs)
+        return cbops
+
     def eval_pred_latency(self, scheme: list):
 
         assert self.latency_model is not None, "Latency model not set."

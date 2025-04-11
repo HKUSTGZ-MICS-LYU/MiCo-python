@@ -116,8 +116,8 @@ class MiCoSearcher(QSearcher):
 
             # best_x, best_y = self.bayes_opt(sampled_X, sampled_y, X)
             # best_x, best_y = self.xgb_opt(sampled_X, sampled_y, X)
-            # best_x, best_y = self.rf_opt(sampled_X, sampled_y, X)
-            best_x, best_y = self.bayes_ensemble_opt(sampled_X, sampled_y, X)
+            best_x, best_y = self.rf_opt(sampled_X, sampled_y, X)
+            # best_x, best_y = self.bayes_ensemble_opt(sampled_X, sampled_y, X)
             
             print("Predicted Best Scheme:", best_x)
             print("Predicted Best Result:", best_y)
