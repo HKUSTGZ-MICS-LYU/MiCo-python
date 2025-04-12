@@ -648,6 +648,161 @@ void model_forward(Model* model) {{
             return None
         print("Model compiled successfully!")
         return
+    
+    def extract_tensor_dag(self):
+        """
+        Extract the tensor dependencies from the graph as a Directed Acyclic Graph.
+        
+        Returns:
+            dict: A dictionary where keys are node names and values are lists of nodes they depend on.
+        """
+        dag = {}
+        
+        # Iterate through all nodes in the graph
+        for node in self.graph.nodes:
+            if node.op == 'output':
+                continue  # Skip output nodes for the dependency collection
+            
+            # For this node, find all input tensors it depends on
+            dependencies = []
+            
+            if node.op in ['call_module', 'call_function', 'call_method']:
+                # Get arguments to the call
+                for arg in self.node_info[node.name][0]:
+                    if isinstance(arg, torch.fx.node.Node):
+                        dependencies.append(arg.name)
+                    elif isinstance(arg, (list, tuple)) or hasattr(arg, '__iter__') and not isinstance(arg, str):
+                        for item in arg:
+                            if isinstance(item, torch.fx.node.Node):
+                                dependencies.append(item.name)
+            
+            # Store the dependencies for this node
+            dag[node.name] = dependencies
+        
+        return dag
+    
+    def node_is_bit_op(self, node):
+        is_bit_op = False
+        for n in self.graph.nodes:
+            if n.name == node:
+                if n.op == 'call_module':
+                    module = self.get_module(n.target)
+                    is_bit_op = isinstance(module, (BitConv2d, BitLinear))
+                    break
+        return is_bit_op
+    
+    def extract_simplified_dag(self):
+        """
+        Extract a simplified tensor DAG where non-quantized operations are aggregated
+        while BitConv2d and BitLinear operations are preserved.
+        
+        Args:
+            keep_bit_ops_only (bool): If True, only keep BitConv2d and BitLinear operations.
+            
+        Returns:
+            dict: A simplified DAG dictionary.
+        """
+        # Get the full DAG first
+        full_dag = self.extract_tensor_dag()
+                
+        # Create simplified DAG
+        simplified_dag = {}
+
+        for node, dependencies in full_dag.items():
+            if self.node_is_bit_op(node):
+                # If the node is a BitConv2d or BitLinear operation, keep it
+                simplified_dag[node] = []
+                deps = dependencies.copy()
+                while len(deps) > 0:
+                    dep = deps.pop(0)
+                    if self.node_is_bit_op(dep):
+                        simplified_dag[node].append(dep)
+                    else:
+                        deps += full_dag[dep]
+
+        return simplified_dag
+    
+    def visualize_dag(self, output_file="model_dag.png", simplified=False):
+        """
+        Visualize the tensor dependency DAG using graphviz.
+        
+        Args:
+            output_file (str): The output file to save the visualization.
+            simplified (bool): If True, use the simplified DAG.
+            bit_ops_only (bool): If True, only show BitConv2d and BitLinear operations.
+            
+        Returns:
+            bool: True if successful, False otherwise.
+        """
+        try:
+            import graphviz
+        except ImportError:
+            print("Graphviz not found. Please install graphviz with 'pip install graphviz'")
+            return False
+        
+        # Get the appropriate DAG
+        if simplified:
+            dag = self.extract_simplified_dag()
+        else:
+            dag = self.extract_tensor_dag()
+        
+        # Create a new graph
+        title = 'Model Tensor Dependencies'
+        if simplified:
+            title += ' (Simplified)'
+            
+        dot = graphviz.Digraph(comment=title)
+        
+        # Add nodes
+        for node in dag:
+            # Get node type if available
+            node_type = "Unknown"
+            node_bits = ""
+            is_bit_op = False
+            for n in self.graph.nodes:
+                if n.name == node:
+                    if n.op == 'call_module':
+                        module = self.get_module(n.target)
+                        node_type = type(module).__name__
+                        is_bit_op = isinstance(module, (BitConv2d, BitLinear))
+                    elif n.op == 'call_function':
+                        node_type = n.target.__name__ if hasattr(n.target, '__name__') else str(n.target)
+                    else:
+                        node_type = n.op
+                    break
+            
+            # Use different colors for BitConv2d/BitLinear nodes
+            attrs = {}
+            if is_bit_op:
+                attrs['color'] = 'red'
+                attrs['style'] = 'filled'
+                attrs['fillcolor'] = 'lightpink'
+
+                node_bits = f"W{module.qtype}A{module.act_q}"
+
+            node_info = f"{node}\n({node_type})"
+            if is_bit_op:
+                node_info += f"({node_bits})"
+            # Add node with type info
+            dot.node(node, node_info, **attrs)
+        
+        # Add edges
+        for node, dependencies in dag.items():
+            for dep in dependencies:
+                if dep in dag:  # Only add edge if both nodes are in the DAG
+                    dot.edge(dep, node)
+        
+        # Render the graph
+        try:
+            dot.render(output_file.rsplit('.', 1)[0], format=output_file.rsplit('.', 1)[1], cleanup=True)
+            print(f"DAG visualization saved to {output_file}")
+            return True
+        except Exception as e:
+            print(f"Error rendering graph: {e}")
+            return False
+
+    def get_bit_dag(self):
+        dag = self.extract_simplified_dag()
 
     def forward(self, *args):
         self.reset()
@@ -680,8 +835,8 @@ if __name__ == "__main__":
     # m = LeNet(1)
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
-    m = CmsisCNN(in_channels=3)
-    ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
+    # m = CmsisCNN(in_channels=3)
+    # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
     # m = VGG(in_channels=3, num_class=10)
     # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
@@ -694,12 +849,12 @@ if __name__ == "__main__":
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
     # m.default_dataset = "CIFAR10"
 
-    # m = resnet_alt_8(10)
-    # m.default_dataset = "CIFAR10"
-    # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
+    m = resnet_alt_8(10)
+    m.default_dataset = "CIFAR10"
+    ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
-    m = resnet_alt_18(100)
-    ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
+    # m = resnet_alt_18(100)
+    # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
 
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
@@ -710,9 +865,7 @@ if __name__ == "__main__":
     m.eval()
 
     m = MiCoCodeGen(m)
-
-    m.forward(example_input)
-    m.print_graph()
-
-    m.convert("project", "model", verbose = True)
-    m.build("project", "host")
+    m.visualize_dag("model_full.png")
+    m.visualize_dag("model_simplified.png", simplified=True)
+    # m.convert("project", "model", verbose = True)
+    # m.build("project", "host")

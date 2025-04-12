@@ -63,14 +63,6 @@ class MiCoEval:
         
         self.layer_macs = [layer.get_mac() for layer in self.layers]
         self.layer_params = [layer.get_params() for layer in self.layers]
-        self.layer_types = []
-        for layer in self.layers:
-            if isinstance(layer, torch.nn.Conv2d):
-                self.layer_types.append(1) # 1 for Conv2d
-            elif isinstance(layer, torch.nn.Linear):
-                self.layer_types.append(0) # 0 for Linear
-            else:
-                self.layer_types.append(-1) # Unknown layer type
 
         # A Regression Model for Hardware Latency
         self.latency_model = None
@@ -128,8 +120,10 @@ class MiCoEval:
         self.model.load_state_dict(ckpt)
         return
 
-    def set_proxy(self, model):
-        self.latency_model = model
+    def set_proxy(self, matmul_proxy, conv2d_proxy):
+        self.matmul_proxy = matmul_proxy
+        self.conv2d_proxy = conv2d_proxy
+        return
 
     def set_mico_target(self, mico_type: str):
         self.mico_target = mico_type
@@ -175,19 +169,22 @@ class MiCoEval:
 
     def eval_pred_latency(self, scheme: list):
 
-        assert self.latency_model is not None, "Latency model not set."
-
         pred_latency = 0
         wq = np.array(scheme[:self.n_layers])
         aq = np.array(scheme[self.n_layers:])
-        macs = np.array(self.layer_macs)
-        bmacs = macs * np.max([aq, wq], axis=0)
-        wloads = macs * wq
-        aloads = macs * aq
 
-        X = np.column_stack((bmacs, wloads, aloads))
-        pred_latency = self.latency_model.predict(X)
-        pred_latency = np.sum(pred_latency)
+        for i in range(self.n_layers):
+            # layer_features = self.layers[i].layer_features + (wq[i], aq[i])
+            # layer_features = np.array([layer_features])
+            layer_macs = self.layer_macs[i]
+            layer_bmacs = layer_macs * np.max([aq[i], wq[i]])
+            layer_wloads = wq[i] * layer_macs
+            layer_aloads = aq[i] * layer_macs
+            stats = np.array([layer_bmacs, layer_wloads, layer_aloads]).reshape(1, -1)
+            if self.layers[i].layer_type == 'Conv2D':
+                pred_latency += self.conv2d_proxy.predict(stats)[0]
+            elif self.layers[i].layer_type == 'Linear':
+                pred_latency += self.matmul_proxy.predict(stats)[0]
         return pred_latency
 
     def eval_size(self, scheme:list):
