@@ -93,10 +93,15 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
     min_scheme[n_layers] = max(qtypes)
     min_scheme[n_layers - 1] = max(qtypes)
     min_scheme[-1] = max(qtypes)
+
     if constr_func is not None:
         keep_first_last = constr_func(min_scheme) < constr_value
+        min_scheme[n_layers - 1] = min(qtypes)
+        min_scheme[-1] = min(qtypes)
+        keep_first = constr_func(min_scheme) < constr_value
     else:
         keep_first_last = True
+        keep_first = True
 
     while True:
         # Generate Next Generation
@@ -120,6 +125,10 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
                 if random.random() < 0.5:
                     sample[n_layers - 1] = max(qtypes)
                     sample[-1] = max(qtypes)
+            elif keep_first:
+                if random.random() < 0.5:
+                    sample[0] = max(qtypes)
+                    sample[n_layers] = max(qtypes)
 
             if sample in pop:
                 continue

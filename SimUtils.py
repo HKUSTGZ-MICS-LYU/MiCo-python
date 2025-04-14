@@ -64,7 +64,7 @@ def sim_mico(mico_type = "small"):
     return None
 
 
-def benchmark_bitfusion(N:int, M:int, K:int):
+def benchmark_bitfusion_matmul(N:int, M:int, K:int):
 
     # Check if bitfusion is installed
     if not os.path.exists(f'{PWD}/hw/bitfusion'):
@@ -91,7 +91,36 @@ def benchmark_bitfusion(N:int, M:int, K:int):
             res.append((N, M, K, qa[i], qb[j], cycles))
     return res
 
-def benchmark_mico(N: int, M: int, K: int, 
+def benchmark_bitfusion_conv2d(H, W, C, K, KS):
+
+    # Check if bitfusion is installed
+    if not os.path.exists(f'{PWD}/hw/bitfusion'):
+        error = "Bitfusion not installed. Please install bitfusion first."
+        raise FileNotFoundError(error)
+
+    json_name = 'benchmark.json'
+
+    config = {
+        "model_name": "conv2d",
+        "h": H,
+        "w": W,
+        "c": C,
+        "k": K,
+        "ks": KS,
+    }
+    qa = [2, 4, 8]
+    qb = [2, 4, 8]
+    res = []
+    for i in range(len(qa)):
+        for j in range(len(qb)):
+            config['aq'] = [qa[i]]
+            config['wq'] = [qb[j]]
+            cycles = run_bitfusion_sim(json_name, config)
+            print(f"QAxQB: {qa[i]}x{qb[j]}, Cycles: {cycles}")
+            res.append((H, W, C, K, KS, qa[i], qb[j], cycles))
+    return res
+
+def benchmark_mico_matmul(N: int, M: int, K: int, 
                    mico_script="sim_small_mico.sh",
                    mico_main="matmul_test"):
     
@@ -142,7 +171,61 @@ def benchmark_mico(N: int, M: int, K: int,
             res.append((N, M, K, qa, qb, cycles))
     return res
 
+def benchmark_mico_conv2d(H, W, C, K, KS,
+                   mico_script="sim_small_mico.sh",
+                   mico_main="bitconv2d_test"):
+    
+    # Check if mico is installed
+    if not os.path.exists(f'{PWD}/hw/VexiiMico'):
+        error = "VexiiMico not installed. Please install VexiiMico first."
+        raise FileNotFoundError(error)
+    
+    res = []
+
+    # Set Matmul Size
+    with open(f"{PWD}/project/MiCo-Lib/test/{mico_main}.h", "w") as f:
+        f.write(f"#define N 1\n")
+        f.write(f"#define INC {C}\n")
+        f.write(f"#define INH {H}\n")
+        f.write(f"#define INW {W}\n")
+        f.write(f"#define K {KS}\n")
+        f.write(f"#define M {K}\n")
+
+    # Compile the benchmark
+    make_cmd = f'make recompile MAIN={mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
+    cmd = f'cd {PWD}/project' + ' && ' + make_cmd
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    if proc.stderr:
+        print("Error in compiling the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    # print("Benchmark compiled successfully!")
+    
+    # Run the benchmark
+    cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
+        f'sh {mico_script} ../../project/{mico_main}.elf'
+
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    output = proc.stdout.readlines()
+    if proc.stderr:
+        print("Error in simulating the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    for line in output:
+        line = str(line.decode())
+        # Format: [info] MiCo QAxQB Time: xxxxxx
+        if line.startswith('[info] MiCo'):
+            qa = int(line[line.find('x')-1])
+            qb = int(line[line.find('x')+1])
+            cycles = int(line.split(': ')[1])
+            res.append((H, W, C, K, KS, qa, qb, cycles))
+    return res
+
 # Test
 if __name__ == "__main__":
-    res = benchmark_mico(32, 32, 32, mico_main="bitlinear_test")
+    res = benchmark_mico_matmul(32, 32, 32, mico_main="bitlinear_test")
     print(res)

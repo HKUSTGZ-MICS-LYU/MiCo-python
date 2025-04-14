@@ -36,7 +36,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         model = CmsisCNN(3).to(device)
         train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size)
     elif name == "vgg_cifar10":
-        model = VGG(3).to(device)
+        model = VGG(3, 10).to(device)
         train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size)
     elif name == "resnet8_cifar100":
         model = resnet_alt_8(100).to(device)

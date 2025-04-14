@@ -140,7 +140,8 @@ class MiCoEval:
         aq = scheme[self.n_layers:]
         self.load_pretrain()
         self.model.set_qscheme([wq, aq], qat=True)
-        self.model.train_loop(self.epochs, self.train_loader, self.test_loader, self.lr)
+        self.model.train_loop(self.epochs, self.train_loader, self.test_loader, 
+                              verbose=True, lr=self.lr)
         return self.model.test(self.test_loader)['TestAcc']
     
     def eval_torchao(self, scheme: list):
@@ -212,10 +213,13 @@ class MiCoEval:
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
             codegen.forward(example_input)
             codegen.convert()
-            if self.mico_target == "high": 
-                codegen.build(target="mico_fpu")
-            else:
-                codegen.build(target="mico")
+            codegen.build(target="mico_fpu")
+
+            # if self.mico_target == "high": 
+                # codegen.build(target="mico_fpu")
+            # else:
+            #     codegen.build(target="mico")
+            
             res = sim_mico(self.mico_target)
         elif target == 'proxy':
             res = self.eval_pred_latency(scheme)

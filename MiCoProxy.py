@@ -8,9 +8,9 @@ from sklearn.model_selection import train_test_split
 from sklearn.metrics import mean_absolute_percentage_error, r2_score
 
 
-def get_mico_proxy(mico_type: str = 'small', model_type: str = 'linear'):
+def get_mico_matmul_proxy(mico_type: str = 'small', model_type: str = 'linear'):
     # Load Dataset
-    with open(f'benchmark_results/mico_{mico_type}.csv', 'r') as f:
+    with open(f'benchmark_results/mico_{mico_type}_bitlinear_test.csv', 'r') as f:
         csv_data = csv.reader(f)
         data = []
         next(csv_data) # skip header
@@ -31,6 +31,42 @@ def get_mico_proxy(mico_type: str = 'small', model_type: str = 'linear'):
     BMACS = MACS * np.max([QA, QW], axis=0)
     W_LOADS = QW * MACS
     A_LOADS = QA * MACS
+
+    X = np.column_stack((BMACS, W_LOADS, A_LOADS))
+    y = latency
+
+    if model_type == 'linear':
+        reg = LinearRegression()
+    else:
+        raise NotImplementedError
+    reg.fit(X, y)
+    return reg
+
+def get_mico_conv2d_proxy(mico_type: str = 'small', model_type: str = 'linear'):
+    # Load Dataset
+    with open(f'benchmark_results/mico_{mico_type}_bitconv2d_test.csv', 'r') as f:
+        csv_data = csv.reader(f)
+        data = []
+        next(csv_data) # skip header
+        for row in csv_data:
+            data.append(list(map(int, row)))
+    data = np.array(data)
+    
+    H,W,C,K,Ks = data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4]
+
+    QA = data[:, 5]
+    QW = data[:, 6]
+
+    latency = data[:, -1]
+
+    H_out = (H - Ks) + 1
+    W_out = (W - Ks) + 1
+
+    MAC = H_out * W_out * C * K * Ks * Ks
+    Q_MAX = np.max([QA, QW], axis=0)
+    BMACS = MAC * Q_MAX
+    W_LOADS = QW * MAC
+    A_LOADS = QA * MAC
 
     X = np.column_stack((BMACS, W_LOADS, A_LOADS))
     y = latency
@@ -96,12 +132,12 @@ def get_bitfusion_conv2d_proxy():
 
     MAC = H_out * W_out * C * K * Ks * Ks
     Q_MAX = np.max([QA, QW], axis=0)
-    BMAC = MAC * Q_MAX
+    BMACS = MAC * Q_MAX
     W_LOADS = QW * MAC
     A_LOADS = QA * MAC
 
     # X = np.column_stack((C,W,H,K,W_out,H_out,Ks,QW,QA))
-    X = np.column_stack(((BMAC, W_LOADS, A_LOADS)))
+    X = np.column_stack(((BMACS, W_LOADS, A_LOADS)))
     y = latency
 
     # reg = RandomForestRegressor()
