@@ -56,7 +56,8 @@ class MiCoSearcher(QSearcher):
                                  dims=self.dims,
                                  constr_func=self.evaluator.constr,
                                  constr_value=self.constr_value,
-                                 roi=self.roi)
+                                 roi=self.roi,
+                                 layer_macs=self.evaluator.layer_macs)
     
     def initial(self, n_samples: int):
         # return near_constr_sample(n_samples=n_samples,

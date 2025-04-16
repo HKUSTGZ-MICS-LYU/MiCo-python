@@ -7,8 +7,7 @@ from matplotlib import pyplot as plt
 from MiCoEval import MiCoEval
 from MiCoProxy import get_mico_matmul_proxy, get_mico_conv2d_proxy
 
-from models import CmsisCNN
-from datasets import cifar10
+from models import model_zoo
 
 from tqdm import tqdm
 
@@ -20,17 +19,18 @@ from searchers import (
 random.seed(0)
 np.random.seed(0)
 
+model_name = "lenet_mnist"
+
 if __name__ == "__main__":
 
-    model = CmsisCNN(3)
-    train_loader, test_loader = cifar10(shuffle=False, num_works=4)
-    evaluator = MiCoEval(model, 3, train_loader, test_loader, 
-                         "output/ckpt/cmsiscnn_cifar10.pth",
-                         output_json="output/json/cmsiscnn_cifar10_search_mico.json",)
+    model, train_loader, test_loader = model_zoo.from_zoo("lenet_mnist")
+    evaluator = MiCoEval(model, 2, train_loader, test_loader, 
+                         f"output/ckpt/{model_name}.pth",
+                         output_json=f"output/json/{model_name}_search_mico.json",)
 
-    matmul_proxy = get_mico_matmul_proxy("cacheless")
-    conv2d_proxy = get_mico_conv2d_proxy("cacheless")
-    evaluator.set_mico_target("cacheless")
+    matmul_proxy = get_mico_matmul_proxy("small")
+    conv2d_proxy = get_mico_conv2d_proxy("small")
+    evaluator.set_mico_target("small")
 
     evaluator.set_proxy(matmul_proxy, conv2d_proxy)
 
@@ -48,7 +48,14 @@ if __name__ == "__main__":
     )
     res_x, res_y = searcher.search(
         10, 'qat_acc', 'latency_proxy', max_latency*0.8)
+    
+    evaluator.epochs = 5
+    qat_res = evaluator.eval_qat(res_x)
+
+    print(f"QAT Long Accuracy: {qat_res}")
+
     print(f"Best Scheme: {res_x}")
+    print(f"Best Accuracy: {res_y}")
     print(f"Deploying Model to MiCo CPU....")
     res = evaluator.eval_latency(res_x, target="mico")
     print(f"MPQ Real Latency: {res}")

@@ -77,7 +77,7 @@ def dist_to_roi(x, constr_func, constr_value, roi):
 
 def near_constr_sample(n_samples: int, qtypes: list, dims: int,
                        constr_func=None, constr_value=None,
-                       roi=0.2):
+                       roi=0.2, layer_macs:list=None):
     if constr_func is None:
         return random_sample(n_samples, qtypes)
     
@@ -130,6 +130,15 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
                     sample[0] = max(qtypes)
                     sample[n_layers] = max(qtypes)
 
+            # Heuristic: Swap Activation and Weight Bitwidth
+            # for i in range(n_layers):
+            #     # if Weight Bitwidth is more than Activation Bitwidth
+            #     if sample[i] > sample[i+n_layers]:
+            #         if random.random() < (1.0 - sample[i+n_layers]/ sample[i]):
+            #             bitwidth = sample[i]
+            #             sample[i] = sample[i+n_layers]
+            #             sample[i+n_layers] = bitwidth
+            
             if sample in pop:
                 continue
 
