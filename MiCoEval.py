@@ -65,8 +65,9 @@ class MiCoEval:
         self.layer_params = [layer.get_params() for layer in self.layers]
 
         # A Regression Model for Hardware Latency
-        self.latency_model = None
         self.mico_target = "small"
+        self.misc_latency = 0.0
+        self.misc_proxy = None
 
         print("Model:", model._get_name())
         print("Number of QLayers: ", self.n_layers)
@@ -124,7 +125,61 @@ class MiCoEval:
         self.matmul_proxy = matmul_proxy
         self.conv2d_proxy = conv2d_proxy
         return
+    
+    def set_misc_proxy(self, misc_proxy):
+        self.misc_proxy = misc_proxy
+        return
+    
+    def get_misc_latency(self):
+        # assert self.misc_proxy is not None, "Misc Proxy not set."
+        self.misc_latency = 0.0
 
+        ignored_misc = ["memcpy", 
+                        "MiCo_flatten2d_f32", 
+                        "MiCo_relu4d_f32",
+                        "MiCo_relu2d_f32"]
+
+        gen_model = deepcopy(self.model)
+        gen_model = fuse_model(gen_model)
+        gen_model.set_qscheme([[8]*self.n_layers, [8]*self.n_layers])
+        codegen = MiCoCodeGen(gen_model)
+        self.input_size = self.train_loader.dataset[0][0].shape
+        example_input = torch.randn(1, *self.input_size).to(DEVICE)
+        codegen.forward(example_input)
+        for forward_pass in codegen.model_forward:
+            if ("bitconv2d" in forward_pass) or ("bitlinear" in forward_pass):
+                continue
+            else:
+                layer_name = forward_pass.split('(')[0]
+                if layer_name in ignored_misc:
+                    continue
+                else:
+                    layer_name = layer_name.strip('MiCo_')
+                    print("Misc Layer Name:", layer_name)
+                    layer_args = forward_pass.split('(')[1].split(')')[0]
+                    layer_args = layer_args.split(', ')
+                    layer_feature = []
+                    for layer_arg in layer_args:
+                        if layer_arg.startswith('&model->'):
+                            tensor_name = layer_arg.split('->')[1]
+                            # Find variable size in the model init pass
+                            tensor_shape = codegen.tensors[tensor_name]["tensor"].shape
+                            layer_feature += tensor_shape
+                        else:
+                            layer_feature.append(int(layer_arg))
+                    # Post-process on feature
+                    if layer_name in ["avgpool4d_f32", "maxpool4d_f32"]:
+                        layer_feature = layer_feature[4:] # Skip output shape
+                        layer_feature = layer_feature[1:] # Skip batch size
+                    layer_feature = np.array([layer_feature])
+                    print("Misc Layer Feature:", layer_feature)
+                    layer_latency = self.misc_proxy(
+                        self.mico_target, layer_name, layer_feature)[0]
+                    print("Misc Layer Latency:", layer_latency)
+                    self.misc_latency += layer_latency
+        print("Misc Latency:", self.misc_latency)
+        return
+    
     def set_mico_target(self, mico_type: str):
         self.mico_target = mico_type
 
@@ -175,18 +230,20 @@ class MiCoEval:
         aq = np.array(scheme[self.n_layers:])
 
         for i in range(self.n_layers):
-            # layer_features = self.layers[i].layer_features + (wq[i], aq[i])
-            # layer_features = np.array([layer_features])
+            # layer_features = self.layers[i].layer_features
             layer_macs = self.layer_macs[i]
             layer_bmacs = layer_macs * np.max([aq[i], wq[i]])
             layer_wloads = wq[i] * layer_macs
             layer_aloads = aq[i] * layer_macs
-            stats = np.array([layer_bmacs, layer_wloads, layer_aloads]).reshape(1, -1)
+            # layer_features = (layer_bmacs, layer_wloads, layer_aloads, wq[i], aq[i])
+            layer_features = (layer_bmacs, layer_wloads, layer_aloads)
+            layer_features = np.array([layer_features])
+            # layer_features = np.array([layer_bmacs, layer_wloads, layer_aloads]).reshape(1, -1)
             if self.layers[i].layer_type == 'Conv2D':
-                pred_latency += self.conv2d_proxy.predict(stats)[0]
+                pred_latency += self.conv2d_proxy.predict(layer_features)[0]
             elif self.layers[i].layer_type == 'Linear':
-                pred_latency += self.matmul_proxy.predict(stats)[0]
-        return pred_latency
+                pred_latency += self.matmul_proxy.predict(layer_features)[0]
+        return pred_latency + self.misc_latency
 
     def eval_size(self, scheme:list):
         size = 0

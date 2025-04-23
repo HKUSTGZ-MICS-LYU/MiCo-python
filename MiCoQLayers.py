@@ -108,7 +108,7 @@ class BitLinear(nn.Linear):
         self.in_w = in_features
         self.in_h = 1
 
-        self.layer_features = (in_features, out_features)
+        self.layer_features = (1, in_features, out_features) # N, M, K
         self.layer_type = 'Linear'
 
         self.qforward = False
@@ -237,7 +237,8 @@ class BitConv2d(nn.Conv2d):
             outw = (inw - self.kernel_size[0] + 2*self.padding[0]) / self.stride[0] + 1
             outh = (inh - self.kernel_size[1] + 2*self.padding[1]) / self.stride[1] + 1
             self.macs = (self.kernel_size[0]*self.kernel_size[1]) * inc * outh * outw * outc
-            self.layer_features = (inc, inw, inh, outc, outw, outh, self.kernel_size[0])
+            self.layer_features = (
+                inc, inw, outc, outw, self.kernel_size[0])
             # self.layer_features = (self.kernel_size[0]*self.kernel_size[1]*inc, outh * outw, outc)
         if self.qat:
             # Forward with Quantization Aware Training (QAT)

@@ -225,6 +225,58 @@ def benchmark_mico_conv2d(H, W, C, K, KS,
             res.append((H, W, C, K, KS, qa, qb, cycles))
     return res
 
+def benchmark_mico_pooling(C, H, W, K, S,
+                   mico_script="sim_small_mico.sh",
+                   mico_main="bitconv2d_test"):
+    
+    # Check if mico is installed
+    if not os.path.exists(f'{PWD}/hw/VexiiMico'):
+        error = "VexiiMico not installed. Please install VexiiMico first."
+        raise FileNotFoundError(error)
+    
+    res = []
+
+    # Set Matmul Size
+    with open(f"{PWD}/project/MiCo-Lib/test/{mico_main}.h", "w") as f:
+        f.write(f"#define N 1\n")
+        f.write(f"#define INC {C}\n")
+        f.write(f"#define INH {H}\n")
+        f.write(f"#define INW {W}\n")
+        f.write(f"#define K {K}\n")
+        f.write(f"#define S {S}\n")
+
+    # Compile the benchmark
+    make_cmd = f'make recompile MAIN={mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
+    cmd = f'cd {PWD}/project' + ' && ' + make_cmd
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    if proc.stderr:
+        print("Error in compiling the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    # print("Benchmark compiled successfully!")
+    
+    # Run the benchmark
+    cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
+        f'sh {mico_script} ../../project/{mico_main}.elf'
+
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    output = proc.stdout.readlines()
+    if proc.stderr:
+        print("Error in simulating the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    for line in output:
+        line = str(line.decode())
+        # Format: [info] MiCo QAxQB Time: xxxxxx
+        if line.startswith('[info] MiCo Time'):
+            cycles = int(line.split(': ')[1])
+            res.append((C, H, W, K, S, cycles))
+    return res
+
 # Test
 if __name__ == "__main__":
     res = benchmark_mico_matmul(32, 32, 32, mico_main="bitlinear_test")
