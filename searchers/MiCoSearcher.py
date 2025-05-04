@@ -192,7 +192,15 @@ class MiCoSearcher(QSearcher):
         return best_x, best_y
     
     def rf_opt(self, sampled_X, sampled_y, X):
-        rf = RandomForestRegressor()
+        
+        if self.dims > 10:
+            # Prevent overfitting for high-dimensional data
+            rf = RandomForestRegressor(
+                n_estimators=250, max_depth=15, max_features="sqrt"
+            )
+        else:
+            # Use default parameters for low-dimensional data
+            rf = RandomForestRegressor()
 
         rf.fit(sampled_X, sampled_y)
         y_pred = rf.predict(X)

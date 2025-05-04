@@ -43,6 +43,8 @@ RISCV_SOURCE ?=
 # Targets
 # VexiiRiscv Related
 include $(MICO_DIR)/targets/vexii.mk
+# VexiiRiscv BitNet Ext. Related
+include $(MICO_DIR)/targets/vexii_bitnet.mk
 # Chipyard Related
 include $(MICO_DIR)/targets/rocket.mk
 # x86 SIMD Related

@@ -1,4 +1,4 @@
-from SimUtils import benchmark_mico_matmul, benchmark_mico_conv2d
+from SimUtils import benchmark_mico_matmul, benchmark_mico_conv2d, benchmark_mico_pooling
 
 from itertools import product
 from tqdm import tqdm
@@ -34,7 +34,7 @@ if __name__ == '__main__':
     Ks = [4, 8, 16]
     KSs = [3, 5]
 
-    mico_config = "cacheless"
+    mico_config = "high"
     test_name = "bitconv2d_test"
 
     dataset = []
@@ -53,3 +53,31 @@ if __name__ == '__main__':
             for row in res:
                 f.write(','.join(map(str, row)) + '\n')
         sweep.update()
+
+
+    # Cs = [1, 3, 8, 16]
+    # HWs = [8, 16, 32]
+    # Ks = [2, 3, 4]
+    # Ss = [1, 2]
+
+    # mico_configs = ["high", "small", "cacheless"]
+    # test_names = ["maxpool4d_f32_test", "avgpool4d_f32_test"]
+
+    # for mico_config, test_name in product(mico_configs, test_names):
+    #     print(f"Running benchmark for {mico_config} {test_name}")
+    #     dataset = []
+    #     dataset_file = f'benchmark_results/mico_{mico_config}_{test_name}.csv'
+
+    #     sweep = tqdm(total=len(HWs) * len(Cs) * len(Ks) * len(Ss))
+    #     with open(dataset_file, 'w') as f:
+    #         f.write('C,H,W,K,S,Time\n')
+
+    #     for C, HW, K, S in product(Cs, HWs, Ks, Ss):
+    #         sweep.set_description(f"C={C}, H={HW}, W={HW}, K={K}, S={S}")
+    #         res = benchmark_mico_pooling(C, HW, HW, K, S,
+    #                                      f"sim_{mico_config}_mico.sh", test_name)
+    #         dataset += res
+    #         with open(dataset_file, 'a') as f:
+    #             for row in res:
+    #                 f.write(','.join(map(str, row)) + '\n')
+    #         sweep.update()
