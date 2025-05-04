@@ -382,8 +382,8 @@ void model_forward(Model* model) {{
             self.add_initialized_tensor(f"{layer_name}_bias", bias)
 
             self.add_forward_call("MiCo_bitconv2d_{dtype}", out, layer_name, input_names, [
-                module.qtype,
-                module.act_q,
+                round(module.qtype),
+                round(module.act_q),
                 module.stride[0],   # assume same stride for both dimensions
                 module.padding[0],  # assume same padding for both dimensions
                 module.dilation[0], # assume same dilation for both dimensions
@@ -400,7 +400,9 @@ void model_forward(Model* model) {{
                                         quant=module.qtype, scale=module.qw_scale)
             self.add_initialized_tensor(f"{layer_name}_bias", bias)
 
-            self.add_forward_call("MiCo_bitlinear_{dtype}", out, layer_name, input_names, [module.qtype, module.act_q])
+            self.add_forward_call("MiCo_bitlinear_{dtype}", out, layer_name, input_names, [
+                round(module.qtype),
+                round(module.act_q)])
 
         elif type(module) is torch.nn.Conv2d:
             weight = module.weight
@@ -825,12 +827,12 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    # example_input = torch.randn(1, 256)
+    example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    example_input = torch.randn(1, 3, 32, 32)
+    # example_input = torch.randn(1, 3, 32, 32)
 
-    # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
-    # ckpt = torch.load("output/ckpt/mlp_mnist.pth")
+    m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
+    ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
 
     # m = LeNet(1)
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
@@ -849,23 +851,24 @@ if __name__ == "__main__":
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
     # m.default_dataset = "CIFAR10"
 
-    m = resnet_alt_8(10)
-    m.default_dataset = "CIFAR10"
-    ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
+    # m = resnet_alt_8(10)
+    # m.default_dataset = "CIFAR10"
+    # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
     # m = resnet_alt_18(100)
     # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
 
-    weight_q = [8] * m.n_layers
+    weight_q = [1.58] * m.n_layers
     activation_q = [8] * m.n_layers
 
     m.load_state_dict(ckpt)
     m.set_qscheme([weight_q, activation_q])
-    m = fuse_model(m)
+    m=fuse_model(m)
     m.eval()
 
     m = MiCoCodeGen(m)
+    m.forward(example_input)
     m.visualize_dag("model_full.png")
     m.visualize_dag("model_simplified.png", simplified=True)
-    # m.convert("project", "model", verbose = True)
-    # m.build("project", "host")
+    m.convert("project", "model", verbose = False)
+    m.build("project", "host")

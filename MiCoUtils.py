@@ -262,7 +262,7 @@ def weight_export(weight: torch.Tensor, qtype: int, align_to=32):
             w = weight[-1] & 0xF
             data.append(w)
         return struct.pack(f'{len(data)}B', *data)
-    elif qtype == 2:
+    elif (qtype == 2) or (qtype > 1 and qtype < 2): # Ternary (1.58b) treated as 2b
         data = []
         num_loop = len(weight) // 4
         for i in range(num_loop):

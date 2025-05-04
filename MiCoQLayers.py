@@ -33,7 +33,7 @@ def activation_nquant_2d(x: torch.Tensor, qbit = 8):
     if qbit == 1:
         x_absmean = torch.mean(x.abs(), dim=(-2,-1), keepdim=True)
         y = x.sign() * x_absmean
-    elif qbit < 2:
+    elif qbit < 2: # Ternary quantization
         x_absmean = torch.mean(x.abs(), dim=(-2,-1), keepdim=True)
         scale = 1.0 / x_absmean.clamp_(min=1e-5)
         y = (x * scale).round().clamp_(-1, 1) / scale
