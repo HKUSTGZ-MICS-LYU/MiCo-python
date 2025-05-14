@@ -24,7 +24,7 @@ class NLPSearcher(QSearcher):
         self.layer_w = []
         # Evaluate INT8 model
         scheme = [8] * self.evaluator.n_layers * 2
-        int8_acc = self.evaluator.eval_ptq(scheme)
+        int8_acc = self.evaluator.eval(scheme)
         int8_bops = self.evaluator.eval_bops(scheme)
         print("INT8 Acc: ", int8_acc)
         print("INT8 BOPS: ", int8_bops)

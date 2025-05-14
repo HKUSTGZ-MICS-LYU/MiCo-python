@@ -398,7 +398,7 @@ class Transformer(MiCoModel):
     def train_loop(self, n_iter, train_loader, test_loader, verbose = False, lr = 0.001, eval_interval = None):
 
         if eval_interval is None:
-            eval_interval = n_iter // 10
+            eval_interval = max(n_iter // 10, 50)
 
         self.train_loader = train_loader
         self.test_loader = test_loader

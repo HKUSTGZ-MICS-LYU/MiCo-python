@@ -23,7 +23,7 @@ from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikeliho
 
 class BayesSearcher(QSearcher):
 
-    NUM_SAMPLES = 1000
+    NUM_SAMPLES = 1000 * 5
 
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
