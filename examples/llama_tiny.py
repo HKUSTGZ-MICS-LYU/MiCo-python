@@ -43,18 +43,18 @@ if __name__ == "__main__":
         batch_size=batch_size, 
         num_works=8)
     
-    # res = model.train_loop(n_iter=epochs, 
-    #                  train_loader=train_loader, 
-    #                  test_loader=test_loader, 
-    #                  eval_interval=1000,
-    #                  verbose=True)
+    res = model.train_loop(n_iter=epochs, 
+                     train_loader=train_loader, 
+                     test_loader=test_loader, 
+                     eval_interval=1000,
+                     verbose=True)
     
-    # torch.save(model.state_dict(), f'output/ckpt/{model_name}.pth')
-    # print("Model Results: ", res)
+    model.save(f'output/ckpt/{model_name}.pth')
+    print("Model Results: ", res)
 
     # Load Test
-    ckpt = torch.load(f'output/ckpt/{model_name}.pth', map_location=device)
-    model.load_state_dict(ckpt)
+    # ckpt = torch.load(f'output/ckpt/{model_name}.pth', map_location=device)
+    # model.load_state_dict(ckpt)
 
     start_time = time.time()
     res = model.test(test_loader)
@@ -73,7 +73,6 @@ if __name__ == "__main__":
     # with open(f'output/json/{model_name}.json', 'w') as f:
     #     json.dump(data, f)
 
-    exit()
     # Test Model Generation
     TOKENIZER_PATH = "data/tinystories/tok4096.model"
     enc = Tokenizer(tokenizer_model=TOKENIZER_PATH)

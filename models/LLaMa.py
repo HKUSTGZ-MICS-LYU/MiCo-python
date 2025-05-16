@@ -417,6 +417,13 @@ class Transformer(MiCoModel):
                       f"train loss {losses['TrainLoss']:.4f},",
                       f"val loss {losses['TestLoss']:.4f},",
                       f"val acc {losses['TestAcc']*100:.2f}%")
+                
+                self.checkpoint = {
+                    "model": self.state_dict(),
+                    "optimizer": optimizer.state_dict(),
+                    "model_args": self.params,
+                    "iter_num": iter_num
+                }
 
             logits = self(X, Y)
             loss = self.last_loss
@@ -432,6 +439,11 @@ class Transformer(MiCoModel):
         losses = self.estimate_loss()
         print("Final Losses: ", losses)
         return losses
+    
+    def save(self, filepath):
+        # save the model checkpoint
+        torch.save(self.checkpoint, filepath)
+        return
 
     
 def TinyLLaMa1M():

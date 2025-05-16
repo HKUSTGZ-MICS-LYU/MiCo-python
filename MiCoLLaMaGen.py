@@ -1,0 +1,116 @@
+import operator
+import os
+import inspect
+from typing import Any, Dict, List, Tuple, Callable
+
+import numpy as np
+import torch
+import torch.nn
+import torch.fx
+import struct
+
+
+from MiCoQLayers import BitConv2d, BitLinear, weight_quant
+from MiCoUtils import weight_export, fuse_model, fuse_model_seq, get_model_macs
+
+from models.LLaMa import Transformer, ModelArgs
+
+def serialize_fp32(file, tensor):
+    """ writes one fp32 tensor to file that is open in wb mode """
+    d = tensor.detach().cpu().view(-1).to(torch.float32).numpy()
+    b = struct.pack(f'{len(d)}f', *d)
+    file.write(b)
+
+def mico_export(model, filepath):
+    version = 1
+
+    out_file = open(filepath, 'wb')
+    # first write out the header. the header will be 256 bytes
+    # 1) write magic, which will be uint32 of "ak42" in ASCII
+    out_file.write(struct.pack('I', 0x616b3432))
+    # 2) write version, which will be int
+    out_file.write(struct.pack('i', version))
+    # 3) write the params, which will be 7 ints
+    p = model.params
+    hidden_dim = model.layers[0].feed_forward.w1.weight.shape[0]
+    n_kv_heads = p.n_heads if p.n_kv_heads is None else p.n_kv_heads
+    header = struct.pack('iiiiiii', p.dim, hidden_dim, p.n_layers, p.n_heads,
+                                    n_kv_heads, p.vocab_size, p.max_seq_len)
+    out_file.write(header)
+    # 4) write some other flags
+    shared_classifier = torch.equal(model.tok_embeddings.weight, model.output.weight)
+    out_file.write(struct.pack('B', int(shared_classifier)))
+    pad = 256 - out_file.tell() # pad rest with zeros; tell returns current pos
+    assert pad >= 0
+    out_file.write(b'\0' * pad)
+
+    # now let's write out all the params
+    weights = [
+        *[layer.attention_norm.weight for layer in model.layers],
+        *[layer.ffn_norm.weight for layer in model.layers],
+        model.norm.weight,
+        model.tok_embeddings.weight,
+    ]
+    for w in weights:
+        serialize_fp32(out_file, w)
+    
+    mico_weights = [
+        *[layer.attention.wq for layer in model.layers],
+        *[layer.attention.wk for layer in model.layers],
+        *[layer.attention.wv for layer in model.layers],
+        *[layer.attention.wo for layer in model.layers],
+        *[layer.feed_forward.w1 for layer in model.layers],
+        *[layer.feed_forward.w2 for layer in model.layers],
+        *[layer.feed_forward.w3 for layer in model.layers],
+    ]
+
+    if not shared_classifier:
+        mico_weights.append(model.output)
+
+    for linear in mico_weights:
+        if isinstance(linear, BitLinear):
+            qweight, scale = weight_quant(linear.weight, linear.qtype)
+            wb = weight_export(qweight, linear.qtype)
+            ws = scale.detach().cpu().numpy()
+            out_file.write(struct.pack('f', ws))
+        elif isinstance(linear, torch.nn.Linear):
+            serialize_fp32(out_file, linear.weight)
+        out_file.write(wb)
+
+    # write to binary file
+    out_file.close()
+    print(f"wrote {filepath}")
+
+def load_checkpoint(checkpoint):
+
+    # load the provided model checkpoint
+    checkpoint_dict = torch.load(checkpoint, map_location='cpu')
+    gptconf = ModelArgs(**checkpoint_dict['model_args'])
+    model = Transformer(gptconf)
+    state_dict = checkpoint_dict['model']
+    unwanted_prefix = '_orig_mod.'
+    for k,v in list(state_dict.items()):
+        if k.startswith(unwanted_prefix):
+            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+    return model
+
+if __name__ == "__main__":
+    model_path = "output/ckpt/llama_test.pth"
+    bin_path = "llama_model.bin"
+
+    from models import TinyLLaMa1M
+
+    model = TinyLLaMa1M()
+    torch.save(model.state_dict(), model_path)
+
+    model = load_checkpoint(model_path)
+
+    qscheme = [
+        [8] * model.n_layers, # weight qscheme
+        [8] * model.n_layers, # activation qscheme
+    ]
+
+    model.set_qscheme(qscheme)
+    mico_export(model, bin_path)
