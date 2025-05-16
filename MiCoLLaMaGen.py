@@ -43,7 +43,7 @@ def mico_export(model, filepath):
     pad = 256 - out_file.tell() # pad rest with zeros; tell returns current pos
     assert pad >= 0
     out_file.write(b'\0' * pad)
-
+    print("Header End Addr: ", hex(out_file.tell()))
     # now let's write out all the params
     weights = [
         *[layer.attention_norm.weight for layer in model.layers],
@@ -53,7 +53,7 @@ def mico_export(model, filepath):
     ]
     for w in weights:
         serialize_fp32(out_file, w)
-    
+    print("Non-NN Weight End Addr: ", hex(out_file.tell()))
     mico_weights = [
         *[layer.attention.wq for layer in model.layers],
         *[layer.attention.wk for layer in model.layers],
@@ -73,44 +73,29 @@ def mico_export(model, filepath):
             wb = weight_export(qweight, linear.qtype)
             ws = scale.detach().cpu().numpy()
             out_file.write(struct.pack('f', ws))
+            out_file.write(wb)
         elif isinstance(linear, torch.nn.Linear):
             serialize_fp32(out_file, linear.weight)
-        out_file.write(wb)
-
+    print("Final End Addr: ", hex(out_file.tell()))
     # write to binary file
     out_file.close()
-    print(f"wrote {filepath}")
-
-def load_checkpoint(checkpoint):
-
-    # load the provided model checkpoint
-    checkpoint_dict = torch.load(checkpoint, map_location='cpu')
-    gptconf = ModelArgs(**checkpoint_dict['model_args'])
-    model = Transformer(gptconf)
-    state_dict = checkpoint_dict['model']
-    unwanted_prefix = '_orig_mod.'
-    for k,v in list(state_dict.items()):
-        if k.startswith(unwanted_prefix):
-            state_dict[k[len(unwanted_prefix):]] = state_dict.pop(k)
-    model.load_state_dict(state_dict, strict=False)
-    model.eval()
-    return model
+    print(f"Wrote {filepath}")
 
 if __name__ == "__main__":
-    model_path = "output/ckpt/llama_test.pth"
-    bin_path = "llama_model.bin"
-
     from models import TinyLLaMa1M
+    
+    model_path = "output/ckpt/llama_tiny.pth"
+    bin_path = "project/llama2/llama_model.bin"
 
+    ckpt = torch.load(model_path, map_location='cpu')
     model = TinyLLaMa1M()
-    torch.save(model.state_dict(), model_path)
-
-    model = load_checkpoint(model_path)
+    model.load_state_dict(ckpt)
+    model.eval()
 
     qscheme = [
         [8] * model.n_layers, # weight qscheme
         [8] * model.n_layers, # activation qscheme
     ]
 
-    model.set_qscheme(qscheme)
+    # model.set_qscheme(qscheme)
     mico_export(model, bin_path)
