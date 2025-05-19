@@ -18,6 +18,7 @@
 #include "nn.h"
 #include "profile.h"
 #include "mico_nn.h"
+#include "llama2_config.h"
 
 #ifdef QUANTIZED
 typedef Tensor2D_Q8 DataType;
@@ -70,6 +71,18 @@ typedef struct {
     float* wcls;
 } TransformerWeights;
 
+typedef struct{
+    qtype* wq_qtype; // (layer * 2, i - wq, i + 1 - aq)
+    qtype* wk_qtype; // (layer * 2, i - wq, i + 1 - aq)
+    qtype* wv_qtype; // (layer * 2, i - wq, i + 1 - aq)
+    qtype* wo_qtype; // (layer * 2, i - wq, i + 1 - aq)
+    // weights for ffn
+    qtype* w1_qtype; // (layer * 2, i - wq, i + 1 - aq)
+    qtype* w2_qtype; // (layer * 2, i - wq, i + 1 - aq)
+    qtype* w3_qtype; // (layer * 2, i - wq, i + 1 - aq)
+
+} TransformerQScheme;
+
 typedef struct {
     // current wave of activations
     float *x; // activation at current time stamp (dim,)
@@ -90,6 +103,7 @@ typedef struct {
 typedef struct {
     Config config; // the hyperparameters of the architecture (the blueprint)
     TransformerWeights weights; // the weights of the model
+    TransformerQScheme qscheme; // quantization scheme for the weights
     RunState state; // buffers for the "wave" of activations in the forward pass
 } Transformer;
 
@@ -147,10 +161,14 @@ size_t init_weight(DataType* w, char* ptr, int n_layers, int n, int m){
     return ptr - ptr0;
 }
 
-void memory_map_weights(TransformerWeights *w, Config* p, char* ptr, int shared_weights){
-    int head_size = p->dim / p->n_heads;
+void* init_float_params(
+    TransformerWeights *w, 
+    Config* p, 
+    char* ptr, int shared_weights){
+
     // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
     unsigned long long n_layers = p->n_layers;
+
     w->rms_att_weight = (float*) ptr;
     ptr += n_layers * p->dim * sizeof(float);
 
@@ -163,6 +181,58 @@ void memory_map_weights(TransformerWeights *w, Config* p, char* ptr, int shared_
     w->token_embedding_table = (float*) ptr;
     w->wcls = w->token_embedding_table; // shared embedding table
     ptr += p->vocab_size * p->dim * sizeof(float);
+
+    return ptr;
+}
+
+void* init_qschemes(
+    TransformerQScheme *wq,
+    Config* p,
+    char* ptr
+){
+    int n_layers = p->n_layers;
+
+    wq->wq_qtype = (qtype*)ptr;
+    ptr += 2 * n_layers * sizeof(qtype);
+
+    for (int i = 0; i < 2 * n_layers; i++) {
+        if (wq->wq_qtype[i] < 1 || wq->wq_qtype[i] > 8) {
+            printf("Warning: Unexpected qtype value %d at index %d\n", wq->wq_qtype[i], i);
+        }
+    }
+
+    wq->wk_qtype = (qtype*)ptr;
+    ptr += 2 * n_layers * sizeof(qtype);
+
+    wq->wv_qtype = (qtype*)ptr;
+    ptr += 2 * n_layers * sizeof(qtype);
+
+    wq->wo_qtype = (qtype*)ptr;
+    ptr += 2 * n_layers * sizeof(qtype);
+
+    wq->w1_qtype = (qtype*)ptr;
+    ptr += 2 * n_layers * sizeof(qtype);
+
+    wq->w2_qtype = (qtype*)ptr;
+    ptr += 2 * n_layers * sizeof(qtype);
+
+    wq->w3_qtype = (qtype*)ptr;
+    ptr += 2 * n_layers * sizeof(qtype);
+
+    if ((size_t)ptr % 4 != 0) {
+        ptr += 4 - ((size_t)ptr % 4);
+    }
+    return ptr;
+}
+
+void memory_map_weights(
+    TransformerWeights *w, 
+    Config* p, 
+    char* ptr, int shared_weights){
+    
+    int head_size = p->dim / p->n_heads;
+    // make sure the multiplications below are done in 64bit to fit the parameter counts of 13B+ models
+    unsigned long long n_layers = p->n_layers;
 
     size_t inc = 0;
     w->wq = (DataType*)malloc(n_layers * sizeof(DataType));
@@ -192,14 +262,14 @@ void memory_map_weights(TransformerWeights *w, Config* p, char* ptr, int shared_
     w->w3 = (DataType*)malloc(n_layers * sizeof(DataType));
     inc = init_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
     ptr += inc;
-    if (ptr > (char*)llama_model_end) {
+    if (ptr != (char*)llama_model_end) {
         printf("Loading Size Mismatched!\n");
         exit(EXIT_FAILURE);
     }
     return;
 }
 
-void read_checkpoint(Config* config, TransformerWeights* weights) {
+void read_checkpoint(Config* config, TransformerWeights* weights, TransformerQScheme* qsheme) {
     char* ptr = (char*)llama_model_start;
     // read in magic number (uint32), has to be 0x616b3432, i.e. "ak42" in ASCII
     uint32_t magic_number = *(uint32_t*)ptr;
@@ -221,6 +291,10 @@ void read_checkpoint(Config* config, TransformerWeights* weights) {
     config->vocab_size = abs(config->vocab_size);
     // memory map the Transformer weights into the data pointer
     void* weights_ptr = (char*)llama_model_start + header_size; // skip header bytes. char is 1 byte
+    weights_ptr = init_float_params(weights, config, weights_ptr, shared_weights);
+    #ifdef QUANTIZED
+    weights_ptr = init_qschemes(qsheme, config, weights_ptr);
+    #endif
     memory_map_weights(weights, config, weights_ptr, shared_weights);
 }
 
@@ -252,7 +326,7 @@ int tokscanf(const char* piece, unsigned char* byte_val){
 void build_transformer(Transformer *t) {
     printf("Building Transformer model...\n");
     // read in the Config and the Weights from the checkpoint
-    read_checkpoint(&t->config, &t->weights);
+    read_checkpoint(&t->config, &t->weights, &t->qscheme);
     // allocate memory for the RunState buffers
     malloc_run_state(&t->state, &t->config);
 }
@@ -299,17 +373,24 @@ void softmax(float* x, int size) {
     }
 }
 
-void fmatmul(float* xout, float* x, float* w, int n, int d) {
-    // W (d,n) @ x (n,) -> xout (d,)
-    // by far the most amount of time is spent inside this little function
-    int i;
-    for (i = 0; i < d; i++) {
-        float val = 0.0f;
-        for (int j = 0; j < n; j++) {
-            val += w[i * n + j] * x[j];
-        }
-        xout[i] = val;
-    }
+void fmatmul(float* xout, float* x, Tensor2D_F32* w, int n, int d) {
+
+    // Temporary Tensors
+    Tensor2D_F32 Tx = { .shape = {1, n}, .data = x };
+    Tensor1D_F32 Tb = { .shape = {0}, .data = NULL };
+    Tensor2D_F32 Ty = { .shape = {1, d}, .data = xout };
+
+    MiCo_linear_f32(&Ty, &Tx, w, &Tb);
+}
+
+void qmatmul(float* xout, float* x, Tensor2D_Q8* w, int n, int d, 
+        qtype wq, qtype aq) {
+
+    // Temporary Tensors
+    Tensor2D_F32 Tx = { .shape = {1, n}, .data = x };
+    Tensor1D_F32 Tb = { .shape = {0}, .data = NULL };
+    Tensor2D_F32 Ty = { .shape = {1, d}, .data = xout };
+    MiCo_bitlinear_f32(&Ty, &Tx, w, &Tb, wq, aq);
 }
 
 float* forward(Transformer* transformer, int token, int pos) {
@@ -317,6 +398,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     // a few convenience variables
     Config* p = &transformer->config;
     TransformerWeights* w = &transformer->weights;
+    TransformerQScheme* qscheme = &transformer->qscheme;
     RunState* s = &transformer->state;
     float *x = s->x;
     int dim = p->dim;
@@ -342,9 +424,18 @@ float* forward(Transformer* transformer, int token, int pos) {
         s->v = s->value_cache + loff + pos * kv_dim;
 
         // qkv matmuls for this position
-        fmatmul(s->q, s->xb, w->wq[l].data, dim, dim);
-        fmatmul(s->k, s->xb, w->wk[l].data, dim, kv_dim);
-        fmatmul(s->v, s->xb, w->wv[l].data, dim, kv_dim);
+        #ifdef QUANTIZED
+        qmatmul(s->q, s->xb, w->wq + l, dim, dim,
+            qscheme->wq_qtype[2*l], qscheme->wq_qtype[2*l+1]);
+        qmatmul(s->k, s->xb, w->wk + l, dim, kv_dim,
+            qscheme->wk_qtype[2*l], qscheme->wk_qtype[2*l+1]);
+        qmatmul(s->v, s->xb, w->wv + l, dim, kv_dim,
+            qscheme->wv_qtype[2*l], qscheme->wv_qtype[2*l+1]);
+        #else
+        fmatmul(s->q, s->xb, w->wq + l, dim, dim);
+        fmatmul(s->k, s->xb, w->wk + l, dim, kv_dim);
+        fmatmul(s->v, s->xb, w->wv + l, dim, kv_dim);
+        #endif
 
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -404,8 +495,12 @@ float* forward(Transformer* transformer, int token, int pos) {
 
 
         // final matmul to get the output of the attention
-        fmatmul(s->xb2, s->xb, w->wo[l].data, dim, dim);
-
+        #ifdef QUANTIZED
+        qmatmul(s->xb2, s->xb, w->wo + l, dim, dim,
+            qscheme->wo_qtype[2*l], qscheme->wo_qtype[2*l+1]);
+        #else
+        fmatmul(s->xb2, s->xb, w->wo + l, dim, dim);
+        #endif
         // residual connection back into x
         for (int i = 0; i < dim; i++) {
             x[i] += s->xb2[i];
@@ -417,9 +512,15 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // Now for FFN in PyTorch we have: self.w2(F.silu(self.w1(x)) * self.w3(x))
         // first calculate self.w1(x) and self.w3(x)
-        fmatmul(s->hb, s->xb, w->w1[l].data, dim, hidden_dim);
-        fmatmul(s->hb2, s->xb, w->w3[l].data, dim, hidden_dim);
-
+        #ifdef QUANTIZED
+        qmatmul(s->hb, s->xb, w->w1 + l, dim, hidden_dim,
+            qscheme->w1_qtype[2*l], qscheme->w1_qtype[2*l+1]);
+        qmatmul(s->hb2, s->xb, w->w3 + l, dim, hidden_dim,
+            qscheme->w3_qtype[2*l], qscheme->w3_qtype[2*l+1]);
+        #else
+        fmatmul(s->hb, s->xb, w->w1 + l, dim, hidden_dim);
+        fmatmul(s->hb2, s->xb, w->w3 + l, dim, hidden_dim);
+        #endif
         // SwiGLU non-linearity
         for (int i = 0; i < hidden_dim; i++) {
             float val = s->hb[i];
@@ -430,9 +531,12 @@ float* forward(Transformer* transformer, int token, int pos) {
             s->hb[i] = val;
         }
         // final matmul to get the output of the ffn
-
-        fmatmul(s->xb, s->hb, w->w2[l].data, hidden_dim, dim);
-
+        #ifdef QUANTIZED
+        qmatmul(s->xb, s->hb, w->w2 + l, hidden_dim, dim,
+            qscheme->w2_qtype[2*l], qscheme->w2_qtype[2*l+1]);
+        #else
+        fmatmul(s->xb, s->hb, w->w2 + l, hidden_dim, dim);
+        #endif
         // residual connection
         for (int i = 0; i < dim; i++) {
             x[i] += s->xb[i];
@@ -441,7 +545,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     // final rmsnorm
     rmsnorm(x, x, w->rms_final_weight, dim);
     // classifier into logits
-    fmatmul(s->logits, x, w->wcls, p->dim, p->vocab_size);
+    Tensor2D_F32 wcls = { .shape = {p->vocab_size, dim}, .data = w->wcls };
+    fmatmul(s->logits, x, &wcls, p->dim, p->vocab_size);
     return s->logits;
 }
 

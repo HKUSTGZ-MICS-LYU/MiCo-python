@@ -19,7 +19,8 @@ else ifneq ($(filter im2col, $(OPT)),)
 	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/im2col_conv2d/*.c)
 endif
 
-CFLAGS = -O3 -Wall
+CFLAGS = -O3
+# CFLAGS += -Wall
 LDFLAGS = -lm
 
 # (Optional) Address Sanitizer

@@ -54,6 +54,7 @@ def mico_export(model, filepath):
     for w in weights:
         serialize_fp32(out_file, w)
     print("Non-NN Weight End Addr: ", hex(out_file.tell()))
+    
     mico_weights = [
         *[layer.attention.wq for layer in model.layers],
         *[layer.attention.wk for layer in model.layers],
@@ -66,7 +67,16 @@ def mico_export(model, filepath):
 
     if not shared_classifier:
         mico_weights.append(model.output)
-
+    
+    for linear in mico_weights:
+        if isinstance(linear, BitLinear):
+            out_file.write(struct.pack('b', linear.qtype))
+            out_file.write(struct.pack('b', linear.act_q))
+    if out_file.tell() % 4 != 0:
+        pad = 4 - out_file.tell() % 4
+        out_file.write(b'\0' * pad)
+    
+    print("Quantization Padding End Addr: ", hex(out_file.tell()))
     for linear in mico_weights:
         if isinstance(linear, BitLinear):
             qweight, scale = weight_quant(linear.weight, linear.qtype)
@@ -97,5 +107,5 @@ if __name__ == "__main__":
         [8] * model.n_layers, # activation qscheme
     ]
 
-    # model.set_qscheme(qscheme)
+    model.set_qscheme(qscheme)
     mico_export(model, bin_path)
