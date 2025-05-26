@@ -12,19 +12,25 @@ MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico/*.c)
 OPT ?=
 TARGET ?= host
 
-# Software Optimization
-ifneq ($(filter unroll, $(OPT)),)
-	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_unrolled/*.c)
-else ifneq ($(filter im2col, $(OPT)),)
-	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/im2col_conv2d/*.c)
-endif
-
 CFLAGS = -O3
 # CFLAGS += -Wall
 LDFLAGS = -lm
 
 # (Optional) Address Sanitizer
 # CFLAGS += -fsanitize=address -static-libasan
+
+# Software Optimization
+ifneq ($(filter unroll, $(OPT)),)
+	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_unrolled/*.c)
+endif
+
+ifneq ($(filter gcc-unroll, $(OPT)),)
+	CFLAGS += -funroll-all-loops
+endif
+
+ifneq ($(filter im2col, $(OPT)),)
+	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/im2col_conv2d/*.c)
+endif
 
 ifeq ($(TARGET), host)
 	CFLAGS += -DUSE_HOST
@@ -70,6 +76,7 @@ $(BUILD)/%.o: %.S
 	@$(CC) $(CFLAGS) -c -o $@ $< $(addprefix -I,$(INCLUDES))
 
 $(MAIN).elf: $(OBJS) $(MAIN).c
+	@echo "Compiling Flags $(CFLAGS)"
 	@echo "Linking Executable (main)..."
 	@$(CC) $(CFLAGS) -o $(MAIN).elf $(OBJS) $(MAIN).c $(addprefix -I,$(INCLUDES)) $(LDFLAGS)
 
@@ -88,7 +95,9 @@ compile: $(BUILD) $(MAIN).elf $(MAIN).asm
 
 recompile: clean compile
 
-run_host: $(MAIN).elf
+run-host: $(MAIN).elf
 	./$(MAIN).elf
 
 all: compile
+
+.PHONY: clean compile recompile run-host all

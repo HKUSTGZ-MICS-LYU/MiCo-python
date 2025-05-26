@@ -11,9 +11,10 @@ import jinja2
 import tabulate
 import subprocess
 
-
 from MiCoQLayers import BitConv2d, BitLinear, weight_quant
 from MiCoUtils import weight_export, fuse_model, fuse_model_seq, get_model_macs
+
+from models.LLaMa import TransformerBlock
 '''
 Modified Trace Module to Support BitConv2d and BitLinear
 '''
@@ -423,6 +424,10 @@ void model_forward(Model* model) {{
 
         # Normalization Layers
         elif type(module) is torch.nn.BatchNorm2d:
+            input_names.append(f"{layer_name}_weight")
+            input_names.append(f"{layer_name}_bias")
+            input_names.append(f"{layer_name}_running_mean")
+            input_names.append(f"{layer_name}_running_var")
             self.add_uninitialized_tensor(layer_name, out)
             self.add_initialized_tensor(f"{layer_name}_weight", module.weight)
             self.add_initialized_tensor(f"{layer_name}_bias", module.bias)
@@ -568,6 +573,10 @@ void model_forward(Model* model) {{
 
         print("finished tracing the model")
 
+
+        # Add Global Buffer for the Model
+        self.model_struct.insert(0, "float* buffer;")
+
         # === Write the generated C code to the output directory. ===
         # create the output directory if it doesn't exist
         os.makedirs(output_directory, exist_ok=True)
@@ -619,7 +628,8 @@ void model_forward(Model* model) {{
             f.write(self.weight_content)
         
         print(f"wrote the model to {model_h_path} and {model_bin_path}")
-    
+        print(f"model size = {len(self.weight_content)} bytes")
+
     def build(self, build_dir: str = "project", target: str = "mico"):
         """
         Build the model using the provided build directory.
@@ -806,6 +816,20 @@ void model_forward(Model* model) {{
     def get_bit_dag(self):
         dag = self.extract_simplified_dag()
 
+    
+    def tensor_lifetime(self):
+
+        dag = self.extract_tensor_dag()
+        footprint = {}
+        for node in dag:
+            footprint[node] = 0
+            for dep in dag[node]:
+                tensor = self.tensors[dep]['tensor']
+                footprint[node] += tensor.element_size() * tensor.nelement()
+        print(footprint)
+        return
+
+
     def forward(self, *args):
         self.reset()
         self.example_inputs = args
@@ -823,25 +847,25 @@ if __name__ == "__main__":
     import torch.nn.functional as F
     import MiCoUtils as mico
     from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, MobileNetV2, \
-          resnet_alt_8, resnet_alt_18 
+          resnet_alt_8, resnet_alt_18
 
     torch.manual_seed(0)
 
-    example_input = torch.randn(1, 256)
+    # example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    # example_input = torch.randn(1, 3, 32, 32)
+    example_input = torch.randn(1, 3, 32, 32)
 
-    m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
-    ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
+    # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
+    # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
 
     # m = LeNet(1)
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
-    # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
+    # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
 
-    # m = VGG(in_channels=3, num_class=10)
-    # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
+    m = VGG(in_channels=3, num_class=10)
+    ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
     # m = MobileNetV2(10)
     # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
@@ -858,12 +882,12 @@ if __name__ == "__main__":
     # m = resnet_alt_18(100)
     # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
 
-    weight_q = [1.58] * m.n_layers
+    weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
 
     m.load_state_dict(ckpt)
     m.set_qscheme([weight_q, activation_q])
-    m=fuse_model(m)
+    # m=fuse_model(m)
     m.eval()
 
     m = MiCoCodeGen(m)
@@ -871,4 +895,5 @@ if __name__ == "__main__":
     m.visualize_dag("model_full.png")
     m.visualize_dag("model_simplified.png", simplified=True)
     m.convert("project", "model", verbose = False)
-    m.build("project", "host")
+    m.tensor_lifetime()
+    # m.build("project", "host")

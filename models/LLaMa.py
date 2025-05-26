@@ -452,3 +452,16 @@ def TinyLLaMa1M():
 
 def TinyLLaMa7M():    
     return Transformer(ModelArgs())
+
+def TinyLLaMaNAS(args : dict):
+    """
+    args: {
+        "dim": 288,
+        "n_layers": 6,
+        "hidden_dim": 256,
+        "n_heads": 6,
+        "n_kv_heads": 4
+        "dropout": 0.0,
+    }
+    """
+    return Transformer(ModelArgs(**args))

@@ -425,6 +425,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // qkv matmuls for this position
         #ifdef QUANTIZED
+        // TODO: The act quantization is redundant!
         qmatmul(s->q, s->xb, w->wq + l, dim, dim,
             qscheme->wq_qtype[2*l], qscheme->wq_qtype[2*l+1]);
         qmatmul(s->k, s->xb, w->wk + l, dim, kv_dim,
@@ -971,7 +972,7 @@ int main(){
 
     float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = 256;            // number of steps to run for
+    int steps = 5;            // number of steps to run for
     char *prompt = "";        // prompt string
     unsigned long long rng_seed = 42; // seed rng with time by default
 
