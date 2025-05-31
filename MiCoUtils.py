@@ -188,6 +188,14 @@ def unset_qforward(model: nn.Module):
 #     "8b": 8
 # }
 
+def get_model_params(model: nn.Module):
+    # start with all of the candidate parameters
+    param_dict = {pn: p for pn, p in model.named_parameters()}
+    # filter out those that do not require grad
+    param_dict = {pn: p for pn, p in param_dict.items() if p.requires_grad}
+    params = sum(p.numel() for p in param_dict.values())
+    return params
+
 def get_model_size(model: nn.Module):
     size = 0
     for name, module in model.named_children():
