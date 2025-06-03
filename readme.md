@@ -54,7 +54,8 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | ResNet | Linear, BottleNeck (Conv2D) | Supported | Supported |
 | MobileNetV2 | Linear, BottleNeck (Conv2D) | Supported | Supported |
 | SqueezeNet | Linear, Conv2D | Supported | Supported |
-| LLaMa | Transformers (Linear) | Supported | Not Yet |
+| LLaMa | Transformers (Linear) | Supported | Supported |
+| ViT   | Transformers (Linear) | Supported | Not Yet |
 
 ## Supported Datasets
 

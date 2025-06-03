@@ -88,7 +88,7 @@ class ViT(MiCoModel):
             TransformerEncoder(hidden,
                                mlp_hidden=mlp_hidden, 
                                dropout=dropout, 
-                               head=head) 
+                               head=head)
             for _ in range(num_layers)]
         
         self.enc = nn.Sequential(*enc_list)

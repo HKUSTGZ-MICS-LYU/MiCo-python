@@ -14,7 +14,8 @@ from MiCoUtils import (
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class MiCoModel(nn.Module):
-    n_layers: int
+    n_layers: int   
+    default_dataset: str
     def __init__(self):
         super(MiCoModel, self).__init__()
 
@@ -77,10 +78,10 @@ class MiCoModel(nn.Module):
             loss = torch.tensor(np.inf)
             # Training
             self.train()
-            for i, (images, labels) in tqdm(enumerate(train_loader), 
-                                            total=len(train_loader),
-                                            desc=f"[Epoch {epoch+1}/{n_epoch}]",
-                                            disable=not verbose):
+            loop = tqdm(enumerate(train_loader), total=len(train_loader), 
+                        disable=not verbose)
+            
+            for i, (images, labels) in loop:
                 x, y = images.to(device), labels.to(device)
                 optimizer.zero_grad()
                 output = self(x)
@@ -91,7 +92,10 @@ class MiCoModel(nn.Module):
                 train_total += y.size(0)
                 train_correct += (predicted == y).sum().item()
                 optimizer.step()
+                loop.set_description(
+                    f"[Epoch {epoch+1}/{n_epoch} Loss: {loss.item():.3f}]")
             train_acc = train_correct / train_total
+
             if scheduler is not None:
                 scheduler.step()
             # Testing
