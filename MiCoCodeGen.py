@@ -8,7 +8,6 @@ import torch
 import torch.nn
 import torch.fx
 import jinja2
-import tabulate
 import subprocess
 
 from MiCoQLayers import BitConv2d, BitLinear, weight_quant
