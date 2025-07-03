@@ -3,7 +3,7 @@
 	url = git@github.com:HKUSTGZ-MICS-LYU/MiCo-Lib.git
 [submodule "hw/VexiiMico"]
 	path = hw/VexiiMico
-	url = git@github.com:Jzjerry/VexiiRiscv.git
+	url = git@github.com:HKUSTGZ-MICS-LYU/VexiiRiscv-MiCo.git
 [submodule "hw/bitfusion"]
 	path = hw/bitfusion
 	url = git@github.com:HKUSTGZ-MICS-LYU/bitfusion.git
