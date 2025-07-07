@@ -38,7 +38,7 @@ make MAIN=main TARGET=<host, vexii>
 ```
 **To run the inference on your host machine** after compilation:
 ```
-make run_host
+make run-host
 ```
 **To run the inference simulation on the VexiiRiscv** after compilation:
 
@@ -54,6 +54,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | ResNet | Linear, BottleNeck (Conv2D) | Supported | Supported |
 | MobileNetV2 | Linear, BottleNeck (Conv2D) | Supported | Supported |
 | SqueezeNet | Linear, Conv2D | Supported | Supported |
+| ShuffleNet | Linear, Conv2D | Supported | Supported |
 | LLaMa | Transformers (Linear) | Supported | Supported |
 | ViT   | Transformers (Linear) | Supported | Not Yet |
 

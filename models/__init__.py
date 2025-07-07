@@ -6,6 +6,7 @@ from models.MobileNetV2 import MobileNetV2
 from models.CmsisCNN import CmsisCNN
 from models.VGG import VGG
 from models.SqueezeNet import SqueezeNet
+from models.ShuffleNet import shufflenet
 
 from models.LLaMa import Transformer, TinyLLaMa7M, TinyLLaMa1M, TinyLLaMaNAS
 from models.ViT import ViT, ViT1M_cifar10, ViT1M_cifar100, ViTNAS

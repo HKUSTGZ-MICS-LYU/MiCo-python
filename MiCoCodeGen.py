@@ -21,7 +21,8 @@ class MiCoTrace(torch.fx.Tracer):
     def is_leaf_module(self, m: torch.nn.Module, module_qualified_name: str) -> bool:
         return (
             ((m.__module__.startswith("torch.nn") or m.__module__.startswith("torch.ao.nn"))
-            or (isinstance(m, BitLinear) or isinstance(m, BitConv2d)))
+            or (isinstance(m, BitLinear) or isinstance(m, BitConv2d))
+            or (hasattr(m, "MiCo_func")))
             and not isinstance(m, torch.nn.Sequential)
         )
 
@@ -276,7 +277,7 @@ void model_forward(Model* model) {{
         input_args = n.args
         
         # Math operations - Pointwise Ops
-        if function == operator.__add__:
+        if function == operator.__add__ or function == torch.add:
             self.add_uninitialized_tensor(layer_name, out)
             self.add_forward_call("MiCo_add{dim}d_{dtype}", out, layer_name, input_names)
         
@@ -458,7 +459,7 @@ void model_forward(Model* model) {{
             elif isinstance(module.kernel_size, int):
                 kernel_size = module.kernel_size
             self.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
-                                  [kernel_size, module.stride])
+                                  [kernel_size, module.stride, module.padding])
         elif type(module) is torch.nn.MaxPool2d:
             if isinstance(module.kernel_size, Tuple):
                 kernel_size = module.kernel_size[0]
@@ -466,7 +467,7 @@ void model_forward(Model* model) {{
                 kernel_size = module.kernel_size
             self.add_uninitialized_tensor(layer_name, out)
             self.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
-                                  [kernel_size, module.stride])
+                                  [kernel_size, module.stride, module.padding])
         elif type(module) is torch.nn.AdaptiveAvgPool2d:
             if isinstance(module.output_size, Tuple):
                 output_size = module.output_size[0]
@@ -493,6 +494,12 @@ void model_forward(Model* model) {{
         elif isinstance(module, (torch.nn.Identity, torch.nn.Dropout)):
             self.add_initialized_tensor(layer_name, out)
             self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
+        # Costom Layers with MiCo Implementation
+        elif hasattr(module, "MiCo_func"):
+            input_names += module.MiCo_func.input_names
+            parameters = module.MiCo_func.params
+            self.add_uninitialized_tensor(layer_name, out)
+            self.add_forward_call(module.MiCo_func.name, out, layer_name, input_names, parameters)
 
 
     def handle_output(self, n: torch.fx.node.Node, out: torch.Tensor):
@@ -812,9 +819,6 @@ void model_forward(Model* model) {{
             print(f"Error rendering graph: {e}")
             return False
 
-    def get_bit_dag(self):
-        dag = self.extract_simplified_dag()
-
     
     def tensor_lifetime(self):
 
@@ -846,7 +850,7 @@ if __name__ == "__main__":
     import torch.nn.functional as F
     import MiCoUtils as mico
     from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, MobileNetV2, \
-          resnet_alt_8, resnet_alt_18
+          resnet_alt_8, resnet_alt_18, shufflenet
 
     torch.manual_seed(0)
 
@@ -863,8 +867,8 @@ if __name__ == "__main__":
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
 
-    m = VGG(in_channels=3, num_class=10)
-    ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
+    # m = VGG(in_channels=3, num_class=10)
+    # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
     # m = MobileNetV2(10)
     # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
@@ -873,6 +877,10 @@ if __name__ == "__main__":
     # m = SqueezeNet(class_num=10)
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
     # m.default_dataset = "CIFAR10"
+
+    m = shufflenet(10)
+    m.default_dataset = "CIFAR10"
+    ckpt = torch.load("output/ckpt/shuffle_cifar10.pth")
 
     # m = resnet_alt_8(10)
     # m.default_dataset = "CIFAR10"
@@ -886,7 +894,7 @@ if __name__ == "__main__":
 
     m.load_state_dict(ckpt)
     m.set_qscheme([weight_q, activation_q])
-    # m=fuse_model(m)
+    m=fuse_model(m)
     m.eval()
 
     m = MiCoCodeGen(m)

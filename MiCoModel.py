@@ -12,6 +12,11 @@ from MiCoUtils import (
     replace_quantize_layers_torchao)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+class MiCoFunc:
+    def __init__(self, name, input_names=[], params=[]):
+        self.name = name
+        self.input_names = input_names
+        self.params = params
 
 class MiCoModel(nn.Module):
     n_layers: int   

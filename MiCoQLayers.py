@@ -47,6 +47,11 @@ def activation_nquant_2d(x: torch.Tensor, qbit = 8):
         y = (x * scale).round().clamp_(-(2**(qbit-1)), 2**(qbit-1) - 1) / scale
     return y
 
+def activation_pact_quant(x: torch.Tensor, qbit = 8):
+    # Parameterized Clipping Activation for Quantized Neural Networks
+    # https://arxiv.org/pdf/1805.06085
+    pass
+
 def weight_quant1b(w: torch.Tensor):
     # 1-bit quantization
     scale = 1.0 / w.abs().mean().clamp_(min=1e-5)
