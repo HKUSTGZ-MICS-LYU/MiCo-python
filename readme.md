@@ -1,16 +1,20 @@
-# MiCo: Mixed Precision Neural Networks On SIMD-extended RISC-V CPUs
+# MiCo: End-to-End Mixed Precision Neural Network Co-Exploration Framework for Edge AI
 
 This is the Python codebase for MiCo Framework. (W.I.P.)
 
 ## Pre-requisite
 
 ```shell
-# 
 conda create -n mico_env python=3.10
 conda activate mico_env
 
 conda install pygmo
 pip install -r requirements.txt
+```
+
+If you encounter `ModuleNotFoundError` when trying to import local packages here, before you run the code:
+```shell
+export PYTHONPATH=$PYTHONPATH:.
 ```
 
 ## Getting Start
@@ -81,3 +85,9 @@ https://github.com/mit-han-lab/haq
 ## Roadmap
 
 Check our [Roadmap](/../../issues/1) to see what's on the plan!
+
+---
+<p align="center">
+<img src="doc/icon_v1.jpg" width="50%" height="50%"/>
+</p>
+Generated with Gemini-2.5 Flash.
