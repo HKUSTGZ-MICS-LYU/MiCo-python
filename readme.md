@@ -72,6 +72,28 @@ Currently MiCo includes the following datasets:
 + CIFAR-100
 + TinyStories
 
+## Main Components
+Here are the main components/modules of MiCo.
+
+**Basics**
++ `MiCoUtils`: Utilities for MiCo framework, including layer replacing, exporting, etc..
++ `MiCoModel`: Basic model class of MiCo, offering unified training/testing methods, and the layer-wise bitwidth assignment method.
++ `MiCoQLayers`: Fundamental quantized layer classes for MiCo models and quantization functions.
++ `MiCoEval`: Model evaluation for MiCo models, evaluating accuracy, BOPs, MACs, end-to-end latency results.
++ `MiCoAnalysis`: Various statistics for quantized models.
+
+**Codegen**
++ `MiCoCodeGen`： C code generator for MiCo models.
++ `MiCoGraphGen`: DNN Weaver Op graph generator for MiCo models.
++ `MiCoLLaMaGen`: C code generator for MiCo TinyLLaMa models.
+
+**Searchers**
++ `searchers.MiCoSearcher`: Main MPQ searcher of MiCo framework.
+
+**Hardware-Aware**
++ `SimUtils`: Invoke simulations for BitFusion or VexiiRiscv hardware.
++ `MiCoProxy`: CBOPs proxy models for hardware latency predictions.
+
 ## Acknowledgement
 
 ucb-bar/Baremetal-NN (For Codegen with Torch FX Interpreter):

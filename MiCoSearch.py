@@ -1,3 +1,9 @@
+'''
+
+NOTE: Deprecated! Use MiCoSearcher from searchers instead.
+'''
+
+
 import torch
 import torch.nn as nn
 import torch.nn.utils.fusion as fusion
