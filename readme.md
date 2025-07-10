@@ -104,6 +104,14 @@ mit-han-lab/haq (For HAQ Searcher Implementation):
 
 https://github.com/mit-han-lab/haq
 
+weiaicunzai/pytorch-cifar100 (For torch models):
+
+https://github.com/weiaicunzai/pytorch-cifar100
+
+karpathy/llama2.c (For LLaMa2 and TinyStories scripts and c codes):
+
+https://github.com/karpathy/llama2.c
+
 ## Roadmap
 
 Check our [Roadmap](/../../issues/1) to see what's on the plan!
