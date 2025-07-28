@@ -390,7 +390,7 @@ void qmatmul(float* xout, float* x, Tensor2D_Q8* w, int n, int d,
     Tensor2D_F32 Tx = { .shape = {1, n}, .data = x };
     Tensor1D_F32 Tb = { .shape = {0}, .data = NULL };
     Tensor2D_F32 Ty = { .shape = {1, d}, .data = xout };
-    MiCo_bitlinear_f32(&Ty, &Tx, w, &Tb, wq, aq);
+    MiCo_bitlinear_f32(&Ty, &Tx, w, &Tb, wq, aq, 1); // TODO: alignment
 }
 
 float* forward(Transformer* transformer, int token, int pos) {
@@ -972,7 +972,7 @@ int main(){
 
     float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = 5;            // number of steps to run for
+    int steps = 256;            // number of steps to run for
     char *prompt = "";        // prompt string
     unsigned long long rng_seed = 42; // seed rng with time by default
 

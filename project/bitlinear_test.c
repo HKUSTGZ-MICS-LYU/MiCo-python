@@ -45,7 +45,7 @@ int main(){
 
     // Warming Up
     printf("Warming Up\n");
-    MiCo_bitlinear_f32(&o, &x, &w, &bias, 8, 8);
+    MiCo_bitlinear_f32(&o, &x, &w, &bias, 8, 8, 1);
     printf("Warming Up Done\n");
 
     // Same Bit-widths Kernel
@@ -55,7 +55,7 @@ int main(){
         QUANT_TIMER = 0;
         
         start_time = MiCo_time();
-        MiCo_bitlinear_f32(&o, &x, &w, &bias, q, q);
+        MiCo_bitlinear_f32(&o, &x, &w, &bias, q, q, 1);
         end_time = MiCo_time();
         printf("MiCo %dx%d Time: %ld\n", q, q, end_time - start_time);
         printf("QMatMul Timer: %ld\n", QMATMUL_TIMER);
@@ -70,7 +70,7 @@ int main(){
             QUANT_TIMER = 0;
 
             start_time = MiCo_time();
-            MiCo_bitlinear_f32(&o, &x, &w, &bias, qb, qa);
+            MiCo_bitlinear_f32(&o, &x, &w, &bias, qb, qa, 1);
             end_time = MiCo_time();
             printf("MiCo %dx%d Time: %ld\n", qa, qb, end_time - start_time);
             printf("QMatMul Timer: %ld\n", QMATMUL_TIMER);

@@ -120,7 +120,7 @@ void model_forward(Model* model) {{
         gm = torch.fx.GraphModule(model, graph)
         return graph, gm
 
-    def __init__(self, model: torch.nn.Module):
+    def __init__(self, model: torch.nn.Module, align_to: int = 32):
         graph, gm = MiCoCodeGen._extract_graph_module(model)
         super().__init__(gm)
 
@@ -134,6 +134,7 @@ void model_forward(Model* model) {{
 
         # initialize jinja2 code generation environment
         self.env = jinja2.Environment()
+        self.align_to = align_to
 
         self.reset()
     
@@ -388,7 +389,8 @@ void model_forward(Model* model) {{
                 module.stride[0],   # assume same stride for both dimensions
                 module.padding[0],  # assume same padding for both dimensions
                 module.dilation[0], # assume same dilation for both dimensions
-                module.groups
+                module.groups,
+                self.align_to
             ])
         elif type(module) is BitLinear:
             weight = module.weight
@@ -403,7 +405,8 @@ void model_forward(Model* model) {{
 
             self.add_forward_call("MiCo_bitlinear_{dtype}", out, layer_name, input_names, [
                 round(module.qtype),
-                round(module.act_q)])
+                round(module.act_q),
+                self.align_to])
 
         elif type(module) is torch.nn.Conv2d:
             weight = module.weight
@@ -527,7 +530,8 @@ void model_forward(Model* model) {{
 
         return out
 
-    def convert(self, output_directory: str = "project", model_name: str = "model", verbose = False):
+    def convert(self, output_directory: str = "project", 
+                model_name: str = "model", verbose = False):
         """
         Convert the model to a C model.
 
@@ -538,6 +542,9 @@ void model_forward(Model* model) {{
         Returns:
             The output of the model.
         """
+        
+        align_to = self.align_to
+
         if self.example_inputs is None:
             raise ValueError("No example inputs provided. Please call forward() at least once.")
 
@@ -566,7 +573,7 @@ void model_forward(Model* model) {{
                     else:
                         qweight, scale = weight_quant(tensor, qbit)
                         self.model_init.append(f"model->{name}.data = (qbyte *)(model_weight_data + {len(self.weight_content)});")
-                        self.weight_content += weight_export(qweight, qbit)
+                        self.weight_content += weight_export(qweight, qbit, align_to)
                         self.model_init.append(f"model->{name}.scale = {scale};")
                 else:
                     n_size = tensor.nelement() * tensor.element_size()
@@ -636,7 +643,7 @@ void model_forward(Model* model) {{
         print(f"wrote the model to {model_h_path} and {model_bin_path}")
         print(f"model size = {len(self.weight_content)} bytes")
 
-    def build(self, build_dir: str = "project", target: str = "mico"):
+    def build(self, build_dir: str = "project", target: str = "mico", options: str = ""):
         """
         Build the model using the provided build directory.
         """
@@ -656,7 +663,7 @@ void model_forward(Model* model) {{
             target_options += "TARGET=vexii MARCH=rv32imfc"
         elif target == "host":
             target_options += ""
-        
+        target_options += " " + options
         cmd = f"cd {build_dir} && make clean && make -j " + target_options
         proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
         proc.wait()
@@ -664,8 +671,9 @@ void model_forward(Model* model) {{
             print("Error in compiling the model:")
             print(proc.stderr.readlines())
             return None
-        print("Model compiled successfully!")
-        return
+        else:
+            print("Model compiled successfully!")
+        return proc.returncode
     
     def extract_tensor_dag(self):
         """
@@ -855,14 +863,17 @@ if __name__ == "__main__":
     torch.manual_seed(0)
 
     # example_input = torch.randn(1, 256)
-    # example_input = torch.randn(1, 1, 28, 28)
-    example_input = torch.randn(1, 3, 32, 32)
+    example_input = torch.randn(1, 1, 28, 28)
+    # example_input = torch.randn(1, 3, 32, 32)
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
 
-    # m = LeNet(1)
-    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
+    # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
+
+    m = LeNet(1)
+    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
@@ -878,9 +889,9 @@ if __name__ == "__main__":
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
     # m.default_dataset = "CIFAR10"
 
-    m = shufflenet(10)
-    m.default_dataset = "CIFAR10"
-    ckpt = torch.load("output/ckpt/shuffle_cifar10.pth")
+    # m = shufflenet(10)
+    # m.default_dataset = "CIFAR10"
+    # ckpt = torch.load("output/ckpt/shuffle_cifar10.pth")
 
     # m = resnet_alt_8(10)
     # m.default_dataset = "CIFAR10"
@@ -897,10 +908,10 @@ if __name__ == "__main__":
     m=fuse_model(m)
     m.eval()
 
-    m = MiCoCodeGen(m)
+    m = MiCoCodeGen(m, align_to=32)
     m.forward(example_input)
-    m.visualize_dag("model_full.png")
-    m.visualize_dag("model_simplified.png", simplified=True)
+    # m.visualize_dag("model_full.png")
+    # m.visualize_dag("model_simplified.png", simplified=True)
     m.convert("project", "model", verbose = False)
-    m.tensor_lifetime()
-    # m.build("project", "host")
+    # m.tensor_lifetime()
+    # m.build("project", "mico_fpu", "TEST_NUM=1")

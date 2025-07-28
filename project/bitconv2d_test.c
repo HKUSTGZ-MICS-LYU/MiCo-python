@@ -51,14 +51,14 @@ int main(){
 
     // Warming Up
     printf("Warming Up\n");
-    MiCo_bitconv2d_f32(&o, &x, &w, &bias, 8, 8, 1, 0, 1, 1);
+    MiCo_bitconv2d_f32(&o, &x, &w, &bias, 8, 8, 1, 0, 1, 1, 1);
     printf("Warming Up Done\n");
 
     // Same Bit-widths Kernel
     for (qtype q=8; q>=1; q /= 2){
 
         start_time = MiCo_time();
-        MiCo_bitconv2d_f32(&o, &x, &w, &bias, q, q, 1, 0, 1, 1);
+        MiCo_bitconv2d_f32(&o, &x, &w, &bias, q, q, 1, 0, 1, 1, 1);
         end_time = MiCo_time();
 
         printf("MiCo %dx%d Time: %ld\n", q, q, end_time - start_time);
@@ -70,7 +70,7 @@ int main(){
             if (qa == qb) continue;
 
             start_time = MiCo_time();
-            MiCo_bitconv2d_f32(&o, &x, &w, &bias, qb, qa, 1, 0, 1, 1);
+            MiCo_bitconv2d_f32(&o, &x, &w, &bias, qb, qa, 1, 0, 1, 1, 1);
             end_time = MiCo_time();
             printf("MiCo %dx%d Time: %ld\n", qa, qb, end_time - start_time);
         }

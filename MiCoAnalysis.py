@@ -43,3 +43,15 @@ def per_layer_weight_num(model: MiCoModel):
         weights.append(qlayer.get_params())
     weights = np.array(weights)
     return weights
+
+def per_layer_weight_sparsity(model: MiCoModel, eps = 1e-3):
+    qlayers = model.get_qlayers()
+    sparsities = []
+    for qlayer in qlayers:
+        weight = qlayer.weight.data.cpu().numpy()
+        non_zero_count = np.count_nonzero(np.abs(weight) > eps)
+        total_count = weight.size
+        sparsity = 1 - (non_zero_count / total_count)
+        sparsities.append(sparsity)
+    sparsities = np.array(sparsities)
+    return sparsities
