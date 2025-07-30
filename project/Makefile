@@ -48,16 +48,7 @@ RISCV_PREFIX = riscv64-unknown-elf
 RISCV_SOURCE ?= 
 
 # Targets
-# VexiiRiscv Related
-include $(MICO_DIR)/targets/vexii.mk
-# VexiiRiscv BitNet Ext. Related
-include $(MICO_DIR)/targets/vexii_bitnet.mk
-# Chipyard Related
-include $(MICO_DIR)/targets/rocket.mk
-# x86 SIMD Related
-include $(MICO_DIR)/targets/x86.mk
-# OpenMP Related
-include $(MICO_DIR)/targets/openmp.mk
+include $(MICO_DIR)/targets/$(TARGET).mk
 
 OBJS := $(MICO_SOURCES) $(RISCV_SOURCE)
 OBJS := $(OBJS:.c=.o)
