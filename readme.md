@@ -23,9 +23,16 @@ export PYTHONPATH=$PYTHONPATH:.
 
 Check `examples`, run the training code first and use the trained model for MPQ Search.
 For example:
-```
+```shell
 python examples/lenet_mnist.py # Train LeNet on MNIST
 python examples/lenet_mnist_search.py # MPQ Search on trained LeNet
+```
+
+**General Scripts**:
+```shell
+# For General Script Usage
+python examples/mpq_train.py -h
+python examples/mpq_search.py -h
 ```
 
 **To use the CodeGen**, check the code to change the models/datasets/precisions:
@@ -49,18 +56,18 @@ make run-host
 Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/master/VexiiRiscv/HowToUse/index.html#run-a-simulation), load the elf from `project` to the simulator.
 
 ## Supported Models
-| Model | Layers | MPQ Search | MPQ Deploy |
-| ----- | ------ | ---------- | ---------- |
-| MLP   | Linear         | Supported | Supported |
-| LeNet | Linear, Conv2D | Supported | Supported |
-| CNN   | Linear, Conv2D | Supported | Supported |
-| VGG   | Linear, Conv2D | Supported | Supported |
-| ResNet | Linear, BottleNeck (Conv2D) | Supported | Supported |
-| MobileNetV2 | Linear, BottleNeck (Conv2D) | Supported | Supported |
-| SqueezeNet | Linear, Conv2D | Supported | Supported |
-| ShuffleNet | Linear, Conv2D | Supported | Supported |
-| LLaMa | Transformers (Linear) | Supported | Supported |
-| ViT   | Transformers (Linear) | Supported | Not Yet |
+| Model | Layers | MPQ Search | MPQ Deploy (C) | MPQ Deploy (DNNWeaver) |
+| ----- | ------ | ---------- | ---------- | ---------- |
+| MLP   | Linear         | Supported | Supported | Supported |
+| LeNet | Linear, Conv2D | Supported | Supported | Supported |
+| CNN   | Linear, Conv2D | Supported | Supported | Supported |
+| VGG   | Linear, Conv2D | Supported | Supported | Supported |
+| ResNet | Linear, BottleNeck (Conv2D) | Supported | Supported | Supported |
+| MobileNetV2 | Linear, BottleNeck (Conv2D) | Supported | Supported | Supported |
+| SqueezeNet | Linear, Conv2D | Supported | Supported | Supported |
+| ShuffleNet | Linear, Conv2D | Supported | Supported | Not Yet |
+| LLaMa | Transformers (Linear) | Supported | Supported | Not Yet |
+| ViT   | Transformers (Linear) | Supported | Not Yet | Not Yet |
 
 ## Supported Datasets
 
@@ -93,6 +100,21 @@ Here are the main components/modules of MiCo.
 **Hardware-Aware**
 + `SimUtils`: Invoke simulations for BitFusion or VexiiRiscv hardware.
 + `MiCoProxy`: CBOPs proxy models for hardware latency predictions.
+
+## Publication
+
+Please refer to the paper for details.
+
+```bibtex
+@inproceedings{jiang2025mico,
+  title={MiCo: End-to-End Mixed Precision Neural Network Co-Exploration Framework for Edge AI},
+  author={Jiang, Zijun and Lyu, Yangdi},
+  booktitle={Proceedings of 2025 IEEE/ACM International Conference on Computer-Aided Design (ICCAD)},
+  pages={1--9},
+  year={2025},
+  organization={IEEE}
+}
+```
 
 ## Acknowledgement
 
