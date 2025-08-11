@@ -3,7 +3,9 @@ import json
 import torch
 import numpy as np
 
-from models import TinyLLaMa1M
+from models import (
+    TinyLLaMa447K, TinyLLaMa1M, TinyLLaMa7M, TinyLLaMa11M, TinyLLaMa28M
+    )
 from MiCoUtils import (
     list_quantize_layers, 
     replace_quantize_layers,
@@ -62,17 +64,6 @@ if __name__ == "__main__":
     print("Model Test Results: ", res)
     print("Model Test Time: ", end_time - start_time)
 
-    model.set_qscheme_torchao([[8] * n_layers, [8] * n_layers], device=device)
-    start_time = time.time()
-    res = model.test(test_loader)
-    end_time = time.time()
-    print("Model Torch AO Test Results: ", res)
-    print("Model Torch AO Test Time: ", end_time - start_time)
-
-    # data = export_layer_weights(model)
-    # with open(f'output/json/{model_name}.json', 'w') as f:
-    #     json.dump(data, f)
-
     # Test Model Generation
     TOKENIZER_PATH = "data/tinystories/tok4096.model"
     enc = Tokenizer(tokenizer_model=TOKENIZER_PATH)
@@ -86,15 +77,6 @@ if __name__ == "__main__":
     num_samples = 1
 
     print("Generation With FP Model:")
-    with torch.no_grad():
-        for k in range(num_samples):
-            y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
-            print(enc.decode(y[0].tolist()))
-            print('---------------')
-
-    res = model.estimate_loss()
-    print("Quantized Model Result: ", res)
-    print("Generation With Quantized Model:")
     with torch.no_grad():
         for k in range(num_samples):
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)

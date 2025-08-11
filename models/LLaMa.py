@@ -445,13 +445,25 @@ class Transformer(MiCoModel):
         torch.save(self.checkpoint, filepath)
         return
 
-    
+
+def TinyLLaMa447K():
+    args = ModelArgs(dim=64, n_layers=5, hidden_dim=128, n_heads=8, n_kv_heads=4)
+    return Transformer(args)
+
 def TinyLLaMa1M():
     args = ModelArgs(dim=160, n_layers=5, hidden_dim=128, n_heads=8, n_kv_heads=4)
     return Transformer(args)
 
 def TinyLLaMa7M():    
     return Transformer(ModelArgs())
+
+def TinyLLaMa11M():
+    args = ModelArgs(dim=320, n_layers=8, n_heads=8)
+    return Transformer(args)
+
+def TinyLLaMa28M():
+    args = ModelArgs(dim=512, n_layers=8, n_heads=8)
+    return Transformer(args)
 
 def TinyLLaMaNAS(args : dict):
     """
