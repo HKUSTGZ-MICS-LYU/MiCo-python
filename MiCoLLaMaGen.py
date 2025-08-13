@@ -21,7 +21,7 @@ def serialize_fp32(file, tensor):
     b = struct.pack(f'{len(d)}f', *d)
     file.write(b)
 
-def mico_export(model, filepath):
+def mico_export(model: Transformer, filepath: str):
     version = 1
 
     out_file = open(filepath, 'wb')

@@ -36,19 +36,19 @@ python examples/mpq_search.py -h
 ```
 
 **To use the CodeGen**, check the code to change the models/datasets/precisions:
-```
+```shell
 python MiCoCodeGen.py
 ```
 
 **To compile the inference code** after generating the model header with the CodeGen:
-```
+```shell
 git submodule update --init
 cd project
 make clean
-make MAIN=main TARGET=<host, vexii>
+make MAIN=main TARGET=<host, vexii> OPT=<unroll, simd>
 ```
 **To run the inference on your host machine** after compilation:
-```
+```shell
 make run-host
 ```
 **To run the inference simulation on the VexiiRiscv** after compilation:
@@ -100,6 +100,15 @@ Here are the main components/modules of MiCo.
 **Hardware-Aware**
 + `SimUtils`: Invoke simulations for BitFusion or VexiiRiscv hardware.
 + `MiCoProxy`: CBOPs proxy models for hardware latency predictions.
+
+## Folder Structure
++ `examples`: Example scripts for MPQ training/searching.
++ `deploy`: Example scripts for hardware-aware end-to-end MPQ search-deploy flow.
++ `searchers`: Implementations of MPQ searching algorithms.
++ `models`: MPQ models.
++ `profile`: Scripts for hardware profiling (require hardware submodules).
++ `project`: C project templates for MPQ inference on CPUs (require MiCo Library submodule).
++ `benchmark_results`: Profiled hardware kernel datasets for hardware-aware proxy models.
 
 ## Publication
 
