@@ -4,7 +4,4 @@ data
 
 .vscode
 
-output/json/*.json
-output/ckpt/*.pth
-output/bin/*.bin
-output/tvm/*
+output/
