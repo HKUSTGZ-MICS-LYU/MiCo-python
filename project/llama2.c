@@ -151,12 +151,21 @@ size_t init_weight(DataType* w, char* ptr, int n_layers, int n, int m){
     for (int i = 0; i < n_layers; i++) {
         w[i].shape[0] = n;
         w[i].shape[1] = m;
-        #ifdef QUANTIZED
-        w[i].scale = *(float*)ptr;
-        ptr += sizeof(float);
-        #endif
         w[i].data = (WeightType*) ptr;
         ptr += n * m * sizeof(WeightType);
+    }
+    return ptr - ptr0;
+}
+
+size_t init_quant_weight(DataType* w, char* ptr, int n_layers, int n, int m){
+    char* ptr0 = ptr;
+    for (int i = 0; i < n_layers; i++) {
+        w[i].shape[0] = n;
+        w[i].shape[1] = m;
+        w[i].scale = *(float*)ptr;
+        ptr += sizeof(float);
+        w[i].data = (WeightType*) ptr;
+        ptr += n * m * sizeof(WeightType) / (8 / w[i].wq);
     }
     return ptr - ptr0;
 }
@@ -195,12 +204,6 @@ void* init_qschemes(
     wq->wq_qtype = (qtype*)ptr;
     ptr += 2 * n_layers * sizeof(qtype);
 
-    for (int i = 0; i < 2 * n_layers; i++) {
-        if (wq->wq_qtype[i] < 1 || wq->wq_qtype[i] > 8) {
-            printf("Warning: Unexpected qtype value %d at index %d\n", wq->wq_qtype[i], i);
-        }
-    }
-
     wq->wk_qtype = (qtype*)ptr;
     ptr += 2 * n_layers * sizeof(qtype);
 
@@ -225,8 +228,15 @@ void* init_qschemes(
     return ptr;
 }
 
+void init_weight_qtypes(qtype* wq, DataType*w, int n_layers){
+    for (int i = 0; i < n_layers; i++) {
+        w[i].wq = wq[2*i];
+    }
+}
+
 void memory_map_weights(
     TransformerWeights *w, 
+    TransformerQScheme *q,
     Config* p, 
     char* ptr, int shared_weights){
     
@@ -236,36 +246,67 @@ void memory_map_weights(
 
     size_t inc = 0;
     w->wq = (DataType*)malloc(n_layers * sizeof(DataType));
+    #ifdef QUANTIZED
+    init_weight_qtypes(q->wq_qtype, w->wq, n_layers);
+    inc = init_quant_weight(w->wq, ptr, n_layers, p->dim, p->n_heads * head_size);
+    #else
     inc = init_weight(w->wq, ptr, n_layers, p->dim, p->n_heads * head_size);
+    #endif
     ptr += inc;
 
     w->wk = (DataType*)malloc(n_layers * sizeof(DataType));
+    #ifdef QUANTIZED
+    init_weight_qtypes(q->wk_qtype, w->wk, n_layers);
+    inc = init_quant_weight(w->wk, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    #else
     inc = init_weight(w->wk, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    #endif
     ptr += inc;
 
     w->wv = (DataType*)malloc(n_layers * sizeof(DataType));
+    #ifdef QUANTIZED
+    init_weight_qtypes(q->wv_qtype, w->wv, n_layers);
+    inc = init_quant_weight(w->wv, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    #else
     inc = init_weight(w->wv, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    #endif
     ptr += inc;
 
     w->wo = (DataType*)malloc(n_layers * sizeof(DataType));
+    #ifdef QUANTIZED
+    init_weight_qtypes(q->wo_qtype, w->wo, n_layers);
+    inc = init_quant_weight(w->wo, ptr, n_layers, p->n_heads * head_size, p->dim);
+    #else
     inc = init_weight(w->wo, ptr, n_layers, p->n_heads * head_size, p->dim);
+    #endif
     ptr += inc;
 
     w->w1 = (DataType*)malloc(n_layers * sizeof(DataType));
+    #ifdef QUANTIZED
+    init_weight_qtypes(q->w1_qtype, w->w1, n_layers);
+    inc = init_quant_weight(w->w1, ptr, n_layers, p->hidden_dim, p->dim);
+    #else
     inc = init_weight(w->w1, ptr, n_layers, p->hidden_dim, p->dim);
+    #endif
     ptr += inc;
 
     w->w2 = (DataType*)malloc(n_layers * sizeof(DataType));
+    #ifdef QUANTIZED
+    init_weight_qtypes(q->w2_qtype, w->w2, n_layers);
+    inc = init_quant_weight(w->w2, ptr, n_layers, p->dim, p->hidden_dim);
+    #else
     inc = init_weight(w->w2, ptr, n_layers, p->dim, p->hidden_dim);
+    #endif
     ptr += inc;
 
     w->w3 = (DataType*)malloc(n_layers * sizeof(DataType));
+    #ifdef QUANTIZED
+    init_weight_qtypes(q->w3_qtype, w->w3, n_layers);
+    inc = init_quant_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
+    #else
     inc = init_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
+    #endif
     ptr += inc;
-    if (ptr != (char*)llama_model_end) {
-        printf("Loading Size Mismatched!\n");
-        exit(EXIT_FAILURE);
-    }
     return;
 }
 
@@ -295,7 +336,7 @@ void read_checkpoint(Config* config, TransformerWeights* weights, TransformerQSc
     #ifdef QUANTIZED
     weights_ptr = init_qschemes(qsheme, config, weights_ptr);
     #endif
-    memory_map_weights(weights, config, weights_ptr, shared_weights);
+    memory_map_weights(weights, qsheme, config, weights_ptr, shared_weights);
 }
 
 // llama2 tokenizer

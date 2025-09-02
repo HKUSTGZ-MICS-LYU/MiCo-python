@@ -92,14 +92,14 @@ def mico_export(model: Transformer, filepath: str):
     print(f"Wrote {filepath}")
 
 if __name__ == "__main__":
-    from models import TinyLLaMa1M
+    from models import TinyLLaMa1M, TinyLLaMa7M
     
-    model_path = "output/ckpt/llama_tiny.pth"
+    model_path = "output/ckpt/llama_tiny_7M.pth"
     bin_path = "project/llama2/llama_model.bin"
 
-    ckpt = torch.load(model_path, map_location='cpu')
-    model = TinyLLaMa1M()
-    model.load_state_dict(ckpt)
+    ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
+    model = TinyLLaMa7M()
+    model.load_state_dict(ckpt["model"])
     model.eval()
 
     qscheme = [
@@ -108,4 +108,5 @@ if __name__ == "__main__":
     ]
 
     model.set_qscheme(qscheme)
+
     mico_export(model, bin_path)
