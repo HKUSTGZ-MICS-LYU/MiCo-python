@@ -19,23 +19,6 @@ LDFLAGS = -lm
 # (Optional) Address Sanitizer
 # CFLAGS += -fsanitize=address -static-libasan
 
-# Software Optimization
-ifneq ($(filter unroll, $(OPT)),)
-	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/mico_unrolled/*.c)
-endif
-
-ifneq ($(filter gcc-unroll, $(OPT)),)
-	CFLAGS += -funroll-all-loops
-endif
-
-ifneq ($(filter im2col, $(OPT)),)
-	MICO_SOURCES += $(wildcard $(MICO_DIR)/src/im2col_conv2d/*.c)
-endif
-
-ifeq ($(TARGET), host)
-	CFLAGS += -DUSE_HOST
-endif
-
 INCLUDES = $(MICO_INCLUDES) ./
 
 BUILD = build
@@ -48,6 +31,7 @@ RISCV_PREFIX = riscv64-unknown-elf
 RISCV_SOURCE ?= 
 
 # Targets
+include $(MICO_DIR)/targets/common.mk
 include $(MICO_DIR)/targets/$(TARGET).mk
 
 OBJS := $(MICO_SOURCES) $(RISCV_SOURCE)

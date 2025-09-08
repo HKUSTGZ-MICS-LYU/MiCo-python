@@ -1011,7 +1011,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
 int main(){
 
-    float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+    float temperature = 1.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
     int steps = 256;            // number of steps to run for
     char *prompt = "";        // prompt string
@@ -1035,10 +1035,14 @@ int main(){
     // build the Sampler
     Sampler sampler;
     build_sampler(&sampler, transformer.config.vocab_size, temperature, topp, rng_seed);
-    
     printf("Generating: \n");
+    #ifdef REPEAT
+    while(1){
+    #endif
     generate(&transformer, &tokenizer, &sampler, prompt, steps);
-
+    #ifdef REPEAT
+    }
+    #endif
     // memory and file handles cleanup
     free_sampler(&sampler);
     free_tokenizer(&tokenizer);

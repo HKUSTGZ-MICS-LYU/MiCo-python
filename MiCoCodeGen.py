@@ -570,6 +570,10 @@ void model_forward(Model* model) {{
                     if qbit == 0:
                         self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
                         self.weight_content += tensor.detach().numpy().tobytes()
+                        # If align > 32, we need to align the weight data to the specified alignment
+                        # Currently only consider 64-bit alignment
+                        if len(self.weight_content) % (align_to // 8) != 0:
+                            self.weight_content += b'\x00' * (len(self.weight_content) % (align_to // 8))
                     else:
                         qweight, scale = weight_quant(tensor, qbit)
                         self.model_init.append(f"model->{name}.data = (qbyte *)(model_weight_data + {len(self.weight_content)});")
@@ -862,18 +866,18 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    # example_input = torch.randn(1, 256)
-    example_input = torch.randn(1, 1, 28, 28)
-    # example_input = torch.randn(1, 3, 32, 32)
+    example_input = torch.randn(1, 256) # MNIST Flatten
+    # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
+    # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
 
-    # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
-    # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
+    m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
+    ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
 
-    m = LeNet(1)
-    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    # m = LeNet(1)
+    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
@@ -908,7 +912,7 @@ if __name__ == "__main__":
     m=fuse_model(m)
     m.eval()
 
-    m = MiCoCodeGen(m, align_to=32)
+    m = MiCoCodeGen(m, align_to=64)
     m.forward(example_input)
     # m.visualize_dag("model_full.png")
     # m.visualize_dag("model_simplified.png", simplified=True)

@@ -32,7 +32,11 @@ int main(){
 
     printf("Init Model\n");
     model_init(&model);
-
+    #ifdef REPEAT
+    while (1)
+    {
+    #endif
+    
     int correct = 0;
 
     for (int t=0; t < TEST_NUM; t++){
@@ -53,5 +57,9 @@ int main(){
     }
     printf("Correct: %d / %d\n", correct, TEST_NUM);
     printf("Accuracy: %f\n", (float)correct/TEST_NUM);
+    #ifdef REPEAT
+    
+    }
+    #endif
     return 0;
 }
