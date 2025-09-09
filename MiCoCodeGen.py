@@ -215,7 +215,16 @@ void model_forward(Model* model) {{
             "tensor": tensor,
             "initialized": True,
             "quantized" : quant,
-            "scale" : scale
+            "scale" : scale,
+            "bypass": False
+        }
+    
+    def add_connect_tensor(self, name: str, tensor: torch.Tensor, quant = 0):
+        self.tensors[name] = {
+            "tensor": tensor,
+            "initialized": True,
+            "quantized" : quant,
+            "bypass": True
         }
 
     def add_forward_call(self, function_name: str, out: torch.Tensor, layer_name: str, input_names: List[str], parameters: List[str] = None):
@@ -344,8 +353,7 @@ void model_forward(Model* model) {{
             self.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
 
         elif function == torch.flatten:
-            self.add_initialized_tensor(layer_name, out)
-            print(input_names)
+            self.add_connect_tensor(layer_name, out)
             self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
         
         elif function == torch.cat:
@@ -356,10 +364,10 @@ void model_forward(Model* model) {{
         print("call method:", n.name, n.target)
         method = n.target
         if method == "size":
-            self.add_initialized_tensor(n.name, out)
+            self.add_connect_tensor(n.name, out)
             self.add_forward_call("MiCo_CONNECT", out, n.name, [n.name])
         elif method == "view":
-            self.add_initialized_tensor(n.name, out)
+            self.add_connect_tensor(n.name, out)
             self.add_forward_call("MiCo_CONNECT", out, n.name, [n.name])
         else:
             raise NotImplementedError()
@@ -480,8 +488,8 @@ void model_forward(Model* model) {{
             self.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
         # Flatten Functions
         elif type(module) is torch.nn.Flatten:
-            self.add_initialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_flatten{dim}d_{dtype}", out, layer_name, input_names)
+            self.add_connect_tensor(layer_name, out)
+            self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
         # Linear Layers
         elif type(module) is torch.nn.Linear:
             weight = module.weight
@@ -495,7 +503,7 @@ void model_forward(Model* model) {{
             self.add_forward_call("MiCo_linear_{dtype}", out, layer_name, input_names)
         # Identity Layers
         elif isinstance(module, (torch.nn.Identity, torch.nn.Dropout)):
-            self.add_initialized_tensor(layer_name, out)
+            self.add_connect_tensor(layer_name, out)
             self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
         # Costom Layers with MiCo Implementation
         elif hasattr(module, "MiCo_func"):
@@ -567,6 +575,8 @@ void model_forward(Model* model) {{
                     self.model_init.append(f"model->{name}.shape[{i}] = {tensor.shape[i]};")
 
                 if initialized:
+                    if tensor_dict["bypass"]:
+                        continue
                     if qbit == 0:
                         self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
                         self.weight_content += tensor.detach().numpy().tobytes()
@@ -589,10 +599,6 @@ void model_forward(Model* model) {{
                 self.model_init.append(f"model->{name}.shape[0] = 0;")
 
         print("finished tracing the model")
-
-
-        # Add Global Buffer for the Model
-        self.model_struct.insert(0, "float* buffer;")
 
         # === Write the generated C code to the output directory. ===
         # create the output directory if it doesn't exist
@@ -866,18 +872,18 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    example_input = torch.randn(1, 256) # MNIST Flatten
-    # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
+    # example_input = torch.randn(1, 256) # MNIST Flatten
+    example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
     # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
 
-    m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
-    ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
+    # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
+    # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
 
-    # m = LeNet(1)
-    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    m = LeNet(1)
+    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
@@ -912,10 +918,10 @@ if __name__ == "__main__":
     m=fuse_model(m)
     m.eval()
 
-    m = MiCoCodeGen(m, align_to=64)
+    m = MiCoCodeGen(m, align_to=32)
     m.forward(example_input)
     # m.visualize_dag("model_full.png")
     # m.visualize_dag("model_simplified.png", simplified=True)
-    m.convert("project", "model", verbose = False)
+    m.convert("project", "model", verbose = True)
     # m.tensor_lifetime()
     # m.build("project", "mico_fpu", "TEST_NUM=1")
