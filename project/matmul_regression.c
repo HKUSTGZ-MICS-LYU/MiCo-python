@@ -10,8 +10,8 @@
 #include "mico_nn.h"
 #include "mico_qnn.h"
 
-#define N 4
-#define M 64
+#define N 1
+#define M 10
 #define K 256
 
 int check(int32_t *o_ref, int32_t *o_cmp){
@@ -68,9 +68,13 @@ int main(){
     // Initialize the data with some values
     for (size_t i = 0; i < N * K; i++) {
         x.data[i] = (int8_t)(i % 107); // Example initialization
+        // x.data[i] = (int8_t)(i % 8);
+        // x.data[i] = 1;
     }
     for (size_t i = 0; i < K * M; i++) {
         w.data[i] = (int8_t)(176 - (i % 177)); // Example initialization
+        // w.data[i] = (int8_t)(7 - i % 8);
+        // w.data[i] = 1;
     }
 
     x.shape[0] = N;
@@ -84,17 +88,74 @@ int main(){
 
     // Test List
     void* func_refs[] = {
-        MiCo_Q8_MatMul_Ref, MiCo_Q4_MatMul_Ref, MiCo_Q2_MatMul_Ref, MiCo_Q1_MatMul_Ref
+        MiCo_Q8_MatMul_Ref, 
+        MiCo_Q4_MatMul_Ref, 
+        MiCo_Q2_MatMul_Ref, 
+        MiCo_Q1_MatMul_Ref,
+        MiCo_Q8x4_MatMul_Ref,
+        MiCo_Q8x2_MatMul_Ref,
+        MiCo_Q8x1_MatMul_Ref,
+        MiCo_Q4x2_MatMul_Ref,
+        MiCo_Q4x1_MatMul_Ref,
+        MiCo_Q2x1_MatMul_Ref,
+        MiCo_Q4x8_MatMul_Ref,
+        MiCo_Q2x8_MatMul_Ref,
+        MiCo_Q2x4_MatMul_Ref,
+        MiCo_Q1x8_MatMul_Ref,
+        MiCo_Q1x4_MatMul_Ref,
+        MiCo_Q1x2_MatMul_Ref,
     };
 
     void* func_cmps[] = {
-        MiCo_Q8_MatMul, MiCo_Q4_MatMul, MiCo_Q2_MatMul, MiCo_Q1_MatMul
+        MiCo_Q8_MatMul, 
+        MiCo_Q4_MatMul, 
+        MiCo_Q2_MatMul, 
+        MiCo_Q1_MatMul,
+        MiCo_Q8x4_MatMul,
+        MiCo_Q8x2_MatMul,
+        MiCo_Q8x1_MatMul,
+        MiCo_Q4x2_MatMul,
+        MiCo_Q4x1_MatMul,
+        MiCo_Q2x1_MatMul,
+        MiCo_Q4x8_MatMul,
+        MiCo_Q2x8_MatMul,
+        MiCo_Q2x4_MatMul,
+        MiCo_Q1x8_MatMul,
+        MiCo_Q1x4_MatMul,
+        MiCo_Q1x2_MatMul,
     };
-
-    // Start testing
-    for(int i = 0; i < 4; i++){
-        printf("Testing Q%d_MatMul...\n", 8 >> i);
-        test_func(o_ref, o_cmp, x, w, func_refs[i], func_cmps[i]);
+    const char* func_names[] = {
+        "MiCo_Q8_MatMul", 
+        "MiCo_Q4_MatMul", 
+        "MiCo_Q2_MatMul", 
+        "MiCo_Q1_MatMul",
+        "MiCo_Q8x4_MatMul",
+        "MiCo_Q8x2_MatMul",
+        "MiCo_Q8x1_MatMul",
+        "MiCo_Q4x2_MatMul",
+        "MiCo_Q4x1_MatMul",
+        "MiCo_Q2x1_MatMul",
+        "MiCo_Q4x8_MatMul",
+        "MiCo_Q2x8_MatMul",
+        "MiCo_Q2x4_MatMul",
+        "MiCo_Q1x8_MatMul",
+        "MiCo_Q1x4_MatMul",
+        "MiCo_Q1x2_MatMul",
+    };
+    int num_tests = sizeof(func_refs) / sizeof(func_refs[0]);
+    for(int i = 0; i < num_tests; i++){
+        printf("Testing %s...\n", func_names[i]);
+        int result = test_func(o_ref, o_cmp, x, w, 
+            (void (*)(int32_t*, const Tensor2D_Q8*, const Tensor2D_Q8*))func_refs[i],
+            (void (*)(int32_t*, const Tensor2D_Q8*, const Tensor2D_Q8*))func_cmps[i]);
+        if(result != 0){
+            printf("%s test failed!\n", func_names[i]);
+            free(x_raw);
+            free(w_raw);
+            free(o_ref);
+            free(o_cmp);
+            return -1;
+        }
     }
     return 0;
 }
