@@ -68,7 +68,7 @@ typedef struct {
     // final rmsnorm
     float* rms_final_weight; // (dim,)
     // (optional) classifier weights for the logits, on the last layer
-    float* wcls;
+    DataType wcls;
 } TransformerWeights;
 
 typedef struct{
@@ -187,10 +187,6 @@ void* init_float_params(
     w->rms_final_weight = (float*) ptr;
     ptr += p->dim * sizeof(float);
 
-    w->token_embedding_table = (float*) ptr;
-    w->wcls = w->token_embedding_table; // shared embedding table
-    ptr += p->vocab_size * p->dim * sizeof(float);
-
     return ptr;
 }
 
@@ -307,6 +303,28 @@ void memory_map_weights(
     inc = init_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
     #endif
     ptr += inc;
+
+    if(shared_weights){
+        #ifdef QUANTIZED
+        // Use INT8 for the final classifier to save memory
+        w->wcls.scale = *(float*)ptr;
+        ptr += sizeof(float);
+        w->wcls.shape[0] = p->vocab_size;
+        w->wcls.shape[1] = p->dim;
+        w->wcls.data = (WeightType*) ptr;
+        w->wcls.wq = 8;
+        ptr += p->vocab_size * p->dim * sizeof(WeightType);
+        w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
+        for(int i = 0; i < p->vocab_size * p->dim; i++){
+            int8_t v = ((int8_t*)w->wcls.data)[i];
+            w->token_embedding_table[i] = v * w->wcls.scale;
+        }
+        #else
+        w->token_embedding_table = (float*) ptr;
+        w->wcls = w->token_embedding_table; // shared embedding table
+        ptr += p->vocab_size * p->dim * sizeof(float);
+        #endif
+    }
     return;
 }
 
@@ -463,7 +481,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
-    // copy the token embedding into x (TODO: can be quantized!)
+    // copy the token embedding into x
     float* content_row = w->token_embedding_table + token * dim;
     memcpy(x, content_row, dim*sizeof(*x));
     long forward_start = MiCo_time();
@@ -603,8 +621,17 @@ float* forward(Transformer* transformer, int token, int pos) {
     // final rmsnorm
     rmsnorm(x, x, w->rms_final_weight, dim);
     // classifier into logits
+
+    #ifdef RISCV_VEXII
+    printf("Processing Final Classifier\n");
+    #endif
+
+    #ifdef QUANTIZED
+    qmatmul(s->logits, x, &w->wcls, p->dim, p->vocab_size, w->wcls.wq, 8); // final classifier always uses 8-bit quant
+    #else
     Tensor2D_F32 wcls = { .shape = {p->vocab_size, dim}, .data = w->wcls };
     fmatmul(s->logits, x, &wcls, p->dim, p->vocab_size);
+    #endif
     long forward_end = MiCo_time();
     #ifdef RISCV_VEXII
     printf("Forward Time: %ld Cycles\n", (forward_end - forward_start));
@@ -997,7 +1024,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
-    while (pos < num_prompt_tokens + steps) {
+    while (pos < steps) {
 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
@@ -1041,7 +1068,7 @@ int main(){
     float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 1.0f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
     int steps = 1;            // number of steps to run for
-    char *prompt = "Once upon a time, there was a little girl named Lily."; // prompt string
+    char *prompt = ""; // prompt string
     unsigned long long rng_seed = 42; // seed rng with time by default
 
     // parameter validation/overrides

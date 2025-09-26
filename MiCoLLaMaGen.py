@@ -21,7 +21,8 @@ def serialize_fp32(file, tensor):
     b = struct.pack(f'{len(d)}f', *d)
     file.write(b)
 
-def mico_export(model: Transformer, filepath: str):
+def mico_export(model: Transformer, filepath: str, 
+                quantize_final_classifier: bool = False):
     version = 1
 
     out_file = open(filepath, 'wb')
@@ -49,7 +50,6 @@ def mico_export(model: Transformer, filepath: str):
         *[layer.attention_norm.weight for layer in model.layers],
         *[layer.ffn_norm.weight for layer in model.layers],
         model.norm.weight,
-        model.tok_embeddings.weight,
     ]
     for w in weights:
         serialize_fp32(out_file, w)
@@ -86,22 +86,35 @@ def mico_export(model: Transformer, filepath: str):
             out_file.write(wb)
         elif isinstance(linear, torch.nn.Linear):
             serialize_fp32(out_file, linear.weight)
+
+    if quantize_final_classifier:
+        qweight, scale = weight_quant(model.tok_embeddings.weight, 8)
+        wb = weight_export(qweight, 8)
+        ws = scale.detach().cpu().numpy()
+        out_file.write(struct.pack('f', ws))
+        out_file.write(wb)
+    else:
+        serialize_fp32(out_file, model.tok_embeddings.weight)
+
     print("Final End Addr: ", hex(out_file.tell()))
     # write to binary file
     out_file.close()
     print(f"Wrote {filepath}")
+    # Get File Size
+    file_size = os.path.getsize(filepath)
+    print(f"File Size: {file_size / 1e6:.2f} MB")
+    return
 
 if __name__ == "__main__":
-    from models import TinyLLaMa1M, TinyLLaMa7M
+    from models import TinyLLaMa1M, TinyLLaMa7M, TinyLLaMa28M
     
-    model_path = "output/ckpt/llama_tiny_7M.pth"
+    model_path = "output/ckpt/llama_tiny_1M.pth"
     bin_path = "project/llama2/llama_model.bin"
 
     ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
-    model = TinyLLaMa7M()
+    model = TinyLLaMa1M()
     model.load_state_dict(ckpt["model"])
     model.eval()
-
     qscheme = [
         [8] * model.n_layers, # weight qscheme
         [8] * model.n_layers, # activation qscheme
@@ -109,4 +122,4 @@ if __name__ == "__main__":
 
     model.set_qscheme(qscheme)
 
-    mico_export(model, bin_path)
+    mico_export(model, bin_path, True)
