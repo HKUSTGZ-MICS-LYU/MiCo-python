@@ -40,12 +40,12 @@ OBJS := $(OBJS:.S=.o)
 OBJS := $(OBJS:.s=.o)
 OBJS := $(addprefix $(BUILD)/,$(OBJS))
 
-$(BUILD)/%.o: %.c
+$(BUILD)/%.o: %.c | $(BUILD)
 	@mkdir -p $(dir $@)
 	@echo "Compiling Source File ($<)..."
 	@$(CC) $(CFLAGS) -c -o $@ $< $(addprefix -I,$(INCLUDES))
 
-$(BUILD)/%.o: %.S
+$(BUILD)/%.o: %.S | $(BUILD)
 	@mkdir -p $(dir $@)
 	@echo "Compiling Source File ($<)..."
 	@$(CC) $(CFLAGS) -c -o $@ $< $(addprefix -I,$(INCLUDES))
@@ -63,16 +63,19 @@ $(BUILD):
 	mkdir -p $(BUILD)
 
 clean:
-	rm -rf $(BUILD)
-	rm -f *.elf *.asm
+	@rm -rf $(BUILD)
+	@rm -f *.elf *.asm
 
-compile: $(BUILD) $(MAIN).elf $(MAIN).asm
+debug: CFLAGS += -DDEBUG
+debug: recompile
+
+compile: $(MAIN).asm
 
 recompile: clean compile
 
 run-host: $(MAIN).elf
-	./$(MAIN).elf
+	./$<
 
 all: compile
 
-.PHONY: clean compile recompile run-host all
+.PHONY: clean compile recompile run-host all debug

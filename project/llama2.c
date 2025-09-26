@@ -379,7 +379,15 @@ void free_transformer(Transformer* t) {
 // ----------------------------------------------------------------------------
 // neural net blocks; the dynamics of the Transformer
 
+// Some profilers
+long RMSNORM_TIMER = 0;
+long FMATMUL_TIMER = 0;
+long SOFTMAX_TIMER = 0;
+long ATTENTION_TIMER = 0;
+long ROPE_TIMER = 0;
+
 void rmsnorm(float* o, float* x, float* weight, int size) {
+    long start = MiCo_time();
     // calculate sum of squares
     float ss = 0.0f;
     for (int j = 0; j < size; j++) {
@@ -392,9 +400,12 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     for (int j = 0; j < size; j++) {
         o[j] = weight[j] * (ss * x[j]);
     }
+    long end = MiCo_time();
+    RMSNORM_TIMER += end - start;
 }
 
 void softmax(float* x, int size) {
+    long start = MiCo_time();
     // find max value (for numerical stability)
     float max_val = x[0];
     for (int i = 1; i < size; i++) {
@@ -412,16 +423,20 @@ void softmax(float* x, int size) {
     for (int i = 0; i < size; i++) {
         x[i] /= sum;
     }
+    long end = MiCo_time();
+    SOFTMAX_TIMER += end - start;
 }
 
 void fmatmul(float* xout, float* x, Tensor2D_F32* w, int n, int d) {
-
+    long start = MiCo_time();
     // Temporary Tensors
     Tensor2D_F32 Tx = { .shape = {1, n}, .data = x };
     Tensor1D_F32 Tb = { .shape = {0}, .data = NULL };
     Tensor2D_F32 Ty = { .shape = {1, d}, .data = xout };
 
     MiCo_linear_f32(&Ty, &Tx, w, &Tb);
+    long end = MiCo_time();
+    FMATMUL_TIMER += end - start;
 }
 
 void qmatmul(float* xout, float* x, Tensor2D_Q8* w, int n, int d, 
@@ -448,10 +463,10 @@ float* forward(Transformer* transformer, int token, int pos) {
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
 
-    // copy the token embedding into x
+    // copy the token embedding into x (TODO: can be quantized!)
     float* content_row = w->token_embedding_table + token * dim;
     memcpy(x, content_row, dim*sizeof(*x));
-
+    long forward_start = MiCo_time();
     // forward all the layers
     for(unsigned long long l = 0; l < p->n_layers; l++) {
         #ifdef RISCV_VEXII
@@ -478,7 +493,7 @@ float* forward(Transformer* transformer, int token, int pos) {
         fmatmul(s->k, s->xb, w->wk + l, dim, kv_dim);
         fmatmul(s->v, s->xb, w->wv + l, dim, kv_dim);
         #endif
-
+        long rope_start = MiCo_time();
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
             int head_dim = i % head_size;
@@ -495,8 +510,9 @@ float* forward(Transformer* transformer, int token, int pos) {
                 vec[i+1] = v0 * fci + v1 * fcr;
             }
         }
-
+        ROPE_TIMER += MiCo_time() - rope_start;
         // multihead attention. iterate over all heads
+        long attn_start = MiCo_time();
         int h;
         for (h = 0; h < p->n_heads; h++) {
             // get the query vector for this head
@@ -534,7 +550,7 @@ float* forward(Transformer* transformer, int token, int pos) {
                 }
             }
         }
-
+        ATTENTION_TIMER += MiCo_time() - attn_start;
 
         // final matmul to get the output of the attention
         #ifdef QUANTIZED
@@ -589,6 +605,17 @@ float* forward(Transformer* transformer, int token, int pos) {
     // classifier into logits
     Tensor2D_F32 wcls = { .shape = {p->vocab_size, dim}, .data = w->wcls };
     fmatmul(s->logits, x, &wcls, p->dim, p->vocab_size);
+    long forward_end = MiCo_time();
+    #ifdef RISCV_VEXII
+    printf("Forward Time: %ld Cycles\n", (forward_end - forward_start));
+    printf("QMatMul Cycles: %ld\n", QMATMUL_TIMER);
+    printf("Quant Cycles: %ld\n", QUANT_TIMER);
+    printf("Final MatMul Time: %ld Cycles\n", FMATMUL_TIMER);
+    printf("RMSNorm Time: %ld Cycles\n", RMSNORM_TIMER);
+    printf("RoPE Time: %ld Cycles\n", ROPE_TIMER);
+    printf("Attention Time: %ld Cycles\n", ATTENTION_TIMER);
+    printf("Softmax Time: %ld Cycles\n", SOFTMAX_TIMER);
+    #endif
     return s->logits;
 }
 
@@ -970,7 +997,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
     int pos = 0;     // position in the sequence
-    while (pos < steps) {
+    while (pos < num_prompt_tokens + steps) {
 
         // forward the transformer to get logits for the next token
         float* logits = forward(transformer, token, pos);
@@ -1010,11 +1037,11 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 }
 
 int main(){
-
-    float temperature = 1.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
-    float topp = 0.9f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = 256;            // number of steps to run for
-    char *prompt = "";        // prompt string
+    printf("MiCo Transformer Demo\n");
+    float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
+    float topp = 1.0f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
+    int steps = 1;            // number of steps to run for
+    char *prompt = "Once upon a time, there was a little girl named Lily."; // prompt string
     unsigned long long rng_seed = 42; // seed rng with time by default
 
     // parameter validation/overrides
