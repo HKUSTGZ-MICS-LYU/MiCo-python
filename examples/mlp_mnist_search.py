@@ -1,26 +1,25 @@
-import json
 import torch
+import random
 import numpy as np
 
-from models import MLP
-from MiCoUtils import (
-    get_model_macs,
-)
-from datasets import mnist
-from MiCoSearch import MiCoSearch
-from searchers import MiCoBOSearcher, NLPSearcher, HAQSearcher
+from matplotlib import pyplot as plt
 
+from MiCoEval import MiCoEval
+
+from models import MLP
+from datasets import mnist
 
 from tqdm import tqdm
 
-num_epoch = 5
-batch_size = 64
+from searchers import (
+    RegressionSearcher, BayesSearcher, 
+    NLPSearcher, HAQSearcher, MiCoSearcher
+)
 
-BUDGET = 32
-INIT   = 16
+from tqdm import tqdm
 
-torch.manual_seed(0)
-torch.cuda.manual_seed(0)
+random.seed(0)
+np.random.seed(0)
 
 if __name__ == "__main__":
     
@@ -31,61 +30,50 @@ if __name__ == "__main__":
     }
     model = MLP(in_features=256, config=config).to(device)
 
-    wq_types = [4,5,6,7,8]
-    aq_types = [4,5,6,7,8]
-    train_loader, test_loader = mnist(batch_size=batch_size, num_works=0, resize=16)
 
-    search = MiCoSearch(model, num_epoch, 
-                   train_loader, test_loader, seed=0,
-                   wq_types=wq_types, aq_types=aq_types,
-                   pretrained_model="output/ckpt/mlp_mnist.pth")
+    train_loader, test_loader = mnist(batch_size=32, num_works=0, resize=16)
+
+    evaluator = MiCoEval(model, 10, train_loader, test_loader, 
+                         "output/ckpt/mlp_mnist.pth")
     
-    print("--------------------------------------")
-    print("Bayesian Optimization MPQ Search")
-    searcher = MiCoBOSearcher(search)
+    dim = model.n_layers * 2
+    # bitwidths = [2, 4, 6, 8]
+    bitwidths = [4, 5, 6, 7, 8]
+    max_bops = evaluator.eval_bops([8] * evaluator.n_layers*2)
 
-    max_qscheme = [8] * search.n_layers
+    for model in ["bo", "mico", "nlp", "haq"]:
+        random.seed(0)
+        np.random.seed(0)
+        print("Model Type:", model)
 
-    baseline_res = search.eval_scheme([max_qscheme, max_qscheme], 
-                                      verbose=True, ptq=True)
+        if model == "bo":
+            searcher = BayesSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths)
+        elif model == "nlp":
+            searcher = NLPSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths
+            )
+        elif model == "mico":
+            searcher = MiCoSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths
+            )
+        elif model == "haq":
+            searcher = HAQSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths
+                )
+        else:
+            searcher = RegressionSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths,
+                model_type=model)
 
-    constr_bops = baseline_res["MaxBOPs"] * 0.5
+        res_x, res_y = searcher.search(20, 'ptq_acc', 'bops', max_bops*0.5)
+        print(f"Best Scheme: {res_x}")
+        print(f"Best Accuracy: {res_y}")
+        # print(f"Bitfusion SpeedUp: {max_latency / evaluator.eval_latency(res_x):.2f}x")
+        plt.plot(searcher.best_trace, label=model)
 
-    bo_best_res, trace = searcher.search(
-        search_budget=BUDGET, 
-        data_path="output/json/mlp_mnist_search.json",
-        constr_bops=constr_bops,
-        n_init=INIT, ptq=True,
-        use_max_q=True,
-    )
-
-    print("--------------------------------------")
-    print("w-based NLP MPQ Search")
-
-    searcher = NLPSearcher(search, qbits=wq_types)
-
-    nlp_best_res = searcher.search(
-        constr_bops=constr_bops,
-        ptq=True,
-        use_max_q=True
-    )
-
-    print("--------------------------------------")
-    print("HAQ MPQ Search")
-
-    searcher = HAQSearcher(search, qbits=wq_types, 
-                           seed=0, org_acc=baseline_res["Accuracy"])
+    plt.hlines(evaluator.baseline_acc, 0, len(searcher.best_trace), 
+               colors='r', linestyles='dashed')
     
-
-    haq_best_res, _ = searcher.search(
-        search_budget=BUDGET,
-        constr_bops=constr_bops,
-        n_init=INIT,
-        ptq=True,
-        use_max_q=True
-    )
-
-    print("Baseline (8b) Results:", baseline_res)
-    print("Best Results (BO):", bo_best_res)
-    print("Best Results (NLP):", nlp_best_res)
-    print("Best Results (HAQ):", haq_best_res)
+    plt.legend()
+    plt.savefig("output/figs/mlp_mnist_search.pdf")

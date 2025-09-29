@@ -1,33 +1,25 @@
-import sys
-import json
 import torch
+import random
 import numpy as np
 
-from models import resnet_alt_8
-from MiCoUtils import (
-    get_model_macs,
-)
-from datasets import cifar10
-from MiCoSearch import MiCoSearch
-from searchers import MiCoBOSearcher, NLPSearcher, HAQSearcher
+from matplotlib import pyplot as plt
 
+from MiCoEval import MiCoEval
+
+from models import resnet_alt_8
+from datasets import cifar10
 
 from tqdm import tqdm
 
-num_epoch = 5
-batch_size = 64
+from searchers import (
+    RegressionSearcher, BayesSearcher, 
+    NLPSearcher, HAQSearcher, MiCoSearcher
+)
 
-BUDGET = 20
-INIT   = 10
+from tqdm import tqdm
 
-seed = 0
-if len(sys.argv) == 2:
-    seed = int(sys.argv[1])
-
-torch.manual_seed(0)
-torch.cuda.manual_seed(0)
-
-model_name = "resnet8_cifar10"
+random.seed(0)
+np.random.seed(0)
 
 if __name__ == "__main__":
     
@@ -36,33 +28,48 @@ if __name__ == "__main__":
 
     model = resnet_alt_8(n_class=10).to(device)
 
-    wq_types = [4,5,6,7,8]
-    aq_types = [4,5,6,7,8]
-    train_loader, test_loader = cifar10(batch_size=batch_size, num_works=4)
+    train_loader, test_loader = cifar10(shuffle=False)
+    evaluator = MiCoEval(model, 10, train_loader, test_loader, 
+                         "output/ckpt/resnet8_cifar10.pth")
+    
+    dim = model.n_layers * 2
+    # bitwidths = [2, 4, 6, 8]
+    bitwidths = [4, 5, 6, 7, 8]
+    max_bops = evaluator.eval_bops([8] * evaluator.n_layers*2)
 
-    search = MiCoSearch(model, num_epoch, 
-                   train_loader, test_loader, seed=seed,
-                   wq_types=wq_types, aq_types=aq_types,
-                   pretrained_model=f"output/ckpt/{model_name}.pth")
+    for model in ["bo", "mico", "nlp", "haq"]:
+        random.seed(0)
+        np.random.seed(0)
+        print("Model Type:", model)
 
-    print("--------------------------------------")
-    print("Bayesian Optimization MPQ Search")
-    searcher = MiCoBOSearcher(search)
+        if model == "bo":
+            searcher = BayesSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths)
+        elif model == "nlp":
+            searcher = NLPSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths
+            )
+        elif model == "mico":
+            searcher = MiCoSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths
+            )
+        elif model == "haq":
+            searcher = HAQSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths
+                )
+        else:
+            searcher = RegressionSearcher(
+                evaluator, n_inits=10, qtypes=bitwidths,
+                model_type=model)
 
-    max_qscheme = [8] * search.n_layers
+        res_x, res_y = searcher.search(20, 'ptq_acc', 'bops', max_bops*0.5)
+        print(f"Best Scheme: {res_x}")
+        print(f"Best Accuracy: {res_y}")
+        # print(f"Bitfusion SpeedUp: {max_latency / evaluator.eval_latency(res_x):.2f}x")
+        plt.plot(searcher.best_trace, label=model)
 
-    baseline_res = search.eval_scheme([max_qscheme, max_qscheme], 
-                                      verbose=True, ptq=True)
-
-    constr_bops = baseline_res["MaxBOPs"] * 0.5
-
-    bo_best_res, trace = searcher.search(
-        search_budget=BUDGET, 
-        data_path=f"output/json/{model_name}_search.json",
-        constr_bops=constr_bops,
-        n_init=INIT, ptq=True,
-        use_max_q=True,
-        init_method='rand', roi=1.0
-    )
-
-    print("Best Results (BO):", bo_best_res)
+    plt.hlines(evaluator.baseline_acc, 0, len(searcher.best_trace), 
+               colors='r', linestyles='dashed')
+    
+    plt.legend()
+    plt.savefig("output/figs/resnet8_cifar10_search.pdf")

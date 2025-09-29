@@ -6,7 +6,6 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from MiCoEval import MiCoEval
-from MiCoProxy import get_mico_proxy, get_bitfusion_proxy
 
 from models import model_zoo
 
