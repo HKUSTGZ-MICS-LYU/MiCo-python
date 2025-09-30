@@ -18,6 +18,8 @@
 #include "nn.h"
 #include "profile.h"
 #include "mico_nn.h"
+#include "mico_quant.h"
+
 #include "llama2_config.h"
 
 #ifdef QUANTIZED
@@ -26,6 +28,12 @@ typedef qbyte WeightType;
 #else
 typedef Tensor2D_F32 DataType;
 typedef float WeightType;
+#endif
+
+#ifdef USE_INT8_KV
+typedef int8_t kv_type;
+#else
+typedef float kv_type;
 #endif
 
 INCLUDE_FILE(".rodata", "./llama2/llama_model.bin", llama_model);
@@ -96,8 +104,12 @@ typedef struct {
     float *att; // buffer for scores/attention values (n_heads, seq_len)
     float *logits; // output logits
     // kv cache
-    float* key_cache;   // (layer, seq_len, dim)
-    float* value_cache; // (layer, seq_len, dim)
+    kv_type* key_cache;   // (layer, seq_len, dim)
+    kv_type* value_cache; // (layer, seq_len, dim)
+    #ifdef USE_INT8_KV
+    float* key_scales; // (layer, seq_len)
+    float* value_scales; // (layer, seq_len)
+    #endif
     // RoPE caches
     float* rope_inv_freq; // (head_size/2)
     float* rope_cos; // (seq_len, head_size/2)
@@ -128,8 +140,22 @@ void malloc_run_state(RunState* s, Config* p) {
     s->hb = calloc(p->hidden_dim, sizeof(float));
     s->hb2 = calloc(p->hidden_dim, sizeof(float));
     s->q = calloc(p->dim, sizeof(float));
-    s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
-    s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
+    #ifdef USE_INT8_KV
+    // Allocate Float Buffer for K V
+    s->k = calloc(kv_dim, sizeof(float));
+    s->v = calloc(kv_dim, sizeof(float));
+    s->key_scales = calloc(p->n_layers * p->seq_len, sizeof(float));
+    s->value_scales = calloc(p->n_layers * p->seq_len, sizeof(float));
+    printf("Alloacte KV Quant Buffer + Scales of size %ld Bytes...\n",
+        (kv_dim * 2 + p->n_layers * p->seq_len * 2) * sizeof(float));
+    #endif
+    s->key_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(kv_type));
+    s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(kv_type));
+    
+    printf("Alloacte KV Cache of size %ld KB...\n",
+        (p->n_layers * p->seq_len * kv_dim * sizeof(kv_type)) / 1024);
+    
+    
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
 
@@ -148,7 +174,8 @@ void malloc_run_state(RunState* s, Config* p) {
         exit(EXIT_FAILURE);
     }
 
-    printf("Precomputing RoPE tables...\n");
+    printf("Precomputing RoPE tables (%ld Bytes)...\n", 
+        tbl_elems * sizeof(float) * 2);
     long start = MiCo_time();
     // Fill inv_freq: 10000^(-2k/d_head), k in [0, head_size/2)
     for (int k = 0; k < head_pairs; ++k) {
@@ -164,7 +191,7 @@ void malloc_run_state(RunState* s, Config* p) {
         }
     }
     long end = MiCo_time();
-    printf("done in %ld time\n", end - start);
+    printf("Done in %ld time\n", end - start);
 }
 
 void free_run_state(RunState* s) {
@@ -439,6 +466,8 @@ long ATTENTION_TIMER = 0;
 long ROPE_TIMER = 0;
 
 void init_timers() {
+    QMATMUL_TIMER = 0;
+    QUANT_TIMER = 0;
     RMSNORM_TIMER = 0;
     FMATMUL_TIMER = 0;
     SOFTMAX_TIMER = 0;
@@ -462,29 +491,6 @@ void rmsnorm(float* o, float* x, float* weight, int size) {
     }
     long end = MiCo_time();
     RMSNORM_TIMER += end - start;
-}
-
-void softmax(float* x, int size) {
-    long start = MiCo_time();
-    // find max value (for numerical stability)
-    float max_val = x[0];
-    for (int i = 1; i < size; i++) {
-        if (x[i] > max_val) {
-            max_val = x[i];
-        }
-    }
-    // exp and sum
-    float sum = 0.0f;
-    for (int i = 0; i < size; i++) {
-        x[i] = expf(x[i] - max_val);
-        sum += x[i];
-    }
-    // normalize
-    for (int i = 0; i < size; i++) {
-        x[i] /= sum;
-    }
-    long end = MiCo_time();
-    SOFTMAX_TIMER += end - start;
 }
 
 void fmatmul(float* xout, float* x, Tensor2D_F32* w, int n, int d) {
@@ -526,6 +532,15 @@ float* forward(Transformer* transformer, int token, int pos) {
     int head_size = dim / p->n_heads;
     int head_pairs = head_size / 2;
 
+
+    MiCo_MHA_Config mha_config = {
+        .n_heads = p->n_heads,
+        .head_size = head_size,
+        .seq_len = p->seq_len,
+        .kv_dim = kv_dim,
+        .kv_mul = kv_mul
+    };
+
     // copy the token embedding into x
     float* content_row = w->token_embedding_table + token * dim;
     memcpy(x, content_row, dim*sizeof(*x));
@@ -539,9 +554,13 @@ float* forward(Transformer* transformer, int token, int pos) {
 
         // key and value point to the kv cache
         int loff = l * p->seq_len * kv_dim; // kv cache layer offset for convenience
+        #ifdef USE_INT8_KV
+        kv_type* qk_ptr = s->key_cache + loff + pos * kv_dim;
+        kv_type* qv_ptr = s->value_cache + loff + pos * kv_dim;
+        #else
         s->k = s->key_cache + loff + pos * kv_dim;
         s->v = s->value_cache + loff + pos * kv_dim;
-
+        #endif
         // qkv matmuls for this position
         #ifdef QUANTIZED
         // TODO: The act quantization is redundant!
@@ -556,6 +575,15 @@ float* forward(Transformer* transformer, int token, int pos) {
         fmatmul(s->k, s->xb, w->wk + l, dim, kv_dim);
         fmatmul(s->v, s->xb, w->wv + l, dim, kv_dim);
         #endif
+        
+        #ifdef USE_INT8_KV
+        // Quantize and store k and v into the kv cache
+        long quant_start = MiCo_time();
+        s->key_scales[l*p->seq_len + pos] = __FP32toQ8(qk_ptr, s->k, kv_dim);
+        s->value_scales[l*p->seq_len + pos] = __FP32toQ8(qv_ptr, s->v, kv_dim);
+        QUANT_TIMER += MiCo_time() - quant_start;
+        #endif
+
         long rope_start = MiCo_time();
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
@@ -577,43 +605,39 @@ float* forward(Transformer* transformer, int token, int pos) {
         ROPE_TIMER += MiCo_time() - rope_start;
         // multihead attention. iterate over all heads
         long attn_start = MiCo_time();
-        int h;
-        for (h = 0; h < p->n_heads; h++) {
-            // get the query vector for this head
-            float* q = s->q + h * head_size;
-            // attention scores for this head
-            float* att = s->att + h * p->seq_len;
-            // iterate over all timesteps, including the current one
-            for (int t = 0; t <= pos; t++) {
-                // get the key vector for this head and at this timestep
-                float* k = s->key_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                // calculate the attention score as the dot product of q and k
-                float score = 0.0f;
-                for (int i = 0; i < head_size; i++) {
-                    score += q[i] * k[i];
-                }
-                score /= sqrtf(head_size);
-                // save the score to the attention buffer
-                att[t] = score;
-            }
 
-            // softmax the scores to get attention weights, from 0..pos inclusively
-            softmax(att, pos + 1);
+        Tensor2D_F32 output = {
+            .shape = {p->n_heads, head_size},
+            .data = s->xb
+        };
+        Tensor2D_F32 query = {
+            .shape = {p->n_heads, head_size},
+            .data = s->q };
 
-            // weighted sum of the values, store back into xb
-            float* xb = s->xb + h * head_size;
-            memset(xb, 0, head_size * sizeof(float));
-            for (int t = 0; t <= pos; t++) {
-                // get the value vector for this head and at this timestep
-                float* v = s->value_cache + loff + t * kv_dim + (h / kv_mul) * head_size;
-                // get the attention weight for this timestep
-                float a = att[t];
-                // accumulate the weighted value into xb
-                for (int i = 0; i < head_size; i++) {
-                    xb[i] += a * v[i];
-                }
-            }
-        }
+        #ifdef USE_INT8_KV
+        MiCo_multihead_attention_f32_kv8(
+            &output, 
+            &query, 
+            s->key_cache + loff, 
+            s->value_cache + loff, 
+            s->key_scales + l * p->seq_len,
+            s->value_scales + l * p->seq_len,
+            s->att,
+            pos, 
+            &mha_config
+        );
+        #else
+        MiCo_multihead_attention_f32(
+            &output, 
+            &query, 
+            s->key_cache + loff, 
+            s->value_cache + loff, 
+            s->att,
+            pos, 
+            &mha_config
+        );
+        #endif
+
         ATTENTION_TIMER += MiCo_time() - attn_start;
 
         // final matmul to get the output of the attention
@@ -1090,9 +1114,13 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 
         // print the token as string, decode it with the Tokenizer object
         char* piece = decode(tokenizer, token, next);
-        // printf("Generated:");
+        #ifdef RISCV_VEXII
+        printf("Generated:");
+        #endif
         safe_printf(piece); // same as printf("%s", piece), but skips "unsafe" bytes
-        // printf("\n");
+        #ifdef RISCV_VEXII
+        printf("\n");
+        #endif
         token = next;
 
         // init the timer here because the first iteration can be slower
@@ -1110,16 +1138,16 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
 }
 
 #ifdef USE_HOST
-const int total_step = 256;
+const int total_step = 128;
 #else
-const int total_step = 5;
+const int total_step = 1;
 #endif
 
 int main(){
     printf("MiCo Transformer Demo\n");
     float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 1.0f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = total_step;            // number of steps to run for
+    int steps = total_step;     // number of steps to run for
     char *prompt = ""; // prompt string
     unsigned long long rng_seed = 42; // seed rng with time by default
 
