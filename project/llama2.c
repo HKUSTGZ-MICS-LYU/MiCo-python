@@ -98,6 +98,10 @@ typedef struct {
     // kv cache
     float* key_cache;   // (layer, seq_len, dim)
     float* value_cache; // (layer, seq_len, dim)
+    // RoPE caches
+    float* rope_inv_freq; // (head_size/2)
+    float* rope_cos; // (seq_len, head_size/2)
+    float* rope_sin; // (seq_len, head_size/2)
 } RunState;
 
 typedef struct {
@@ -115,6 +119,9 @@ long time_in_ms() {
 void malloc_run_state(RunState* s, Config* p) {
     // we calloc instead of malloc to keep valgrind happy
     int kv_dim = (p->dim * p->n_kv_heads) / p->n_heads;
+    int head_size = p->dim / p->n_heads;
+    int head_pairs = head_size / 2;
+
     s->x = calloc(p->dim, sizeof(float));
     s->xb = calloc(p->dim, sizeof(float));
     s->xb2 = calloc(p->dim, sizeof(float));
@@ -125,12 +132,39 @@ void malloc_run_state(RunState* s, Config* p) {
     s->value_cache = calloc(p->n_layers * p->seq_len * kv_dim, sizeof(float));
     s->att = calloc(p->n_heads * p->seq_len, sizeof(float));
     s->logits = calloc(p->vocab_size, sizeof(float));
+
+    // RoPE precompute: inv_freq per head (shared across heads)
+    s->rope_inv_freq = calloc(head_pairs, sizeof(float));
+    // Precompute cos/sin for all positions and per-head pairs
+    size_t tbl_elems = (size_t)p->seq_len * head_pairs;
+    s->rope_cos = calloc(tbl_elems, sizeof(float));
+    s->rope_sin = calloc(tbl_elems, sizeof(float));
+
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
-     || !s->key_cache || !s->value_cache || !s->att || !s->logits) {
+     || !s->key_cache || !s->value_cache || !s->att || !s->logits
+     || !s->rope_inv_freq || !s->rope_cos || !s->rope_sin) {
         printf("malloc failed!\n");
         exit(EXIT_FAILURE);
     }
+
+    printf("Precomputing RoPE tables...\n");
+    long start = MiCo_time();
+    // Fill inv_freq: 10000^(-2k/d_head), k in [0, head_size/2)
+    for (int k = 0; k < head_pairs; ++k) {
+        s->rope_inv_freq[k] = powf(10000.0f, -2.0f * (float)k / (float)head_size);
+    }
+    // Fill tables
+    for (int pos = 0; pos < p->seq_len; ++pos) {
+        for (int k = 0; k < head_pairs; ++k) {
+            float angle = pos * s->rope_inv_freq[k];
+            size_t idx = (size_t)pos * head_pairs + k;
+            s->rope_cos[idx] = cosf(angle);
+            s->rope_sin[idx] = sinf(angle);
+        }
+    }
+    long end = MiCo_time();
+    printf("done in %ld time\n", end - start);
 }
 
 void free_run_state(RunState* s) {
@@ -404,6 +438,14 @@ long SOFTMAX_TIMER = 0;
 long ATTENTION_TIMER = 0;
 long ROPE_TIMER = 0;
 
+void init_timers() {
+    RMSNORM_TIMER = 0;
+    FMATMUL_TIMER = 0;
+    SOFTMAX_TIMER = 0;
+    ATTENTION_TIMER = 0;
+    ROPE_TIMER = 0;
+}
+
 void rmsnorm(float* o, float* x, float* weight, int size) {
     long start = MiCo_time();
     // calculate sum of squares
@@ -469,6 +511,8 @@ void qmatmul(float* xout, float* x, Tensor2D_Q8* w, int n, int d,
 
 float* forward(Transformer* transformer, int token, int pos) {
 
+    init_timers();
+
     // a few convenience variables
     Config* p = &transformer->config;
     TransformerWeights* w = &transformer->weights;
@@ -480,6 +524,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     int kv_mul = p->n_heads / p->n_kv_heads; // integer multiplier of the kv sharing in multiquery
     int hidden_dim =  p->hidden_dim;
     int head_size = dim / p->n_heads;
+    int head_pairs = head_size / 2;
 
     // copy the token embedding into x
     float* content_row = w->token_embedding_table + token * dim;
@@ -514,11 +559,12 @@ float* forward(Transformer* transformer, int token, int pos) {
         long rope_start = MiCo_time();
         // RoPE relative positional encoding: complex-valued rotate q and k in each head
         for (int i = 0; i < dim; i+=2) {
-            int head_dim = i % head_size;
-            float freq = 1.0f / powf(10000.0f, head_dim / (float)head_size);
-            float val = pos * freq;
-            float fcr = cosf(val);
-            float fci = sinf(val);
+
+            int kpair = (i % head_size) >> 1; // pair index within the head
+            size_t ridx = (size_t)pos * head_pairs + kpair;
+            float fcr = s->rope_cos[ridx];
+            float fci = s->rope_sin[ridx];
+
             int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
             for (int v = 0; v < rotn; v++) {
                 float* vec = v == 0 ? s->q : s->k; // the vector to rotate (query or key)
@@ -635,8 +681,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     long forward_end = MiCo_time();
     #ifdef RISCV_VEXII
     printf("Forward Time: %ld Cycles\n", (forward_end - forward_start));
-    printf("QMatMul Cycles: %ld\n", QMATMUL_TIMER);
-    printf("Quant Cycles: %ld\n", QUANT_TIMER);
+    printf("QMatMul Time: %ld Cycles\n", QMATMUL_TIMER);
+    printf("Quant Time: %ld Cycles\n", QUANT_TIMER);
     printf("Final MatMul Time: %ld Cycles\n", FMATMUL_TIMER);
     printf("RMSNorm Time: %ld Cycles\n", RMSNORM_TIMER);
     printf("RoPE Time: %ld Cycles\n", ROPE_TIMER);
@@ -1063,11 +1109,17 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     free(prompt_tokens);
 }
 
+#ifdef USE_HOST
+const int total_step = 256;
+#else
+const int total_step = 5;
+#endif
+
 int main(){
     printf("MiCo Transformer Demo\n");
     float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 1.0f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = 1;            // number of steps to run for
+    int steps = total_step;            // number of steps to run for
     char *prompt = ""; // prompt string
     unsigned long long rng_seed = 42; // seed rng with time by default
 
