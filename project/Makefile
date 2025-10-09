@@ -40,6 +40,12 @@ OBJS := $(OBJS:.S=.o)
 OBJS := $(OBJS:.s=.o)
 OBJS := $(addprefix $(BUILD)/,$(OBJS))
 
+LLAMA2_BIN ?=
+
+ifneq ("$(LLAMA2_BIN)","")
+CFLAGS += -DLLAMA2_BIN=\"$(LLAMA2_BIN)\"
+endif
+
 $(BUILD)/%.o: %.c | $(BUILD)
 	@mkdir -p $(dir $@)
 	@echo "Compiling Source File ($<)..."
@@ -52,6 +58,7 @@ $(BUILD)/%.o: %.S | $(BUILD)
 
 $(MAIN).elf: $(OBJS) $(MAIN).c
 	@echo "Compiling Flags $(CFLAGS)"
+	@echo "Linker Flags $(LDFLAGS)"
 	@echo "Linking Executable (main)..."
 	@$(CC) $(CFLAGS) -o $(MAIN).elf $(OBJS) $(MAIN).c $(addprefix -I,$(INCLUDES)) $(LDFLAGS)
 

@@ -27,10 +27,10 @@ class MiCoModel(nn.Module):
     def get_qlayers(self):
         return list_quantize_layers(self)
 
-    def set_qscheme(self, qscheme, qat=False, device=device, use_bias = True):
+    def set_qscheme(self, qscheme, qat=False, device=device, use_bias = True, use_norm = False):
         replace_quantize_layers(self, qscheme[0], qscheme[1], 
                                 quant_aware=qat, 
-                                device=device, use_bias=use_bias)
+                                device=device, use_bias=use_bias, use_norm=use_norm)
         if not qat:
             set_to_qforward(self)
         return

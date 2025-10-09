@@ -36,7 +36,11 @@ typedef int8_t kv_type;
 typedef float kv_type;
 #endif
 
-INCLUDE_FILE(".rodata", "./llama2/llama_model.bin", llama_model);
+#ifndef LLAMA2_BIN
+#define LLAMA2_BIN "./llama2/llama_model.bin"
+#endif
+
+INCLUDE_FILE(".rodata", LLAMA2_BIN, llama_model);
 extern uint8_t llama_model_data[];
 extern size_t llama_model_start[];
 extern size_t llama_model_end[];
@@ -461,11 +465,11 @@ void free_transformer(Transformer* t) {
 // Some profilers
 long RMSNORM_TIMER = 0;
 long FMATMUL_TIMER = 0;
-long SOFTMAX_TIMER = 0;
 long ATTENTION_TIMER = 0;
 long ROPE_TIMER = 0;
 
 void init_timers() {
+    SOFTMAX_TIMER = 0;
     QMATMUL_TIMER = 0;
     QUANT_TIMER = 0;
     RMSNORM_TIMER = 0;
@@ -704,14 +708,14 @@ float* forward(Transformer* transformer, int token, int pos) {
     #endif
     long forward_end = MiCo_time();
     #ifdef RISCV_VEXII
-    printf("Forward Time: %ld Cycles\n", (forward_end - forward_start));
-    printf("QMatMul Time: %ld Cycles\n", QMATMUL_TIMER);
-    printf("Quant Time: %ld Cycles\n", QUANT_TIMER);
-    printf("Final MatMul Time: %ld Cycles\n", FMATMUL_TIMER);
-    printf("RMSNorm Time: %ld Cycles\n", RMSNORM_TIMER);
-    printf("RoPE Time: %ld Cycles\n", ROPE_TIMER);
-    printf("Attention Time: %ld Cycles\n", ATTENTION_TIMER);
-    printf("Softmax Time: %ld Cycles\n", SOFTMAX_TIMER);
+    printf("Forward Time: %ld \n", (forward_end - forward_start));
+    printf("QMatMul Time: %ld \n", QMATMUL_TIMER);
+    printf("Quant Time: %ld \n", QUANT_TIMER);
+    printf("Attention Time: %ld \n", ATTENTION_TIMER);
+    printf("RMSNorm Time: %ld \n", RMSNORM_TIMER);
+    printf("RoPE Time: %ld \n", ROPE_TIMER);
+    printf("Softmax Time: %ld \n", SOFTMAX_TIMER);
+    // printf("Final Float MatMul Time: %ld \n", FMATMUL_TIMER);
     #endif
     return s->logits;
 }
@@ -1076,7 +1080,7 @@ int sample(Sampler* sampler, float* logits) {
 }
 
 
-void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int steps) {
+void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, char *prompt, int start_pos, int steps) {
     char *empty_prompt = "";
     if (prompt == NULL) { prompt = empty_prompt; }
 
@@ -1093,7 +1097,7 @@ void generate(Transformer *transformer, Tokenizer *tokenizer, Sampler *sampler, 
     long start = 0;  // used to time our code, only initialized after first iteration
     int next;        // will store the next token in the sequence
     int token = prompt_tokens[0]; // kick off with the first token in the prompt
-    int pos = 0;     // position in the sequence
+    int pos = start_pos;     // position in the sequence
     while (pos < steps) {
 
         // forward the transformer to get logits for the next token
@@ -1147,7 +1151,8 @@ int main(){
     printf("MiCo Transformer Demo\n");
     float temperature = 0.0f;   // 0.0 = greedy deterministic. 1.0 = original. don't set higher
     float topp = 1.0f;          // top-p in nucleus sampling. 1.0 = off. 0.9 works well, but slower
-    int steps = total_step;     // number of steps to run for
+    int start_pos = 32;          // position in the sequence to start at, normally 0
+    int steps = start_pos + total_step;     // number of steps to run for
     char *prompt = ""; // prompt string
     unsigned long long rng_seed = 42; // seed rng with time by default
 
@@ -1173,7 +1178,7 @@ int main(){
     #ifdef REPEAT
     while(1){
     #endif
-    generate(&transformer, &tokenizer, &sampler, prompt, steps);
+    generate(&transformer, &tokenizer, &sampler, prompt, start_pos, steps);
     #ifdef REPEAT
     }
     #endif
