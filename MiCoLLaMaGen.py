@@ -108,15 +108,15 @@ def mico_export(model: Transformer, filepath: str,
 if __name__ == "__main__":
     from models import TinyLLaMa1M, TinyLLaMa7M, TinyLLaMa28M
     
-    model_path = "output/ckpt/llama_tiny_1M.pth"
-    bin_path = "project/llama2/llama_model.bin"
+    model_path = "output/ckpt/llama_tiny_bitnet_W1A8.pth"
+    bin_path = "project/llama2/llama_model_W1A8.bin"
 
     ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
     model = TinyLLaMa1M()
     model.load_state_dict(ckpt["model"])
     model.eval()
     qscheme = [
-        [8] * model.n_layers, # weight qscheme
+        [1] * model.n_layers, # weight qscheme
         [8] * model.n_layers, # activation qscheme
     ]
 

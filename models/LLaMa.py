@@ -454,6 +454,10 @@ def TinyLLaMa1M():
     args = ModelArgs(dim=160, n_layers=5, hidden_dim=128, n_heads=8, n_kv_heads=4)
     return Transformer(args)
 
+def TinyLLaMa3M():
+    args = ModelArgs(dim=256, n_layers=6, hidden_dim=256, n_heads=6, n_kv_heads=6)
+    return Transformer(args)
+
 def TinyLLaMa7M():    
     return Transformer(ModelArgs())
 
@@ -477,3 +481,10 @@ def TinyLLaMaNAS(args : dict):
     }
     """
     return Transformer(ModelArgs(**args))
+
+if __name__ == "__main__":
+    model = TinyLLaMa3M()
+
+    # Get Model Param Size
+    param_size = sum(p.numel() for p in model.parameters())
+    print(f"Model Param Size: {param_size / 1e6:.2f} M")
