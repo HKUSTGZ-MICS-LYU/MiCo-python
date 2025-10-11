@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.fusion as fusion
 import torch.nn.functional as F
-import copy
 
 DEFAULT_W_Q =8
 DEFAULT_ACT_Q = 8

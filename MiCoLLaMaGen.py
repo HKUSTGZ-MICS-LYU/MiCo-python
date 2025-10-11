@@ -21,8 +21,35 @@ def serialize_fp32(file, tensor):
     b = struct.pack(f'{len(d)}f', *d)
     file.write(b)
 
+def groupwise_mixed_quant_w4w8(tensor: torch.Tensor, gsize: int):
+    """ Group-wise mixed quantization for a given tensor.
+        tensor: the input tensor to be quantized
+        qbits: a list of quantization bits for each group
+        gsize: the size of each group
+    """
+    assert tensor.dim() == 2, "Only support 2D tensor"
+    assert tensor.size(0) % gsize == 0, "Tensor size must be divisible by group size"
+
+    n_groups = tensor.size(0) // gsize
+    qbits = [4] * (n_groups)
+    qbits[-1] = 8  # Last group uses 8-bit quantization
+
+    qweight_list = []
+    scale_list = []
+    for i in range(n_groups):
+        start = i * gsize
+        end = (i + 1) * gsize
+        w_group = tensor[start:end, :]
+        qbit = qbits[i]
+        qweight, scale = weight_quant(w_group, qbit)
+        qweight_list.append(qweight)
+        scale_list.append(scale)
+
+    return qweight_list, scale_list, qbits
+
 def mico_export(model: Transformer, filepath: str, 
-                quantize_final_classifier: bool = False):
+                quantize_final_classifier: bool = True,
+                int8_outliner: bool = False):
     version = 1
 
     out_file = open(filepath, 'wb')
@@ -76,14 +103,17 @@ def mico_export(model: Transformer, filepath: str,
         pad = 4 - out_file.tell() % 4
         out_file.write(b'\0' * pad)
     
+    ws_buffer = []
+
     print("Quantization Padding End Addr: ", hex(out_file.tell()))
     for linear in mico_weights:
         if isinstance(linear, BitLinear):
-            qweight, scale = weight_quant(linear.weight, linear.qtype)
-            wb = weight_export(qweight, linear.qtype)
-            ws = scale.detach().cpu().numpy()
-            out_file.write(struct.pack('f', ws))
-            out_file.write(wb)
+                qweight, scale = weight_quant(linear.weight, linear.qtype)
+                wb = weight_export(qweight, linear.qtype)
+                ws = scale.detach().cpu().numpy()
+                # out_file.write(struct.pack('f', ws))
+                ws_buffer.append(struct.pack('f', ws))
+                out_file.write(wb)
         elif isinstance(linear, torch.nn.Linear):
             serialize_fp32(out_file, linear.weight)
 
@@ -91,10 +121,14 @@ def mico_export(model: Transformer, filepath: str,
         qweight, scale = weight_quant(model.tok_embeddings.weight, 8)
         wb = weight_export(qweight, 8)
         ws = scale.detach().cpu().numpy()
-        out_file.write(struct.pack('f', ws))
+        # out_file.write(struct.pack('f', ws))
+        ws_buffer.append(struct.pack('f', ws))
         out_file.write(wb)
     else:
         serialize_fp32(out_file, model.tok_embeddings.weight)
+
+    for b in ws_buffer:
+        out_file.write(b) # write all scales at the end
 
     print("Final End Addr: ", hex(out_file.tell()))
     # write to binary file
@@ -108,22 +142,22 @@ def mico_export(model: Transformer, filepath: str,
 if __name__ == "__main__":
     from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa7M, TinyLLaMa28M
     
-    model_path = "output/ckpt/llama_tiny_3M.pth"
-    bin_path = "project/llama2/llama_3M_1_layer.bin"
+    model_path = "output/ckpt/llama_tiny_1M.pth"
+    bin_path = "project/llama2/llama_1M_W8A8.bin"
 
     ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
-    model = TinyLLaMa3M()
-    # model.load_state_dict(ckpt["model"])
+    model = TinyLLaMa1M()
+    model.load_state_dict(ckpt["model"])
     model.eval()
     qscheme = [
-        [1] * model.n_layers, # weight qscheme
+        [8] * model.n_layers, # weight qscheme
         [8] * model.n_layers, # activation qscheme
     ]
 
     model.set_qscheme(qscheme)
 
     # (Optional) Keep only the first layer for testing
-    model.layers = torch.nn.ModuleList([model.layers[0]])
-    model.params.n_layers = 1
+    # model.layers = torch.nn.ModuleList([model.layers[0]])
+    # model.params.n_layers = 1
 
-    mico_export(model, bin_path, True)
+    mico_export(model, bin_path)

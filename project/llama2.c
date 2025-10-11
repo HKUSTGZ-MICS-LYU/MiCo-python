@@ -232,10 +232,19 @@ size_t init_quant_weight(DataType* w, char* ptr, int n_layers, int n, int m){
     for (int i = 0; i < n_layers; i++) {
         w[i].shape[0] = n;
         w[i].shape[1] = m;
-        w[i].scale = *(float*)ptr;
-        ptr += sizeof(float);
+        // w[i].scale = *(float*)ptr;
+        // ptr += sizeof(float);
         w[i].data = (WeightType*) ptr;
         ptr += n * m * sizeof(WeightType) / (8 / w[i].wq);
+    }
+    return ptr - ptr0;
+}
+
+size_t init_quant_weight_scale(DataType* w, char* ptr, int n_layers){
+    char* ptr0 = ptr;
+    for (int i = 0; i < n_layers; i++) {
+        w[i].scale = *(float*)ptr;
+        ptr += sizeof(float);
     }
     return ptr - ptr0;
 }
@@ -314,71 +323,62 @@ void memory_map_weights(
     w->wq = (DataType*)malloc(n_layers * sizeof(DataType));
     #ifdef QUANTIZED
     init_weight_qtypes(q->wq_qtype, w->wq, n_layers);
-    inc = init_quant_weight(w->wq, ptr, n_layers, p->dim, p->n_heads * head_size);
+    ptr += init_quant_weight(w->wq, ptr, n_layers, p->dim, p->n_heads * head_size);
     #else
-    inc = init_weight(w->wq, ptr, n_layers, p->dim, p->n_heads * head_size);
+    ptr += init_weight(w->wq, ptr, n_layers, p->dim, p->n_heads * head_size);
     #endif
-    ptr += inc;
 
     w->wk = (DataType*)malloc(n_layers * sizeof(DataType));
     #ifdef QUANTIZED
     init_weight_qtypes(q->wk_qtype, w->wk, n_layers);
-    inc = init_quant_weight(w->wk, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    ptr += init_quant_weight(w->wk, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
     #else
-    inc = init_weight(w->wk, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    ptr += init_weight(w->wk, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
     #endif
-    ptr += inc;
 
     w->wv = (DataType*)malloc(n_layers * sizeof(DataType));
     #ifdef QUANTIZED
     init_weight_qtypes(q->wv_qtype, w->wv, n_layers);
-    inc = init_quant_weight(w->wv, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    ptr += init_quant_weight(w->wv, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
     #else
-    inc = init_weight(w->wv, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
+    ptr += init_weight(w->wv, ptr, n_layers, p->dim, p->n_kv_heads * head_size);
     #endif
-    ptr += inc;
 
     w->wo = (DataType*)malloc(n_layers * sizeof(DataType));
     #ifdef QUANTIZED
     init_weight_qtypes(q->wo_qtype, w->wo, n_layers);
-    inc = init_quant_weight(w->wo, ptr, n_layers, p->n_heads * head_size, p->dim);
+    ptr += init_quant_weight(w->wo, ptr, n_layers, p->n_heads * head_size, p->dim);
     #else
-    inc = init_weight(w->wo, ptr, n_layers, p->n_heads * head_size, p->dim);
+    ptr += init_weight(w->wo, ptr, n_layers, p->n_heads * head_size, p->dim);
     #endif
-    ptr += inc;
 
     w->w1 = (DataType*)malloc(n_layers * sizeof(DataType));
     #ifdef QUANTIZED
     init_weight_qtypes(q->w1_qtype, w->w1, n_layers);
-    inc = init_quant_weight(w->w1, ptr, n_layers, p->hidden_dim, p->dim);
+    ptr += init_quant_weight(w->w1, ptr, n_layers, p->hidden_dim, p->dim);
     #else
-    inc = init_weight(w->w1, ptr, n_layers, p->hidden_dim, p->dim);
+    ptr += init_weight(w->w1, ptr, n_layers, p->hidden_dim, p->dim);
     #endif
-    ptr += inc;
 
     w->w2 = (DataType*)malloc(n_layers * sizeof(DataType));
     #ifdef QUANTIZED
     init_weight_qtypes(q->w2_qtype, w->w2, n_layers);
-    inc = init_quant_weight(w->w2, ptr, n_layers, p->dim, p->hidden_dim);
+    ptr += init_quant_weight(w->w2, ptr, n_layers, p->dim, p->hidden_dim);
     #else
-    inc = init_weight(w->w2, ptr, n_layers, p->dim, p->hidden_dim);
+    ptr += init_weight(w->w2, ptr, n_layers, p->dim, p->hidden_dim);
     #endif
-    ptr += inc;
 
     w->w3 = (DataType*)malloc(n_layers * sizeof(DataType));
     #ifdef QUANTIZED
     init_weight_qtypes(q->w3_qtype, w->w3, n_layers);
-    inc = init_quant_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
+    ptr += init_quant_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
     #else
-    inc = init_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
+    ptr += init_weight(w->w3, ptr, n_layers, p->hidden_dim, p->dim);
     #endif
-    ptr += inc;
 
     if(shared_weights){
         #ifdef QUANTIZED
         // Use INT8 for the final classifier to save memory
-        w->wcls.scale = *(float*)ptr;
-        ptr += sizeof(float);
         w->wcls.shape[0] = p->vocab_size;
         w->wcls.shape[1] = p->dim;
         w->wcls.data = (WeightType*) ptr;
@@ -387,16 +387,31 @@ void memory_map_weights(
         w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
         printf("Allocating Embedding Table of size %ld KB...\n",
             (p->vocab_size * p->dim * sizeof(float)) / 1024);
-        for(int i = 0; i < p->vocab_size * p->dim; i++){
-            int8_t v = ((int8_t*)w->wcls.data)[i];
-            w->token_embedding_table[i] = v * w->wcls.scale;
-        }
         #else
         w->token_embedding_table = (float*) ptr;
         w->wcls = w->token_embedding_table; // shared embedding table
         ptr += p->vocab_size * p->dim * sizeof(float);
         #endif
     }
+    // Initialize Quantization Weight Scales
+    #ifdef QUANTIZED
+    ptr += init_quant_weight_scale(w->wq, ptr, n_layers);
+    ptr += init_quant_weight_scale(w->wk, ptr, n_layers);
+    ptr += init_quant_weight_scale(w->wv, ptr, n_layers);
+    ptr += init_quant_weight_scale(w->wo, ptr, n_layers);
+    ptr += init_quant_weight_scale(w->w1, ptr, n_layers);
+    ptr += init_quant_weight_scale(w->w2, ptr, n_layers);
+    ptr += init_quant_weight_scale(w->w3, ptr, n_layers);
+    if(shared_weights){
+        w->wcls.scale = *(float*)ptr;
+        ptr += sizeof(float);
+        for(int i = 0; i < p->vocab_size * p->dim; i++){
+            int8_t v = ((int8_t*)w->wcls.data)[i];
+            w->token_embedding_table[i] = v * w->wcls.scale;
+        }
+    }
+    #endif
+
     return;
 }
 
