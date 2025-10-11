@@ -106,14 +106,14 @@ def mico_export(model: Transformer, filepath: str,
     return
 
 if __name__ == "__main__":
-    from models import TinyLLaMa1M, TinyLLaMa7M, TinyLLaMa28M
+    from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa7M, TinyLLaMa28M
     
-    model_path = "output/ckpt/llama_tiny_bitnet_W1A8.pth"
-    bin_path = "project/llama2/llama_model_W1A8.bin"
+    model_path = "output/ckpt/llama_tiny_3M.pth"
+    bin_path = "project/llama2/llama_3M_1_layer.bin"
 
     ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
-    model = TinyLLaMa1M()
-    model.load_state_dict(ckpt["model"])
+    model = TinyLLaMa3M()
+    # model.load_state_dict(ckpt["model"])
     model.eval()
     qscheme = [
         [1] * model.n_layers, # weight qscheme
@@ -121,5 +121,9 @@ if __name__ == "__main__":
     ]
 
     model.set_qscheme(qscheme)
+
+    # (Optional) Keep only the first layer for testing
+    model.layers = torch.nn.ModuleList([model.layers[0]])
+    model.params.n_layers = 1
 
     mico_export(model, bin_path, True)

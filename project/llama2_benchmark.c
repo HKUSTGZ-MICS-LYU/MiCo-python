@@ -162,11 +162,11 @@ void malloc_run_state(RunState* s, Config* p) {
     s->logits = calloc(p->vocab_size, sizeof(float));
 
     // RoPE precompute: inv_freq per head (shared across heads)
-    s->rope_inv_freq = calloc(head_pairs, sizeof(float));
+    s->rope_inv_freq = calloc(1, sizeof(float));
     // Precompute cos/sin for all positions and per-head pairs
-    size_t tbl_elems = (size_t)p->seq_len * head_pairs;
-    s->rope_cos = calloc(tbl_elems, sizeof(float));
-    s->rope_sin = calloc(tbl_elems, sizeof(float));
+    // size_t tbl_elems = (size_t)p->seq_len * head_pairs;
+    s->rope_cos = calloc(1, sizeof(float));
+    s->rope_sin = calloc(1, sizeof(float));
 
     // ensure all mallocs went fine
     if (!s->x || !s->xb || !s->xb2 || !s->hb || !s->hb2 || !s->q
@@ -176,22 +176,22 @@ void malloc_run_state(RunState* s, Config* p) {
         exit(EXIT_FAILURE);
     }
 
-    printf("Precomputing RoPE tables (%ld Bytes)...\n", 
-        tbl_elems * sizeof(float) * 2);
-    long start = MiCo_time();
-    // Fill inv_freq: 10000^(-2k/d_head), k in [0, head_size/2)
-    for (int k = 0; k < head_pairs; ++k) {
-        s->rope_inv_freq[k] = powf(10000.0f, -2.0f * (float)k / (float)head_size);
-    }
-    // Fill tables
-    for (int pos = 0; pos < p->seq_len; ++pos) {
-        for (int k = 0; k < head_pairs; ++k) {
-            float angle = pos * s->rope_inv_freq[k];
-            size_t idx = (size_t)pos * head_pairs + k;
-            s->rope_cos[idx] = cosf(angle);
-            s->rope_sin[idx] = sinf(angle);
-        }
-    }
+    // printf("Precomputing RoPE tables (%ld Bytes)...\n", 
+    //     tbl_elems * sizeof(float) * 2);
+    // long start = MiCo_time();
+    // // Fill inv_freq: 10000^(-2k/d_head), k in [0, head_size/2)
+    // for (int k = 0; k < head_pairs; ++k) {
+    //     s->rope_inv_freq[k] = powf(10000.0f, -2.0f * (float)k / (float)head_size);
+    // }
+    // // Fill tables
+    // for (int pos = 0; pos < p->seq_len; ++pos) {
+    //     for (int k = 0; k < head_pairs; ++k) {
+    //         float angle = pos * s->rope_inv_freq[k];
+    //         size_t idx = (size_t)pos * head_pairs + k;
+    //         s->rope_cos[idx] = cosf(angle);
+    //         s->rope_sin[idx] = sinf(angle);
+    //     }
+    // }
     long end = MiCo_time();
     long total_run_state_size = p->dim * sizeof(float) * 4;
     total_run_state_size += p->hidden_dim * sizeof(float) * 2;
@@ -200,7 +200,7 @@ void malloc_run_state(RunState* s, Config* p) {
     total_run_state_size += p->vocab_size * sizeof(float);
     total_run_state_size += head_pairs * sizeof(float) * (1 + 2 * p->seq_len);
     printf("Total Run State Size: %ld KB\n", total_run_state_size / 1024);
-    printf("Done in %ld time\n", end - start);
+    // printf("Done in %ld time\n", end - start);
 }
 
 void free_run_state(RunState* s) {
@@ -384,13 +384,13 @@ void memory_map_weights(
         w->wcls.data = (WeightType*) ptr;
         w->wcls.wq = 8;
         ptr += p->vocab_size * p->dim * sizeof(WeightType);
-        w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
-        printf("Allocating Embedding Table of size %ld KB...\n",
-            (p->vocab_size * p->dim * sizeof(float)) / 1024);
-        for(int i = 0; i < p->vocab_size * p->dim; i++){
-            int8_t v = ((int8_t*)w->wcls.data)[i];
-            w->token_embedding_table[i] = v * w->wcls.scale;
-        }
+        w->token_embedding_table = malloc(p->vocab_size * sizeof(float));
+        // printf("Allocating Embedding Table of size %ld KB...\n",
+        //     (p->vocab_size * p->dim * sizeof(float)) / 1024);
+        // for(int i = 0; i < p->vocab_size * p->dim; i++){
+        //     int8_t v = ((int8_t*)w->wcls.data)[i];
+        //     w->token_embedding_table[i] = v * w->wcls.scale;
+        // }
         #else
         w->token_embedding_table = (float*) ptr;
         w->wcls = w->token_embedding_table; // shared embedding table
@@ -601,8 +601,8 @@ float* forward(Transformer* transformer, int token, int pos) {
 
             int kpair = (i % head_size) >> 1; // pair index within the head
             size_t ridx = (size_t)pos * head_pairs + kpair;
-            float fcr = s->rope_cos[ridx];
-            float fci = s->rope_sin[ridx];
+            float fcr = s->rope_cos[0];
+            float fci = s->rope_sin[0];
 
             int rotn = i < kv_dim ? 2 : 1; // how many vectors? 2 = q & k, 1 = q only
             for (int v = 0; v < rotn; v++) {
@@ -705,6 +705,7 @@ float* forward(Transformer* transformer, int token, int pos) {
 
     #ifdef RISCV_VEXII
     printf("Processing Final Classifier\n");
+    long final_start = MiCo_time();
     #endif
 
     #ifdef QUANTIZED
@@ -715,6 +716,7 @@ float* forward(Transformer* transformer, int token, int pos) {
     #endif
     long forward_end = MiCo_time();
     #ifdef RISCV_VEXII
+    printf("Final Classifier Time: %ld \n", forward_end - final_start);
     printf("Forward Time: %ld \n", (forward_end - forward_start));
     printf("QMatMul Time: %ld \n", QMATMUL_TIMER);
     printf("Quant Time: %ld \n", QUANT_TIMER);
@@ -722,7 +724,6 @@ float* forward(Transformer* transformer, int token, int pos) {
     printf("RMSNorm Time: %ld \n", RMSNORM_TIMER);
     printf("RoPE Time: %ld \n", ROPE_TIMER);
     printf("Softmax Time: %ld \n", SOFTMAX_TIMER);
-    // printf("Final Float MatMul Time: %ld \n", FMATMUL_TIMER);
     #endif
     return s->logits;
 }

@@ -455,7 +455,7 @@ def TinyLLaMa1M():
     return Transformer(args)
 
 def TinyLLaMa3M():
-    args = ModelArgs(dim=256, n_layers=6, hidden_dim=256, n_heads=6, n_kv_heads=6)
+    args = ModelArgs(dim=256, n_layers=6, hidden_dim=256, n_heads=8, n_kv_heads=8)
     return Transformer(args)
 
 def TinyLLaMa7M():    
