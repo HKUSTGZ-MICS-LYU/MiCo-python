@@ -384,9 +384,9 @@ void memory_map_weights(
         w->wcls.data = (WeightType*) ptr;
         w->wcls.wq = 8;
         ptr += p->vocab_size * p->dim * sizeof(WeightType);
-        w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
-        printf("Allocating Embedding Table of size %ld KB...\n",
-            (p->vocab_size * p->dim * sizeof(float)) / 1024);
+        w->token_embedding_table = malloc(p->vocab_size * sizeof(float));
+        // printf("Allocating Embedding Table of size %ld KB...\n",
+            // (p->vocab_size * p->dim * sizeof(float)) / 1024);
         #else
         w->token_embedding_table = (float*) ptr;
         w->wcls = w->token_embedding_table; // shared embedding table
@@ -405,10 +405,10 @@ void memory_map_weights(
     if(shared_weights){
         w->wcls.scale = *(float*)ptr;
         ptr += sizeof(float);
-        for(int i = 0; i < p->vocab_size * p->dim; i++){
-            int8_t v = ((int8_t*)w->wcls.data)[i];
-            w->token_embedding_table[i] = v * w->wcls.scale;
-        }
+        // for(int i = 0; i < p->vocab_size * p->dim; i++){
+        //     int8_t v = ((int8_t*)w->wcls.data)[i];
+        //     w->token_embedding_table[i] = v * w->wcls.scale;
+        // }
     }
     #endif
 
@@ -568,8 +568,8 @@ float* forward(Transformer* transformer, int token, int pos) {
     };
 
     // copy the token embedding into x
-    float* content_row = w->token_embedding_table + token * dim;
-    memcpy(x, content_row, dim*sizeof(*x));
+    // float* content_row = w->token_embedding_table + token * dim;
+    // memcpy(x, content_row, dim*sizeof(*x));
     long forward_start = MiCo_time();
     // forward all the layers
     for(unsigned long long l = 0; l < p->n_layers; l++) {

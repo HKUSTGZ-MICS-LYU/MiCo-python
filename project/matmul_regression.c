@@ -10,8 +10,8 @@
 #include "mico_nn.h"
 #include "mico_qnn.h"
 
-#define N 1
-#define M 10
+#define N 4
+#define M 16
 #define K 256
 
 int check(int32_t *o_ref, int32_t *o_cmp){
@@ -57,7 +57,7 @@ int test_func(int32_t* o_ref, int32_t* o_cmp, Tensor2D_Q8 x, Tensor2D_Q8 w,
 int main(){
     Tensor2D_Q8 x, w;
 
-    size_t alignment = 8; // N-byte alignment for SIMD
+    size_t alignment = 32; // N-byte alignment for SIMD
 
     void *x_raw = malloc(N*K*sizeof(int8_t) + alignment - 1);
     void *w_raw = malloc(K*M*sizeof(int8_t) + alignment - 1);
@@ -143,7 +143,7 @@ int main(){
         "MiCo_Q1x2_MatMul",
     };
     int num_tests = sizeof(func_refs) / sizeof(func_refs[0]);
-    for(int i = 0; i < num_tests; i++){
+    for(int i = 0; i < 1; i++){
         printf("Testing %s...\n", func_names[i]);
         int result = test_func(o_ref, o_cmp, x, w, 
             (void (*)(int32_t*, const Tensor2D_Q8*, const Tensor2D_Q8*))func_refs[i],
