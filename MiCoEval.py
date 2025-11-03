@@ -118,6 +118,8 @@ class MiCoEval:
 
     def load_pretrain(self):
         ckpt = torch.load(self.pretrained_model)
+        if "model" in ckpt:
+            ckpt = ckpt["model"]
         self.model.load_state_dict(ckpt)
         return
 

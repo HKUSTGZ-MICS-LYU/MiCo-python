@@ -230,7 +230,7 @@ def get_tokenizer_model_path(vocab_size):
     None is returned.
     """
     if vocab_size == 0:
-        return None
+        return os.path.join(DATA_CACHE_DIR, f"tokenizer_llama2.model")
     else:
         return os.path.join(DATA_CACHE_DIR, f"tok{vocab_size}.model")
 
