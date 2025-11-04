@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 
 from MiCoEval import MiCoEval
 from searchers.QSearcher import QSearcher
+from DimTransform import DimTransform
 
 from searchers.SearchUtils import (
     random_sample, random_sample_min_max, 
@@ -37,24 +38,38 @@ class MiCoSearcher(QSearcher):
 
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
-                 qtypes: list = [4,5,6,7,8]) -> None:
+                 qtypes: list = [4,5,6,7,8],
+                 dim_trans: DimTransform = None) -> None:
         
         super().__init__(evaluator, n_inits, qtypes)
         
         # self.n_inits = n_inits
         # self.evaluator = evaluator
-        self.n_layers = evaluator.model.n_layers
-        self.dims = self.n_layers * 2
+        self.dims = self.dim
         self.qtypes = qtypes
         self.roi = 0.2 # Start with 20% ROI
-
+        self.dim_transform = dim_trans
+        if self.dim_transform is not None:
+            assert self.dim_transform.out_dim == self.n_layers * 2
+            self.dims = self.dim_transform.in_dim
+        print("Searcher Input Dim:", self.dims)
         return
     
+    def constr(self, scheme: list):
+        if self.dim_transform is not None:
+            scheme = self.dim_transform(scheme)
+        return self.evaluator.constr(scheme)
+    
+    def eval(self, scheme: list):
+        if self.dim_transform is not None:
+            scheme = self.dim_transform(scheme)
+        return self.evaluator.eval(scheme)
+
     def sample(self, n_samples: int):
         return near_constr_sample(n_samples=n_samples,
                                  qtypes=self.qtypes,
                                  dims=self.dims,
-                                 constr_func=self.evaluator.constr,
+                                 constr_func=self.constr,
                                  constr_value=self.constr_value,
                                  roi=self.roi,
                                  layer_macs=self.evaluator.layer_macs)
@@ -71,7 +86,7 @@ class MiCoSearcher(QSearcher):
     def select(self, X, constr_value):
         constrs = []
         for x in X:
-            constrs.append(self.evaluator.constr(x))
+            constrs.append(self.constr(x))
         constrs = np.array(constrs) <= constr_value
         X = np.array(X)
         X = X[constrs].tolist()
@@ -91,7 +106,7 @@ class MiCoSearcher(QSearcher):
         sampled_y = []
         for x in sampled_X:
             print("Initial Scheme:", x)
-            y = self.evaluator.eval(x)
+            y = self.eval(x)
             print("Initial Result:", y)
             sampled_y.append(y)
         sampled_y = np.array(sampled_y)
@@ -122,7 +137,7 @@ class MiCoSearcher(QSearcher):
             
             print("Predicted Best Scheme:", best_x)
             print("Predicted Best Result:", best_y)
-            eval_y = self.evaluator.eval(best_x)
+            eval_y = self.eval(best_x)
             print("Actual Best Result:", eval_y)
             if (final_y is None) or (eval_y > final_y):
                 final_x = best_x
@@ -137,8 +152,8 @@ class MiCoSearcher(QSearcher):
         print("Best Scheme:", final_x)
         print("Best Result:", final_y)
         if constr:
-            constr_x = self.evaluator.constr(final_x)
-            print(f"Constraint Value: {constr_x} ({constr_x/constr_value:.2f})")
+            constr_x = self.constr(final_x)
+            print(f"Constraint Value: {constr_x} ({constr_x/constr_value:.5f})")
         return final_x, final_y
 
     def bayes_opt(self, sampled_X, sampled_y, X):

@@ -28,7 +28,7 @@ class MiCoEval:
                  epochs: int, 
                  train_loader: DataLoader, 
                  test_loader: DataLoader, 
-                 pretrained_model,
+                 pretrained_model: str,
                  lr=0.0001, model_name = "", 
                  objective='ptq_acc',
                  constraint='bops',
@@ -46,6 +46,7 @@ class MiCoEval:
         self.output_json = output_json
         self.model_name = model_name
         self.n_layers = self.model.n_layers
+        self.dim = self.n_layers * 2
         
         self.data_trace = {}
         if os.path.exists(self.output_json):

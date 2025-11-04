@@ -22,7 +22,6 @@ class HAQSearcher(QSearcher):
         self.n_inits = n_inits
         self.layer_macs = self.mpq.layer_macs
         self.layer_params = self.mpq.layer_params
-        self.n_layers = self.mpq.n_layers
         self.org_acc = self.mpq.baseline_acc
 
         self.build_embedding()

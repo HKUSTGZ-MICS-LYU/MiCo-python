@@ -17,6 +17,8 @@ class QSearcher(ABC):
         self.n_inits = n_inits
         self.qtypes = qtypes
         self.best_trace = []
+        self.n_layers = evaluator.n_layers
+        self.dim = evaluator.dim
         return
 
 

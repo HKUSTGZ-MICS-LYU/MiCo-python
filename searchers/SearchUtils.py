@@ -32,9 +32,10 @@ def grid_sample(n_samples: int, qtypes: list, dims: int):
 
     remain = n_samples - 2
     n_layers = dims // 2
-
-    # layers to be covered per initial sample
-    layers_per_sample = n_layers // remain
+    layers_per_sample = 0
+    if remain > 0:
+        # layers to be covered per initial sample
+        layers_per_sample = n_layers // remain
     if layers_per_sample == 0:
         layers_per_sample = 1
     

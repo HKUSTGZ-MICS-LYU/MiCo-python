@@ -33,8 +33,7 @@ class BayesSearcher(QSearcher):
         
         # self.n_inits = n_inits
         # self.evaluator = evaluator
-        self.n_layers = evaluator.model.n_layers
-        self.dims = self.n_layers * 2
+        self.dims = self.dim
         self.qtypes = qtypes
 
         return

@@ -14,7 +14,6 @@ class NLPSearcher(QSearcher):
         self.qbits = qtypes
         self.layer_macs = self.evaluator.layer_macs
         self.layer_params = self.evaluator.layer_macs
-        self.n_layers = self.evaluator.n_layers
         self.layer_w = []
         self.best_trace = []
         return

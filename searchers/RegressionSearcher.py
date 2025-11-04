@@ -23,8 +23,7 @@ class RegressionSearcher(QSearcher):
         
         super().__init__(evaluator, n_inits, qtypes)
 
-        self.n_layers = evaluator.model.n_layers
-        self.dims = self.n_layers * 2
+        self.dims = self.dim
         if model_type == "gp":
             self.model = GaussianProcessRegressor()
         elif model_type == "rf":
