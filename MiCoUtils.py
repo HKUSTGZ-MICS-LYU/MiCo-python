@@ -93,6 +93,7 @@ def replace_quantize_layers(model: nn.Module,
                             weight_types_list: list, 
                             act_types_list: list,
                             quant_aware = False,
+                            group_size = 1,
                             use_norm = False,
                             use_bias = False,
                             device=None):
@@ -104,6 +105,7 @@ def replace_quantize_layers(model: nn.Module,
                     wlist, 
                     alist,
                     quant_aware,
+                    group_size,
                     use_norm,
                     use_bias,
                     device)
@@ -114,6 +116,7 @@ def __replace_layer(model: nn.Module,
             weight_types_list: list, 
             act_types_list: list,
             quant_aware = False,
+            group_size = 1,
             use_norm = False,
             use_bias = False,
             device=None):
@@ -128,7 +131,7 @@ def __replace_layer(model: nn.Module,
             setattr(
                 model, name,
                 BitLinear(module.in_features, module.out_features, bias=has_bias,
-                          qtype = weight_type, act_q = act_type, 
+                          qtype = weight_type, act_q = act_type, group_size=group_size,
                           qat = quant_aware, use_norm=use_norm,
                           device=device)
             )
@@ -153,7 +156,7 @@ def __replace_layer(model: nn.Module,
             getattr(model, name).bias = bias
         else:
             __replace_layer(module, weight_types_list, act_types_list, 
-                                    quant_aware=quant_aware, device=device, 
+                                    quant_aware=quant_aware, device=device, group_size=group_size,
                                     use_norm=use_norm, use_bias=use_bias)
     return
 

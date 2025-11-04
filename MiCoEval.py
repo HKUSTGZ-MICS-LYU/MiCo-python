@@ -32,6 +32,7 @@ class MiCoEval:
                  lr=0.0001, model_name = "", 
                  objective='ptq_acc',
                  constraint='bops',
+                 linear_group_size = 1,
                  output_json='output/json/mico_eval.json') -> None:
         
         self.model = model
@@ -39,6 +40,7 @@ class MiCoEval:
         self.train_loader = train_loader
         self.test_loader = test_loader
         self.pretrained_model = pretrained_model
+        self.group_size = linear_group_size
         self.lr = lr
 
         self.output_json = output_json
@@ -54,6 +56,8 @@ class MiCoEval:
         self.set_constraint(constraint)
         
         self.load_pretrain()
+        print("Pretrained Model Loaded.")
+        self.fp_acc = self.eval_fp()
 
         # Initial Conversion and Test
         res = self.eval_f([8]*self.n_layers*2)
@@ -74,6 +78,7 @@ class MiCoEval:
         print("Total MACs: ", np.sum(self.layer_macs))
         print("Total Params: ", np.sum(self.layer_params))
         print("INT8 Model Accuracy: ", res)
+        print("FP Model Accuracy: ", self.fp_acc)
         return
     
     def eval(self, scheme: list):
@@ -117,7 +122,7 @@ class MiCoEval:
         }
 
     def load_pretrain(self):
-        ckpt = torch.load(self.pretrained_model)
+        ckpt = torch.load(self.pretrained_model, weights_only=False)
         if "model" in ckpt:
             ckpt = ckpt["model"]
         self.model.load_state_dict(ckpt)
@@ -143,7 +148,7 @@ class MiCoEval:
 
         gen_model = deepcopy(self.model)
         gen_model = fuse_model(gen_model)
-        gen_model.set_qscheme([[8]*self.n_layers, [8]*self.n_layers])
+        gen_model.set_qscheme([[8]*self.n_layers, [8]*self.n_layers], group_size=self.group_size)
         codegen = MiCoCodeGen(gen_model)
         self.input_size = self.train_loader.dataset[0][0].shape
         example_input = torch.randn(1, *self.input_size).to(DEVICE)
@@ -185,18 +190,29 @@ class MiCoEval:
     def set_mico_target(self, mico_type: str):
         self.mico_target = mico_type
 
+    def eval_fp(self):
+        self.model.unset_qscheme()
+        return self.model.test(self.test_loader)['TestAcc']
+
+    def eval_ptq_loss(self, scheme: list):
+        wq = scheme[:self.n_layers]
+        aq = scheme[self.n_layers:]
+        # self.load_pretrain()
+        self.model.set_qscheme([wq, aq], group_size=self.group_size)
+        return self.model.test(self.test_loader)['TestLoss']
+
     def eval_ptq(self, scheme: list):
         wq = scheme[:self.n_layers]
         aq = scheme[self.n_layers:]
         # self.load_pretrain()
-        self.model.set_qscheme([wq, aq])
+        self.model.set_qscheme([wq, aq], group_size=self.group_size)
         return self.model.test(self.test_loader)['TestAcc']
     
     def eval_qat(self, scheme: list):
         wq = scheme[:self.n_layers]
         aq = scheme[self.n_layers:]
         self.load_pretrain()
-        self.model.set_qscheme([wq, aq], qat=True)
+        self.model.set_qscheme([wq, aq], qat=True, group_size=self.group_size)
         self.model.train_loop(self.epochs, self.train_loader, self.test_loader, 
                               verbose=True, lr=self.lr)
         return self.model.test(self.test_loader)['TestAcc']
@@ -266,7 +282,7 @@ class MiCoEval:
             assert self.mico_target is not None, "MiCo Target not set."
             gen_model = deepcopy(self.model)
             gen_model = fuse_model(gen_model)
-            gen_model.set_qscheme([wq, aq])
+            gen_model.set_qscheme([wq, aq], group_size=self.group_size)
             codegen = MiCoCodeGen(gen_model)
             self.input_size = self.train_loader.dataset[0][0].shape
             example_input = torch.randn(1, *self.input_size).to(DEVICE)

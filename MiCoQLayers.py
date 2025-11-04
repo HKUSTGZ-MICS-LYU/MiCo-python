@@ -49,7 +49,60 @@ def activation_nquant_2d(x: torch.Tensor, qbit = 8):
 def activation_pact_quant(x: torch.Tensor, qbit = 8):
     # Parameterized Clipping Activation for Quantized Neural Networks
     # https://arxiv.org/pdf/1805.06085
+    # TODO: implement PACT
     pass
+
+
+def activation_nquant_group(x: torch.Tensor, qbit: int = 8, mode: str = "max",
+                            dim: int = -1, group_size: int = 32) -> torch.Tensor:
+    """
+    Group-wise symmetric activation quantization.
+    - dim: dimension to group over
+    - group_size: number of contiguous elements per group along 'dim'
+    - mode: "max" (per-group max) for qbit > 2, otherwise "mean"
+    Returns:
+      y: dequantized activation with same shape as x
+    """
+    assert qbit > 0, "qbit should be positive"
+    assert isinstance(group_size, int) and group_size > 0, "group_size must be a positive int"
+
+    ndim = x.dim()
+    dim = dim % ndim
+    n = x.size(dim)
+    assert n % group_size == 0, f"group_size {group_size} must divide size along dim {dim} ({n})"
+
+    # Reshape to expose [num_groups, group_size] along 'dim'
+    num_groups = n // group_size
+    new_shape = list(x.shape)
+    new_shape[dim] = num_groups
+    new_shape.insert(dim + 1, group_size)  # [.., num_groups, group_size, ..]
+    g = x.reshape(new_shape)
+    reduce_dim = dim + 1  # the 'group_size' axis
+
+    if qbit == 1:
+        m = g.abs().mean(dim=reduce_dim, keepdim=True).clamp(min=1e-5)
+        yg = g.sign() * m
+        yg = torch.where(yg == 0.0, -m, yg)
+    elif qbit < 2:
+        m = g.abs().mean(dim=reduce_dim, keepdim=True).clamp(min=1e-5)
+        scale = 1.0 / m
+        yg = (g * scale).round().clamp_(-1, 1) / scale
+    elif qbit == 2:
+        m = g.abs().mean(dim=reduce_dim, keepdim=True).clamp(min=1e-5)
+        scale = 1.0 / m
+        yg = (g * scale).round().clamp_(-2, 1) / scale
+    else:
+        if (mode == "max"):
+            denom = g.abs().amax(dim=reduce_dim, keepdim=True)
+        elif mode == "mean":
+            denom = g.abs().mean(dim=reduce_dim, keepdim=True)
+        else:
+            raise ValueError("Invalid mode")
+        scale = (2**(qbit - 1) - 1) / denom.clamp(min=1e-5)
+        yg = (g * scale).round().clamp_(-(2**(qbit - 1)), 2**(qbit - 1) - 1) / scale
+
+    y = yg.reshape_as(x)
+    return y
 
 def weight_quant1b(w: torch.Tensor):
     # 1-bit quantization
@@ -74,6 +127,60 @@ def weight_quantnb(w: torch.Tensor, qbit = 8, mode = "max"):
         raise ValueError("Invalid mode")
     u = (w * scale).round().clamp_(-(2**(qbit-1)), 2**(qbit-1) - 1)
     return u, 1/scale
+
+def weight_quantnb_group(w: torch.Tensor, qbit: int = 8, mode: str = "max",
+                         dim: int = -1, group_size: int = 32, return_expanded: bool = True):
+    """
+    Group-wise symmetric quantization for qbit >= 2.
+    - dim: dimension to group over
+    - group_size: number of contiguous elements per group along 'dim'
+    - mode: "max" (per-group max) for qbit > 2, otherwise "mean"
+    - return_expanded: if True, inv_scale is expanded to w.shape; else it has one fewer elements along 'dim'
+    Returns:
+      u: integer-quantized weights (same shape as w)
+      inv_scale: inverse scale tensor (broadcastable to w if return_expanded=True)
+    """
+    assert qbit > 1, "qbit should be larger than 1"
+    assert isinstance(group_size, int) and group_size > 0, "group_size must be a positive int"
+
+    # Normalize dim to positive index
+    ndim = w.dim()
+    dim = dim % ndim
+    n = w.size(dim)
+    assert n % group_size == 0, f"group_size {group_size} must divide size along dim {dim} ({n})"
+
+    # Reshape to expose [num_groups, group_size] along 'dim'
+    num_groups = n // group_size
+    new_shape = list(w.shape)
+    new_shape[dim] = num_groups
+    new_shape.insert(dim + 1, group_size)  # [.., num_groups, group_size, ..]
+    x = w.reshape(new_shape)
+
+    reduce_dim = dim + 1  # the 'group_size' axis
+    if (mode == "max") and (qbit > 2):
+        denom = x.abs().amax(dim=reduce_dim, keepdim=True)
+    elif (mode == "mean") or (qbit <= 2):
+        denom = x.abs().mean(dim=reduce_dim, keepdim=True)
+    else:
+        raise ValueError("Invalid mode")
+
+    scale = (2**(qbit - 1) - 1) / denom.clamp(min=1e-5)
+
+    u_group = (x * scale).round().clamp_(-(2**(qbit - 1)), 2**(qbit - 1) - 1)
+    u = u_group.reshape_as(w)
+
+    inv_scale_group = 1.0 / scale
+    if return_expanded:
+        inv_scale = inv_scale_group.expand_as(x).reshape_as(w)
+    else:
+        # Keep one scale per group: shape same as w but with 'group_size' axis collapsed
+        # i.e., shape replaces size 'n' at 'dim' with 'num_groups'
+        squeeze_shape = list(new_shape)
+        # collapse group_size axis
+        squeeze_shape.pop(reduce_dim)
+        inv_scale = inv_scale_group.reshape(squeeze_shape)
+
+    return u, inv_scale
 
 def weight_quant(w: torch.Tensor, qtype, mode = "max"):
     if qtype == 1:
@@ -101,6 +208,7 @@ class BitLinear(nn.Linear):
                  device=None, dtype=None,
                  qat = False,
                  use_norm = False,
+                 group_size = 1,
                  qtype = DEFAULT_W_Q,
                  act_q = DEFAULT_ACT_Q) -> None:
         
@@ -111,6 +219,7 @@ class BitLinear(nn.Linear):
         self.act_l2 = None
         self.in_w = in_features
         self.in_h = 1
+        self.group_size = group_size
 
         self.layer_features = (1, in_features, out_features) # N, M, K
         self.layer_type = 'Linear'
@@ -127,12 +236,27 @@ class BitLinear(nn.Linear):
     def get_params(self):
         return self.weight.numel()
     
+    def act_quant(self, x: torch.Tensor):
+        if self.group_size > 1:
+            return activation_nquant_group(x, self.act_q, dim=-1, group_size=self.group_size)
+        else:
+            return activation_nquant(x, self.act_q)
+
     def weight_quant(self, w: torch.Tensor):
-        u, s = weight_quant(w, self.qtype)
+        if self.group_size > 1:
+            u, s = weight_quantnb_group(w, self.qtype, dim=1, group_size=self.group_size)
+        else:
+            u, s = weight_quant(w, self.qtype)
         return u*s
     
     def save_qweight(self):
-        self.qw, self.qw_scale = weight_quant(self.weight.data, self.qtype)
+        w = self.weight.data
+        if self.group_size > 1:
+            u, s = weight_quantnb_group(w, self.qtype, dim=1, group_size=self.group_size)
+        else:
+            u, s = weight_quant(w, self.qtype)
+        self.qw = u
+        self.qw_scale = s
         return
     
     def export_qweight(self):
@@ -148,17 +272,17 @@ class BitLinear(nn.Linear):
         w = self.weight
         if self.qat:
             # Forward with Quantization Aware Training (QAT)
-            # Using Straight-Through-Estimator (STE) 
+            # Using Straight-Through-Estimator (STE)
             x_norm = SimpleRMSNorm(self.in_features)(x) if self.use_norm else x
-            x_quant = x_norm + (activation_nquant(x_norm, self.act_q) - x_norm).detach()
+            x_quant = x_norm + (self.act_quant(x_norm) - x_norm).detach()
             w_quant = w + (self.weight_quant(w) - w).detach()
             y = F.linear(x_quant, w_quant, bias=self.bias)
             return y
         elif self.qforward is True:
             # Forward with Post Training Quantization (PTQ)
             # Only for inference
-            qx = activation_nquant(x, self.act_q)
-            y = F.linear(qx, self.qw, bias=self.bias) * self.qw_scale
+            qx = self.act_quant(x)
+            y = F.linear(qx, self.qw * self.qw_scale, bias=self.bias)
             return y
         else:
             return F.linear(x, w, bias=self.bias)

@@ -27,14 +27,18 @@ class MiCoModel(nn.Module):
     def get_qlayers(self):
         return list_quantize_layers(self)
 
-    def set_qscheme(self, qscheme, qat=False, device=device, use_bias = True, use_norm = False):
+    def set_qscheme(self, qscheme, qat=False, device=device, group_size = 1, use_bias = True, use_norm = False):
         replace_quantize_layers(self, qscheme[0], qscheme[1], 
-                                quant_aware=qat, 
+                                quant_aware=qat, group_size=group_size,
                                 device=device, use_bias=use_bias, use_norm=use_norm)
         if not qat:
             set_to_qforward(self)
         return
     
+    def unset_qscheme(self):
+        unset_qforward(self)
+        return
+
     def set_qscheme_torchao(self, qscheme,device=device):
         unset_qforward(self)
         replace_quantize_layers_torchao(self, qscheme[0], qscheme[1], device=device)
