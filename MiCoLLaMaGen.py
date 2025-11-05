@@ -99,9 +99,14 @@ def mico_export(model: Transformer, filepath: str,
         if isinstance(linear, BitLinear):
             out_file.write(struct.pack('b', linear.qtype))
             out_file.write(struct.pack('b', linear.act_q))
-    if out_file.tell() % 4 != 0:
-        pad = 4 - out_file.tell() % 4
-        out_file.write(b'\0' * pad)
+
+    # Record Global alignment
+    pad_bytes = 64 # 512
+    if out_file.tell() % pad_bytes != 0:
+        pad = pad_bytes - out_file.tell() % pad_bytes
+        print(f"Padding {pad} bytes...")
+        out_file.write(struct.pack('b', pad)) # Write the padding offset here
+        out_file.write(b'\0' * (pad-1))
     
     ws_buffer = []
 
@@ -141,12 +146,13 @@ def mico_export(model: Transformer, filepath: str,
 
 if __name__ == "__main__":
     from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa7M, TinyLLaMa28M
-    
-    model_path = "output/ckpt/llama_tiny_1M.pth"
-    bin_path = "project/llama2/llama_1M_W8A8.bin"
+
+    model_path = "output/ckpt/llama_tiny_3M.pth"
+    # bin_path = "project/llama2/llama_3M_W8A8_1layer.bin"
+    bin_path = "project/llama2/llama_3M_W8A8.bin"
 
     ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
-    model = TinyLLaMa1M()
+    model = TinyLLaMa3M()
     model.load_state_dict(ckpt["model"])
     model.eval()
     qscheme = [

@@ -232,7 +232,6 @@ size_t init_quant_weight(DataType* w, char* ptr, int n_layers, int n, int m){
     for (int i = 0; i < n_layers; i++) {
         w[i].shape[0] = n;
         w[i].shape[1] = m;
-        w[i].scale = *(float*)ptr;
         ptr += sizeof(float);
         w[i].data = (WeightType*) ptr;
         ptr += n * m * sizeof(WeightType) / (8 / w[i].wq);
@@ -297,9 +296,6 @@ void* init_qschemes(
     wq->w3_qtype = (qtype*)ptr;
     ptr += 2 * n_layers * sizeof(qtype);
 
-    if ((size_t)ptr % 4 != 0) {
-        ptr += 4 - ((size_t)ptr % 4);
-    }
     return ptr;
 }
 
@@ -440,6 +436,8 @@ void read_checkpoint(Config* config, TransformerWeights* weights, TransformerQSc
     weights_ptr = init_float_params(weights, config, weights_ptr, shared_weights);
     #ifdef QUANTIZED
     weights_ptr = init_qschemes(qsheme, config, weights_ptr);
+    unsigned char pad = *(unsigned char*)weights_ptr;
+    weights_ptr += pad;
     #endif
     memory_map_weights(weights, qsheme, config, weights_ptr, shared_weights);
 }
