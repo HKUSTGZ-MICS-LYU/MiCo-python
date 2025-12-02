@@ -293,10 +293,10 @@ def weight_export(weight: torch.Tensor, qtype: int, align_to=32):
         weight_groups = weight_np.reshape(-1, 8)
         # Create sign bits: 1 if negative, 0 otherwise
         sign_bits = (weight_groups < 0).astype(np.uint8)
-        # Pack 8 bits into one byte using vectorized operations
-        packed = np.zeros(len(weight_groups), dtype=np.uint8)
-        for b in range(8):
-            packed |= (sign_bits[:, b] << b)
+        # Pack 8 bits into one byte using fully vectorized operations with dot product
+        # Bit positions: [1, 2, 4, 8, 16, 32, 64, 128] = [2^0, 2^1, ..., 2^7]
+        bit_positions = np.array([1, 2, 4, 8, 16, 32, 64, 128], dtype=np.uint8)
+        packed = np.dot(sign_bits, bit_positions).astype(np.uint8)
         return packed.tobytes()
     else:
         raise NotImplementedError(f"Quantization type {qtype} not supported")

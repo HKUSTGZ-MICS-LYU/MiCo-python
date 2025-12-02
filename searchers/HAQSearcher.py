@@ -69,7 +69,8 @@ class HAQSearcher(QSearcher):
                     m.in_w*m.in_h,  # input feature_map_size
                 ]
             else:
-                continue  # Skip unsupported layer types
+                # Skip unsupported layer types - this_state won't be used
+                continue
             this_state.extend([i, 1., 1.])  # index, bits, action radio button
             layer_embedding.append(this_state)
 
