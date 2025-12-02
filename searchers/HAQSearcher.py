@@ -47,38 +47,44 @@ class HAQSearcher(QSearcher):
     def build_embedding(self):
         layer_embedding = []
         for i in range(len(self.mpq.layers)):
-            this_state = []
             m = self.mpq.layers[i]
             if isinstance(m, nn.Conv2d):
-                this_state.append([int(m.in_channels == m.groups)])  # layer type, 1 for conv_dw
-                this_state.append([m.in_channels])  # in channels
-                this_state.append([m.out_channels])  # out channels
-                this_state.append([m.stride[0]])  # stride
-                this_state.append([m.kernel_size[0]])  # kernel size
-                this_state.append([np.prod(m.weight.size())])  # weight size
-                this_state.append([m.in_w*m.in_h])  # input feature_map_size
+                this_state = [
+                    int(m.in_channels == m.groups),  # layer type, 1 for conv_dw
+                    m.in_channels,  # in channels
+                    m.out_channels,  # out channels
+                    m.stride[0],  # stride
+                    m.kernel_size[0],  # kernel size
+                    np.prod(m.weight.size()),  # weight size
+                    m.in_w*m.in_h,  # input feature_map_size
+                ]
             elif isinstance(m, nn.Linear):
-                this_state.append([0.])  # layer type, 0 for fc
-                this_state.append([m.in_features])  # in channels
-                this_state.append([m.out_features])  # out channels
-                this_state.append([0.])  # stride
-                this_state.append([1.])  # kernel size
-                this_state.append([np.prod(m.weight.size())])  # weight size
-                this_state.append([m.in_w*m.in_h])  # input feature_map_size
-            this_state.append([i])  # index
-            this_state.append([1.])  # bits, 1 is the max bit
-            this_state.append([1.])  # action radio button, 1 is the weight action
-            layer_embedding.append(np.hstack(this_state))
+                this_state = [
+                    0.,  # layer type, 0 for fc
+                    m.in_features,  # in channels
+                    m.out_features,  # out channels
+                    0.,  # stride
+                    1.,  # kernel size
+                    np.prod(m.weight.size()),  # weight size
+                    m.in_w*m.in_h,  # input feature_map_size
+                ]
+            else:
+                continue  # Skip unsupported layer types
+            this_state.extend([i, 1., 1.])  # index, bits, action radio button
+            layer_embedding.append(this_state)
 
-        # normalize the state
-        layer_embedding = np.array(layer_embedding, 'float')
+        # normalize the state using vectorized NumPy operations
+        layer_embedding = np.array(layer_embedding, dtype='float')
         print('=> shape of embedding (n_layer * n_dim): {}'.format(layer_embedding.shape))
         assert len(layer_embedding.shape) == 2, layer_embedding.shape
-        for i in range(layer_embedding.shape[1]):
-            fmin = min(layer_embedding[:, i])
-            fmax = max(layer_embedding[:, i])
-            if fmax - fmin > 0:
-                layer_embedding[:, i] = (layer_embedding[:, i] - fmin) / (fmax - fmin)
+        
+        # Vectorized normalization using NumPy
+        fmin = layer_embedding.min(axis=0)
+        fmax = layer_embedding.max(axis=0)
+        denom = fmax - fmin
+        # Avoid division by zero by only normalizing columns with non-zero range
+        mask = denom > 0
+        layer_embedding[:, mask] = (layer_embedding[:, mask] - fmin[mask]) / denom[mask]
 
         self.layer_embedding = layer_embedding
         return

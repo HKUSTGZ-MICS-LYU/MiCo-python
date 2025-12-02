@@ -2,8 +2,6 @@ import random
 import itertools
 import numpy as np
 
-import copy
-
 def random_sample(n_samples: int, qtypes:list, dims:int):
     X = np.random.choice(qtypes, (n_samples, dims)).tolist()
     return X
@@ -23,12 +21,19 @@ def random_sample_min_max(n_samples: int, qtypes: list, dims: int):
 def grid_sample(n_samples: int, qtypes: list, dims: int):
     
     X = []
+    X_set = set()  # Use set for O(1) membership testing
+    
     # Max Bitwidth Result
     max_bw = max(qtypes)
-    X.append([max_bw] * dims)
+    x_max = [max_bw] * dims
+    X.append(x_max)
+    X_set.add(tuple(x_max))
+    
     if n_samples - 1 > 0:
         min_bw = min(qtypes)
-        X.append([min_bw] * dims)
+        x_min = [min_bw] * dims
+        X.append(x_min)
+        X_set.add(tuple(x_min))
 
     remain = n_samples - 2
     n_layers = dims // 2
@@ -61,8 +66,10 @@ def grid_sample(n_samples: int, qtypes: list, dims: int):
             x[sel] = random.choice(qtypes_l_max)
             x[sel+n_layers] = random.choice(qtypes_l_max)
 
-        if x not in X:
+        x_tuple = tuple(x)
+        if x_tuple not in X_set:
             X.append(x)
+            X_set.add(x_tuple)
     return X
 
 def dist_to_roi(x, constr_func, constr_value, roi):
@@ -89,61 +96,62 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
     gen = 0
     n_layers = dims // 2
 
-    min_scheme = [min(qtypes)] * dims
-    min_scheme[0] = max(qtypes)
-    min_scheme[n_layers] = max(qtypes)
-    min_scheme[n_layers - 1] = max(qtypes)
-    min_scheme[-1] = max(qtypes)
+    # Cache min/max to avoid repeated computation
+    min_q = min(qtypes)
+    max_q = max(qtypes)
+
+    min_scheme = [min_q] * dims
+    min_scheme[0] = max_q
+    min_scheme[n_layers] = max_q
+    min_scheme[n_layers - 1] = max_q
+    min_scheme[-1] = max_q
 
     if constr_func is not None:
         keep_first_last = constr_func(min_scheme) < constr_value
-        min_scheme[n_layers - 1] = min(qtypes)
-        min_scheme[-1] = min(qtypes)
+        min_scheme[n_layers - 1] = min_q
+        min_scheme[-1] = min_q
         keep_first = constr_func(min_scheme) < constr_value
     else:
         keep_first_last = True
         keep_first = True
 
+    # Use a set for O(1) membership testing (convert lists to tuples for hashing)
+    pop_set = {tuple(p) for p in pop}
+
     while True:
         # Generate Next Generation
         while len(pop) < n_samples*2:
             pair = random.sample(pop, 2)
-            sample = copy.deepcopy(pair[0])
+            # Use list slicing instead of deepcopy (faster for simple lists)
+            sample = pair[0][:]
             for i in range(dims):
                 if random.random() < 0.1:
                     sample[i] = pair[1][i]
                     
             for i in range(dims):
                 if random.random() < 0.1:
-                    q = random.choice(qtypes)
-                    sample[i] = q
+                    sample[i] = random.choice(qtypes)
 
             # Heuristic: Keep First and Last Layer at High Bitwidth
             if keep_first_last:
                 if random.random() < 0.5:
-                    sample[0] = max(qtypes)
-                    sample[n_layers] = max(qtypes)
+                    sample[0] = max_q
+                    sample[n_layers] = max_q
                 if random.random() < 0.5:
-                    sample[n_layers - 1] = max(qtypes)
-                    sample[-1] = max(qtypes)
+                    sample[n_layers - 1] = max_q
+                    sample[-1] = max_q
             elif keep_first:
                 if random.random() < 0.5:
-                    sample[0] = max(qtypes)
-                    sample[n_layers] = max(qtypes)
+                    sample[0] = max_q
+                    sample[n_layers] = max_q
 
-            # Heuristic: Swap Activation and Weight Bitwidth
-            # for i in range(n_layers):
-            #     # if Weight Bitwidth is more than Activation Bitwidth
-            #     if sample[i] > sample[i+n_layers]:
-            #         if random.random() < (1.0 - sample[i+n_layers]/ sample[i]):
-            #             bitwidth = sample[i]
-            #             sample[i] = sample[i+n_layers]
-            #             sample[i+n_layers] = bitwidth
-            
-            if sample in pop:
+            # Use set for O(1) membership check
+            sample_tuple = tuple(sample)
+            if sample_tuple in pop_set:
                 continue
 
             pop.append(sample)
+            pop_set.add(sample_tuple)
 
         # rank to get near to constraint
         pop = sorted(
@@ -152,6 +160,8 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
         )
 
         pop = pop[:n_samples]
+        # Update set to match trimmed population
+        pop_set = {tuple(p) for p in pop}
 
         if dist_to_roi(pop[-1], constr_func, constr_value, roi) == 0.0:
             break

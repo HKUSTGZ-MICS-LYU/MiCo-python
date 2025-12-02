@@ -242,6 +242,8 @@ def weight_export(weight: torch.Tensor, qtype: int, align_to=32):
     Returns:
         Binary packed data
     """
+    import numpy as np
+    
     # For 2D weights, ensure K dimension is aligned
     if len(weight.shape) > 1:
         print(f"Exporting Weight shape: {weight.shape}")
@@ -250,62 +252,52 @@ def weight_export(weight: torch.Tensor, qtype: int, align_to=32):
         if K % align_to != 0:
             # Calculate padding needed
             pad_size = align_to - (K % align_to)
-            # Create padded weight array
-            padded_weight = torch.zeros((M, K + pad_size), dtype=weight.dtype)
-            padded_weight[:, :K] = weight
-            print(f"Padding weight from {weight.shape} to {padded_weight.shape}")
-            # Flatten for processing
-            weight = padded_weight.flatten()
-        else:
-            # Flatten the already aligned weight
-            weight = weight.flatten()
-    weight = weight.cpu().to(int).tolist()
+            # Use torch.nn.functional.pad for efficient padding
+            weight = torch.nn.functional.pad(weight, (0, pad_size), mode='constant', value=0)
+            print(f"Padded weight to shape {weight.shape}")
+        # Flatten the weight
+        weight = weight.flatten()
+    
+    # Convert to NumPy array for efficient processing
+    weight_np = weight.cpu().to(torch.int32).numpy()
+    
     # Process based on quantization type
     if qtype == 8:
-        return struct.pack(f'{len(weight)}b', *weight)
+        return weight_np.astype(np.int8).tobytes()
     elif qtype == 4:
-        data = []
-        num_loop = len(weight) // 2
-        for i in range(num_loop):
-            w = ((weight[i*2+1] & 0xF) << 4) | (weight[i*2] & 0xF)
-            data.append(w)
-        if len(weight) % 2 == 1:
-            w = weight[-1] & 0xF
-            data.append(w)
-        return struct.pack(f'{len(data)}B', *data)
-    elif (qtype == 2) or (qtype > 1 and qtype < 2): # Ternary (1.58b) treated as 2b
-        data = []
-        num_loop = len(weight) // 4
-        for i in range(num_loop):
-            w = (weight[i*4] & 0x3) | \
-                ((weight[i*4+1] & 0x3) << 2) | \
-                ((weight[i*4+2] & 0x3) << 4) | \
-                ((weight[i*4+3] & 0x3) << 6)
-            data.append(w)
-        rem = len(weight) % 4
+        # Pad to even length if necessary
+        if len(weight_np) % 2 == 1:
+            weight_np = np.append(weight_np, 0)
+        # Reshape to pairs and pack using vectorized operations
+        weight_pairs = weight_np.reshape(-1, 2)
+        packed = ((weight_pairs[:, 1] & 0xF) << 4) | (weight_pairs[:, 0] & 0xF)
+        return packed.astype(np.uint8).tobytes()
+    elif (qtype == 2) or (qtype > 1 and qtype < 2):  # Ternary (1.58b) treated as 2b
+        # Pad to multiple of 4 if necessary
+        rem = len(weight_np) % 4
         if rem != 0:
-            w = 0
-            for i in range(rem):
-                w |= (weight[-rem+i] & 0x3) << (i*2)
-            data.append(w)
-        return struct.pack(f'{len(data)}B', *data)
+            weight_np = np.append(weight_np, np.zeros(4 - rem, dtype=weight_np.dtype))
+        # Reshape to groups of 4 and pack using vectorized operations
+        weight_groups = weight_np.reshape(-1, 4)
+        packed = ((weight_groups[:, 0] & 0x3) |
+                  ((weight_groups[:, 1] & 0x3) << 2) |
+                  ((weight_groups[:, 2] & 0x3) << 4) |
+                  ((weight_groups[:, 3] & 0x3) << 6))
+        return packed.astype(np.uint8).tobytes()
     elif qtype == 1:
-        data = []
-        num_loop = len(weight) // 8
-        for i in range(num_loop):
-            binary = ""
-            for b in range(8):
-                binary += "1" if weight[i*8+b] < 0 else "0"
-            data.append(int(binary[::-1], 2))
-        rem = len(weight) % 8
+        # Pad to multiple of 8 if necessary
+        rem = len(weight_np) % 8
         if rem != 0:
-            binary = ""
-            for b in range(rem):
-                binary += "1" if weight[-rem+b] < 0 else "0"
-            for b in range(8-rem):
-                binary += "0"
-            data.append(int(binary[::-1], 2))
-        return struct.pack(f'{len(data)}B', *data)
+            weight_np = np.append(weight_np, np.zeros(8 - rem, dtype=weight_np.dtype))
+        # Reshape to groups of 8 and pack using vectorized operations
+        weight_groups = weight_np.reshape(-1, 8)
+        # Create sign bits: 1 if negative, 0 otherwise
+        sign_bits = (weight_groups < 0).astype(np.uint8)
+        # Pack 8 bits into one byte using vectorized operations
+        packed = np.zeros(len(weight_groups), dtype=np.uint8)
+        for b in range(8):
+            packed |= (sign_bits[:, b] << b)
+        return packed.tobytes()
     else:
         raise NotImplementedError(f"Quantization type {qtype} not supported")
 

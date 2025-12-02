@@ -142,10 +142,11 @@ class MiCoEval:
         # assert self.misc_proxy is not None, "Misc Proxy not set."
         self.misc_latency = 0.0
 
-        ignored_misc = ["memcpy", 
+        # Use set for O(1) membership testing
+        ignored_misc = {"memcpy", 
                         "MiCo_flatten2d_f32", 
                         "MiCo_relu4d_f32",
-                        "MiCo_relu2d_f32"]
+                        "MiCo_relu2d_f32"}
 
         gen_model = deepcopy(self.model)
         gen_model = fuse_model(gen_model)

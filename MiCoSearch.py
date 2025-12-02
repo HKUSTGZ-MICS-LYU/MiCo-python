@@ -337,13 +337,19 @@ class MiCoSearch:
             constr_size = self.get_model_size([[8]*self.n_layers, [8]*self.n_layers])
 
         subspace = []
+        # Use set for O(1) membership testing
+        subspace_set = set()
+        
         # Constrain AQ >= WQ
         constr_q = [q for q in self.layer_q if q[0] <= q[1]] if prune else self.layer_q
         # Insert Uniform Base Samples
         for q in constr_q:
             sample = [q] * self.n_layers
             sample = self.tuple_to_sample(sample)
+            sample_key = (tuple(sample[0]), tuple(sample[1]))
             subspace.append(sample)
+            subspace_set.add(sample_key)
+            
         constr_space = []
         for sample in subspace:
             bops = self.get_bops(sample, use_max_q)
@@ -355,21 +361,27 @@ class MiCoSearch:
         while len(subspace) < min_space_size:
             sample = random.choices(constr_q, k=self.n_layers)
             sample = self.tuple_to_sample(sample)
-            if sample in subspace:
+            sample_key = (tuple(sample[0]), tuple(sample[1]))
+            if sample_key in subspace_set:
                 continue
             if self.get_bops(sample, use_max_q) >= constr_bops*(1-roi_range):
                 subspace.append(sample)
+                subspace_set.add(sample_key)
         assert(len(subspace) > 1), "Initial Population is too small!"
+        
+        # Cache max(layer_macs) to avoid repeated computation
+        max_layer_macs = max(self.layer_macs)
+        
         gen = 0
         while True:
             # Get Generation
             while len(subspace) < min_space_size*2:
                 pair = random.sample(subspace, 2)
 
-                # Cross Over
-                sample = copy.deepcopy(pair[0])
+                # Cross Over - use list slicing instead of deepcopy
+                sample = [[x for x in pair[0][0]], [x for x in pair[0][1]]]
                 for i in range(self.n_layers):
-                    rand_prob = self.layer_macs[i] / max(self.layer_macs)
+                    rand_prob = self.layer_macs[i] / max_layer_macs
                     if random.random() < rand_prob:
                         sample[0][i] = pair[1][0][i]
                         sample[1][i] = pair[1][1][i]
@@ -380,15 +392,20 @@ class MiCoSearch:
                         q = random.choice(constr_q)
                         sample[0][i] = q[0]
                         sample[1][i] = q[1]
-                if sample in subspace:
+                        
+                sample_key = (tuple(sample[0]), tuple(sample[1]))
+                if sample_key in subspace_set:
                     continue
                 subspace.append(sample)
+                subspace_set.add(sample_key)
             # Ranking
             subspace = sorted(
                 subspace, 
                 key=lambda x: self.dist_to_roi(x, constr_bops, roi_range)
                 )
             subspace = subspace[:min_space_size]
+            # Update set to match trimmed population
+            subspace_set = {(tuple(s[0]), tuple(s[1])) for s in subspace}
             if self.dist_to_roi(subspace[-1], constr_bops, 
                                 roi_range) == 0:
                 # Complete

@@ -580,10 +580,11 @@ void model_forward(Model* model) {{
                     if qbit == 0:
                         self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
                         self.weight_content += tensor.detach().numpy().tobytes()
-                        # If align > 32, we need to align the weight data to the specified alignment
-                        # Currently only consider 64-bit alignment
-                        if len(self.weight_content) % (align_to // 8) != 0:
-                            self.weight_content += b'\x00' * (len(self.weight_content) % (align_to // 8))
+                        # Align weight data to the specified alignment boundary
+                        alignment_bytes = align_to // 8
+                        remainder = len(self.weight_content) % alignment_bytes
+                        if remainder != 0:
+                            self.weight_content += b'\x00' * (alignment_bytes - remainder)
                     else:
                         qweight, scale = weight_quant(tensor, qbit)
                         self.model_init.append(f"model->{name}.data = (qbyte *)(model_weight_data + {len(self.weight_content)});")
