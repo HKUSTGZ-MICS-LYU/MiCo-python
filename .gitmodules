@@ -4,3 +4,6 @@
 [submodule "hw/bitfusion"]
 	path = hw/bitfusion
 	url = git@github.com:HKUSTGZ-MICS-LYU/bitfusion.git
+[submodule "project"]
+	path = project
+	url = git@github.com:HKUSTGZ-MICS-LYU/MiCo-SW.git
