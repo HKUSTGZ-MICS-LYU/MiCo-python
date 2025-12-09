@@ -262,12 +262,18 @@ class BitLinear(nn.Linear):
     def export_qweight(self):
         # Export quantized weight in binary format
         scale = self.qw_scale
+        scale_shape = None
         if isinstance(scale, torch.Tensor):
-            scale = scale.cpu().tolist()
+            if scale.dim() == 0:
+                scale = scale.item()
+            else:
+                scale_shape = list(scale.shape)
+                scale = scale.cpu().tolist()
         return {"LayerType": "Linear",
                 "QType": self.qtype, 
                 "ActQType": self.act_q,
                 "Scale": scale,
+                "ScaleShape": scale_shape,
                 "GroupSize": self.group_size,
                 "Weight": self.qw.cpu().tolist()}
     

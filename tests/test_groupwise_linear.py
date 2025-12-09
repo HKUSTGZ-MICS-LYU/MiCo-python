@@ -16,6 +16,7 @@ class GroupwiseBitLinearExportTest(unittest.TestCase):
         self.assertEqual(exported["GroupSize"], 4)
         scale = torch.tensor(exported["Scale"])
         self.assertEqual(scale.shape, layer.qw_scale.shape)
+        self.assertEqual(exported["ScaleShape"], list(layer.qw_scale.shape))
         self.assertEqual(exported["Weight"], layer.qw.cpu().tolist())
 
     def test_non_groupwise_export_keeps_scalar_scale(self):
@@ -26,6 +27,7 @@ class GroupwiseBitLinearExportTest(unittest.TestCase):
 
         self.assertIsInstance(exported["Scale"], (float, int))
         self.assertEqual(exported["GroupSize"], 1)
+        self.assertIsNone(exported["ScaleShape"])
 
 
 if __name__ == "__main__":
