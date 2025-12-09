@@ -269,8 +269,8 @@ class BitLinear(nn.Linear):
             else:
                 scale_shape = list(scale.shape)
                 scale = scale.cpu().tolist()
-        elif isinstance(scale, (float, int)):
-            scale_shape = None
+        elif not isinstance(scale, (float, int)):
+            raise TypeError(f"Unsupported scale type: {type(scale)}")
         return {"LayerType": "Linear",
                 "QType": self.qtype, 
                 "ActQType": self.act_q,
