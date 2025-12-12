@@ -12,6 +12,7 @@ import subprocess
 
 from MiCoQLayers import BitConv2d, BitLinear, weight_quant
 from MiCoUtils import weight_export, fuse_model, fuse_model_seq, get_model_macs
+from MiCoRegistry import MiCoOpRegistry
 
 from models.LLaMa import TransformerBlock
 '''
@@ -256,6 +257,26 @@ void model_forward(Model* model) {{
     
         self.model_forward.append(f"{function_name}({arg_list_str});")
     
+    def _extract_input_names(self, n: torch.fx.node.Node) -> List[str]:
+        """
+        Extract input tensor names from a node.
+        
+        Args:
+            n: The FX node to extract input names from.
+            
+        Returns:
+            List of input tensor names.
+        """
+        input_names = []
+        for node in self.node_info[n.name][0]:
+            if type(node) is int:
+                pass
+            elif type(node) is torch.fx.immutable_collections.immutable_list:
+                input_names += [i.name for i in node]
+            else:
+                input_names.append(node.name)
+        return input_names
+    
 
     def handle_placeholder(self, n: torch.fx.node.Node, out: torch.Tensor):
         print("placeholder:", n.name)
@@ -268,97 +289,24 @@ void model_forward(Model* model) {{
     def handle_call_function(self, n: torch.fx.node.Node, out: torch.Tensor):
         """
         Handle the case where the node is a call to a torch function (e.g. relu, elu, etc.)
+        Uses the registry pattern to look up handlers for operations.
         """
         print("call function:", n.name, n.target, n.args)
 
         # get all the related information
         function = n.target
-        layer_name = n.name
-        input_names = []
-        for node in self.node_info[n.name][0]:
-            # print(n, type(n))
-            if type(node) is int:
-                pass
-            elif type(node) is torch.fx.immutable_collections.immutable_list:
-                input_names += [i.name for i in node]
-            else:
-                input_names.append(node.name)
-        
+        input_names = self._extract_input_names(n)
         input_args = n.args
         
-        # Math operations - Pointwise Ops
-        if function == operator.__add__ or function == torch.add:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_add{dim}d_{dtype}", out, layer_name, input_names)
-        
-        elif function == operator.__mul__:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_mul{dim}d_{dtype}", out, layer_name, input_names)
-        
-        # Convolution Layers
-
-        # Non-linear Activations
-        elif function == torch.nn.functional.relu:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_relu{dim}d_{dtype}", out, layer_name, input_names)
-        
-        elif function == torch.nn.functional.relu6:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_relu6{dim}d_{dtype}", out, layer_name, input_names)
-        
-        elif function == torch.nn.functional.tanh:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_tanh{dim}d_{dtype}", out, layer_name, input_names)
-        
-        # Linear Layers
-        elif function == torch.nn.functional.linear:
-            weight = self.model.state_dict()[input_args[1].target]
-            bias = self.model.state_dict()[input_args[2].target]
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{input_names[1]}", weight)
-            self.add_initialized_tensor(f"{input_names[2]}", bias)
-            self.add_forward_call("MiCo_addmm_{dtype}", out, layer_name, input_names)
-        
-        # Pooling Functions
-        elif function == torch.nn.functional.avg_pool2d:
-            self.add_uninitialized_tensor(layer_name, out)
-            if isinstance(input_args[1], Tuple):
-                kernel_size = input_args[1][0]
-            elif isinstance(input_args[1], int):
-                kernel_size = input_args[1]
-            if len(input_args) > 2:
-                stride = input_args[2]
-            else:
-                stride = 1
-            self.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
-                                  [kernel_size, stride])
-        elif function == torch.nn.functional.max_pool2d:
-            self.add_uninitialized_tensor(layer_name, out)
-            if isinstance(input_args[1], Tuple):
-                kernel_size = input_args[1][0]
-            elif isinstance(input_args[1], int):
-                kernel_size = input_args[1]
-            if len(input_args) > 2:
-                stride = input_args[2]
-            else:
-                stride = 1
-            self.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names,
-                                  [kernel_size, stride])
-        elif function == torch.nn.functional.adaptive_avg_pool2d:
-            self.add_uninitialized_tensor(layer_name, out)
-            if isinstance(input_args[1], Tuple):
-                output_size = input_args[1][0]
-            elif isinstance(input_args[1], int):
-                output_size = input_args[1]
-            self.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
-
-        elif function == torch.flatten:
-            self.add_connect_tensor(layer_name, out)
-            self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
-        
-        elif function == torch.cat:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_concat{dim}d_{dtype}", out, layer_name, input_names)
+        # Try to get a registered handler for this function
+        handler = MiCoOpRegistry.get_function_handler(function)
+        if handler:
+            handler(self, n, out, input_names, input_args)
+        else:
+            raise NotImplementedError(
+                f"Function {function} is not registered. "
+                f"Use @MiCoOpRegistry.register_function({function}) to add support."
+            )
         
     def handle_call_method(self, n: torch.fx.node.Node, out: torch.Tensor):
         print("call method:", n.name, n.target)
@@ -373,144 +321,31 @@ void model_forward(Model* model) {{
             raise NotImplementedError()
 
     def handle_call_module(self, n: torch.fx.node.Node, out: torch.Tensor):
+        """
+        Handle the case where the node is a call to a torch module.
+        Uses the registry pattern to look up handlers for operations.
+        """
         print("call module:", n.name, n.target)
 
         module = self.get_module(n.target)
         layer_name = n.name
         input_names = [n.name for n in self.node_info[n.name][0]]
 
-        # Convolution Layers
-        if type(module) is BitConv2d:
-            weight = module.weight
-            bias = module.bias
-            input_names.append(f"{layer_name}_weight")
-            input_names.append(f"{layer_name}_bias")
-
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{layer_name}_weight", weight, 
-                                        quant=module.qtype, scale=module.qw_scale)
-            self.add_initialized_tensor(f"{layer_name}_bias", bias)
-
-            self.add_forward_call("MiCo_bitconv2d_{dtype}", out, layer_name, input_names, [
-                round(module.qtype),
-                round(module.act_q),
-                module.stride[0],   # assume same stride for both dimensions
-                module.padding[0],  # assume same padding for both dimensions
-                module.dilation[0], # assume same dilation for both dimensions
-                module.groups,
-                self.align_to
-            ])
-        elif type(module) is BitLinear:
-            weight = module.weight
-            bias = module.bias
-            input_names.append(f"{layer_name}_weight")
-            input_names.append(f"{layer_name}_bias")
-
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{layer_name}_weight", weight, 
-                                        quant=module.qtype, scale=module.qw_scale)
-            self.add_initialized_tensor(f"{layer_name}_bias", bias)
-
-            self.add_forward_call("MiCo_bitlinear_{dtype}", out, layer_name, input_names, [
-                round(module.qtype),
-                round(module.act_q),
-                self.align_to])
-
-        elif type(module) is torch.nn.Conv2d:
-            weight = module.weight
-            bias = module.bias
-            input_names.append(f"{layer_name}_weight")
-            input_names.append(f"{layer_name}_bias")
-
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{layer_name}_weight", module.weight)
-            self.add_initialized_tensor(f"{layer_name}_bias", module.bias)
-            
-            self.add_forward_call("MiCo_conv2d_{dtype}", out, layer_name, input_names, [
-                module.stride[0],   # assume same stride for both dimensions
-                module.padding[0],  # assume same padding for both dimensions
-                module.dilation[0], # assume same dilation for both dimensions
-                module.groups
-            ])
-
-        # Normalization Layers
-        elif type(module) is torch.nn.BatchNorm2d:
-            input_names.append(f"{layer_name}_weight")
-            input_names.append(f"{layer_name}_bias")
-            input_names.append(f"{layer_name}_running_mean")
-            input_names.append(f"{layer_name}_running_var")
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{layer_name}_weight", module.weight)
-            self.add_initialized_tensor(f"{layer_name}_bias", module.bias)
-            self.add_initialized_tensor(f"{layer_name}_running_mean", module.running_mean)
-            self.add_initialized_tensor(f"{layer_name}_running_var", module.running_var)
-            self.add_forward_call("MiCo_batchnorm2d_{dtype}", out, layer_name, input_names, [module.eps])
-        
-        # Non-linear Activations
-        elif type(module) is torch.nn.ELU:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_elu{dim}d_{dtype}", out, layer_name, input_names, [module.alpha])
-        
-        elif type(module) is torch.nn.ReLU:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_relu{dim}d_{dtype}", out, layer_name, input_names)
-        
-        elif type(module) is torch.nn.ReLU6:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_relu6{dim}d_{dtype}", out, layer_name, input_names)
-        
-        elif type(module) is torch.nn.Tanh:
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_tanh{dim}d_{dtype}", out, layer_name, input_names)
-        # Pooling Functions
-        elif type(module) is torch.nn.AvgPool2d:
-            self.add_uninitialized_tensor(layer_name, out)
-            if isinstance(module.kernel_size, Tuple):
-                kernel_size = module.kernel_size[0]
-            elif isinstance(module.kernel_size, int):
-                kernel_size = module.kernel_size
-            self.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
-                                  [kernel_size, module.stride, module.padding])
-        elif type(module) is torch.nn.MaxPool2d:
-            if isinstance(module.kernel_size, Tuple):
-                kernel_size = module.kernel_size[0]
-            elif isinstance(module.kernel_size, int):
-                kernel_size = module.kernel_size
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
-                                  [kernel_size, module.stride, module.padding])
-        elif type(module) is torch.nn.AdaptiveAvgPool2d:
-            if isinstance(module.output_size, Tuple):
-                output_size = module.output_size[0]
-            elif isinstance(module.output_size, int):
-                output_size = module.output_size
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
-        # Flatten Functions
-        elif type(module) is torch.nn.Flatten:
-            self.add_connect_tensor(layer_name, out)
-            self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
-        # Linear Layers
-        elif type(module) is torch.nn.Linear:
-            weight = module.weight
-            bias = module.bias
-            input_names.append(f"{layer_name}_weight")
-            input_names.append(f"{layer_name}_bias")
-
-            self.add_uninitialized_tensor(layer_name, out)
-            self.add_initialized_tensor(f"{layer_name}_weight", weight)
-            self.add_initialized_tensor(f"{layer_name}_bias", bias)
-            self.add_forward_call("MiCo_linear_{dtype}", out, layer_name, input_names)
-        # Identity Layers
-        elif isinstance(module, (torch.nn.Identity, torch.nn.Dropout)):
-            self.add_connect_tensor(layer_name, out)
-            self.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
-        # Costom Layers with MiCo Implementation
+        # Try to get a registered handler for this module type
+        handler = MiCoOpRegistry.get_module_handler(module)
+        if handler:
+            handler(self, n, out, module, input_names)
+        # Check for custom MiCo_func attribute as fallback
         elif hasattr(module, "MiCo_func"):
             input_names += module.MiCo_func.input_names
             parameters = module.MiCo_func.params
             self.add_uninitialized_tensor(layer_name, out)
             self.add_forward_call(module.MiCo_func.name, out, layer_name, input_names, parameters)
+        else:
+            raise NotImplementedError(
+                f"Module {type(module).__name__} is not registered. "
+                f"Use @MiCoOpRegistry.register_module({type(module).__name__}) to add support."
+            )
 
 
     def handle_output(self, n: torch.fx.node.Node, out: torch.Tensor):
