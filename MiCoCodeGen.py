@@ -269,11 +269,12 @@ void model_forward(Model* model) {{
         """
         input_names = []
         for node in self.node_info[n.name][0]:
-            if type(node) is int:
+            # Skip constants (int, float, bool, str, etc.)
+            if isinstance(node, (int, float, bool, str)):
                 pass
             elif type(node) is torch.fx.immutable_collections.immutable_list:
                 input_names += [i.name for i in node]
-            else:
+            elif hasattr(node, 'name'):
                 input_names.append(node.name)
         return input_names
     
