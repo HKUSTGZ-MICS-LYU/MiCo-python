@@ -269,8 +269,8 @@ void model_forward(Model* model) {{
         """
         input_names = []
         for node in self.node_info[n.name][0]:
-            # Skip constants (int, float, bool, str, etc.)
-            if isinstance(node, (int, float, bool, str)):
+            # Skip constant values (int, float, bool, str, None)
+            if isinstance(node, (int, float, bool, str, type(None))):
                 pass
             elif type(node) is torch.fx.immutable_collections.immutable_list:
                 input_names += [i.name for i in node]
@@ -304,9 +304,12 @@ void model_forward(Model* model) {{
         if handler:
             handler(self, n, out, input_names, input_args)
         else:
+            func_name = getattr(function, '__name__', str(function))
+            func_module = getattr(function, '__module__', '')
+            func_full_name = f"{func_module}.{func_name}" if func_module else func_name
             raise NotImplementedError(
-                f"Function {function} is not registered. "
-                f"Use @MiCoOpRegistry.register_function({function}) to add support."
+                f"Function '{func_full_name}' is not registered. "
+                f"Use @MiCoOpRegistry.register_function() decorator to add support."
             )
         
     def handle_call_method(self, n: torch.fx.node.Node, out: torch.Tensor):
@@ -343,9 +346,11 @@ void model_forward(Model* model) {{
             self.add_uninitialized_tensor(layer_name, out)
             self.add_forward_call(module.MiCo_func.name, out, layer_name, input_names, parameters)
         else:
+            module_type = type(module)
+            module_full_name = f"{module_type.__module__}.{module_type.__name__}"
             raise NotImplementedError(
-                f"Module {type(module).__name__} is not registered. "
-                f"Use @MiCoOpRegistry.register_module({type(module).__name__}) to add support."
+                f"Module '{module_full_name}' is not registered. "
+                f"Use @MiCoOpRegistry.register_module() decorator with the module class to add support."
             )
 
 

@@ -3,6 +3,27 @@ MiCo Operation Registry
 
 This module implements a registry pattern for PyTorch operations,
 allowing extensible code generation without modifying the core MiCoCodeGen class.
+
+Example Usage:
+    
+    # Register a custom function handler
+    from MiCoRegistry import MiCoOpRegistry
+    import torch
+    
+    @MiCoOpRegistry.register_function(torch.sigmoid)
+    def handle_sigmoid(codegen, n, out, input_names, input_args):
+        '''Handler for sigmoid activation function.'''
+        codegen.add_uninitialized_tensor(n.name, out)
+        codegen.add_forward_call("MiCo_sigmoid{dim}d_{dtype}", out, n.name, input_names)
+    
+    # Register a custom module handler
+    @MiCoOpRegistry.register_module(MyCustomLayer)
+    def handle_my_custom_layer(codegen, n, out, module, input_names):
+        '''Handler for MyCustomLayer module.'''
+        layer_name = n.name
+        codegen.add_uninitialized_tensor(layer_name, out)
+        codegen.add_forward_call("MiCo_custom_{dtype}", out, layer_name, input_names,
+                                 [module.some_param])
 """
 
 import operator
@@ -139,9 +160,31 @@ def handle_tanh(codegen, n, out, input_names, input_args):
     codegen.add_forward_call("MiCo_tanh{dim}d_{dtype}", out, n.name, input_names)
 
 
+def _extract_kernel_size(param):
+    """Helper to extract kernel size from tuple or int parameter."""
+    if isinstance(param, Tuple):
+        return param[0]
+    elif isinstance(param, int):
+        return param
+    else:
+        raise ValueError(f"Unexpected kernel_size type: {type(param)}")
+
+
+def _extract_output_size(param):
+    """Helper to extract output size from tuple or int parameter."""
+    if isinstance(param, Tuple):
+        return param[0]
+    elif isinstance(param, int):
+        return param
+    else:
+        raise ValueError(f"Unexpected output_size type: {type(param)}")
+
+
 @MiCoOpRegistry.register_function(torch.nn.functional.linear)
 def handle_linear(codegen, n, out, input_names, input_args):
     """Handler for linear (fully connected) layer function."""
+    if len(input_args) < 3 or not hasattr(input_args[1], 'target') or not hasattr(input_args[2], 'target'):
+        raise ValueError(f"Invalid arguments for linear function: {input_args}")
     weight = codegen.model.state_dict()[input_args[1].target]
     bias = codegen.model.state_dict()[input_args[2].target]
     codegen.add_uninitialized_tensor(n.name, out)
@@ -154,14 +197,8 @@ def handle_linear(codegen, n, out, input_names, input_args):
 def handle_avg_pool2d(codegen, n, out, input_names, input_args):
     """Handler for 2D average pooling function."""
     codegen.add_uninitialized_tensor(n.name, out)
-    if isinstance(input_args[1], Tuple):
-        kernel_size = input_args[1][0]
-    elif isinstance(input_args[1], int):
-        kernel_size = input_args[1]
-    if len(input_args) > 2:
-        stride = input_args[2]
-    else:
-        stride = 1
+    kernel_size = _extract_kernel_size(input_args[1])
+    stride = input_args[2] if len(input_args) > 2 else 1
     codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, n.name, input_names, 
                              [kernel_size, stride])
 
@@ -170,14 +207,8 @@ def handle_avg_pool2d(codegen, n, out, input_names, input_args):
 def handle_max_pool2d(codegen, n, out, input_names, input_args):
     """Handler for 2D max pooling function."""
     codegen.add_uninitialized_tensor(n.name, out)
-    if isinstance(input_args[1], Tuple):
-        kernel_size = input_args[1][0]
-    elif isinstance(input_args[1], int):
-        kernel_size = input_args[1]
-    if len(input_args) > 2:
-        stride = input_args[2]
-    else:
-        stride = 1
+    kernel_size = _extract_kernel_size(input_args[1])
+    stride = input_args[2] if len(input_args) > 2 else 1
     codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, n.name, input_names,
                              [kernel_size, stride])
 
@@ -186,10 +217,7 @@ def handle_max_pool2d(codegen, n, out, input_names, input_args):
 def handle_adaptive_avg_pool2d(codegen, n, out, input_names, input_args):
     """Handler for 2D adaptive average pooling function."""
     codegen.add_uninitialized_tensor(n.name, out)
-    if isinstance(input_args[1], Tuple):
-        output_size = input_args[1][0]
-    elif isinstance(input_args[1], int):
-        output_size = input_args[1]
+    output_size = _extract_output_size(input_args[1])
     codegen.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, n.name, input_names, [output_size])
 
 
@@ -330,10 +358,7 @@ def handle_avgpool2d_module(codegen, n, out, module, input_names):
     """Handler for AvgPool2d module."""
     layer_name = n.name
     codegen.add_uninitialized_tensor(layer_name, out)
-    if isinstance(module.kernel_size, Tuple):
-        kernel_size = module.kernel_size[0]
-    elif isinstance(module.kernel_size, int):
-        kernel_size = module.kernel_size
+    kernel_size = _extract_kernel_size(module.kernel_size)
     codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
                              [kernel_size, module.stride, module.padding])
 
@@ -342,11 +367,8 @@ def handle_avgpool2d_module(codegen, n, out, module, input_names):
 def handle_maxpool2d_module(codegen, n, out, module, input_names):
     """Handler for MaxPool2d module."""
     layer_name = n.name
-    if isinstance(module.kernel_size, Tuple):
-        kernel_size = module.kernel_size[0]
-    elif isinstance(module.kernel_size, int):
-        kernel_size = module.kernel_size
     codegen.add_uninitialized_tensor(layer_name, out)
+    kernel_size = _extract_kernel_size(module.kernel_size)
     codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
                              [kernel_size, module.stride, module.padding])
 
@@ -355,11 +377,8 @@ def handle_maxpool2d_module(codegen, n, out, module, input_names):
 def handle_adaptive_avgpool2d_module(codegen, n, out, module, input_names):
     """Handler for AdaptiveAvgPool2d module."""
     layer_name = n.name
-    if isinstance(module.output_size, Tuple):
-        output_size = module.output_size[0]
-    elif isinstance(module.output_size, int):
-        output_size = module.output_size
     codegen.add_uninitialized_tensor(layer_name, out)
+    output_size = _extract_output_size(module.output_size)
     codegen.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
 
 
