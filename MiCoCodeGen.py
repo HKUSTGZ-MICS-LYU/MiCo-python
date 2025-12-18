@@ -410,7 +410,10 @@ void model_forward(Model* model) {{
             total_with_pooling += pool['size']
         
         print(f"Memory optimization: {total_without_pooling} bytes -> {total_with_pooling} bytes")
-        print(f"Memory saved: {total_without_pooling - total_with_pooling} bytes ({100.0 * (total_without_pooling - total_with_pooling) / total_without_pooling:.1f}%)")
+        if total_without_pooling > 0:
+            saved_bytes = total_without_pooling - total_with_pooling
+            saved_percent = 100.0 * saved_bytes / total_without_pooling
+            print(f"Memory saved: {saved_bytes} bytes ({saved_percent:.1f}%)")
         print(f"Number of memory pools: {len(memory_pools)}")
         
         # === Add memory pool declarations to model struct ===
@@ -458,6 +461,9 @@ void model_forward(Model* model) {{
                     # Use memory pool instead of individual malloc
                     if name in tensor_to_pool:
                         pool_id, offset = tensor_to_pool[name]
+                        # Point tensor data to the memory pool base address
+                        # Multiple tensors can share the same pool if their lifetimes don't overlap
+                        # The offset is currently always 0 since we reuse the entire buffer
                         self.model_init.append(f"model->{name}.data = model->memory_pool_{pool_id};")
                     else:
                         # Fallback to malloc if not in any pool (shouldn't happen normally)
@@ -816,11 +822,13 @@ void model_forward(Model* model) {{
                 
                 if can_reuse:
                     # We can reuse this pool
-                    # Update pool size if needed
+                    # Update pool size if needed (take the maximum size of all tensors using this pool)
                     pool['size'] = max(pool['size'], tensor_size)
                     pool['tensors'].append(tensor_name)
                     pool['intervals'].append((tensor_name, first_use, last_use))
-                    tensor_to_pool[tensor_name] = (pool_id, 0)  # offset is always 0 for reused pools
+                    # Offset is 0 because tensors with non-overlapping lifetimes can reuse
+                    # the same memory starting from the pool's base address
+                    tensor_to_pool[tensor_name] = (pool_id, 0)
                     allocated = True
                     break
             
@@ -832,6 +840,7 @@ void model_forward(Model* model) {{
                     'tensors': [tensor_name],
                     'intervals': [(tensor_name, first_use, last_use)]
                 })
+                # New pool, tensor starts at offset 0
                 tensor_to_pool[tensor_name] = (pool_id, 0)
         
         return memory_pools, tensor_to_pool
