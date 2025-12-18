@@ -380,7 +380,7 @@ void model_forward(Model* model) {{
         return out
 
     def convert(self, output_directory: str = "project", 
-                model_name: str = "model", verbose = False):
+                model_name: str = "model", verbose = False, mem_pool = True):
         """
         Convert the model to a C model.
 
@@ -396,6 +396,36 @@ void model_forward(Model* model) {{
 
         if self.example_inputs is None:
             raise ValueError("No example inputs provided. Please call forward() at least once.")
+
+        # === Compute memory pools for optimized allocation ===
+        memory_pools = []
+        tensor_to_pool = {}
+        if mem_pool:
+            memory_pools, tensor_to_pool = self.allocate_memory_pools()
+        
+        # Calculate total memory savings
+        total_without_pooling = 0
+        total_with_pooling = 0
+        for name, tensor_dict in self.tensors.items():
+            if not tensor_dict.get("initialized", False) and tensor_dict["tensor"] is not None:
+                total_without_pooling += tensor_dict["tensor"].nelement() * tensor_dict["tensor"].element_size()
+        for pool in memory_pools:
+            total_with_pooling += pool['size']
+        if len(memory_pools) > 0:
+            print(f"Memory optimization: {total_without_pooling} bytes -> {total_with_pooling} bytes")
+            if total_without_pooling > 0:
+                saved_bytes = total_without_pooling - total_with_pooling
+                saved_percent = 100.0 * saved_bytes / total_without_pooling
+                print(f"Memory saved: {saved_bytes} bytes ({saved_percent:.1f}%)")
+            print(f"Number of memory pools: {len(memory_pools)}")
+        
+        # === Add memory pool declarations to model struct ===
+        for pool_id, pool in enumerate(memory_pools):
+            self.model_struct.append(f"float *memory_pool_{pool_id};")
+        
+        # === Allocate memory pools in model_init ===
+        for pool_id, pool in enumerate(memory_pools):
+            self.model_init.append(f"model->memory_pool_{pool_id} = (float *)malloc({pool['size']});")
 
         # === Generate the tensor structs and initialize routines for the tensors in the C code. ===
         for name, tensor_dict in self.tensors.items():
@@ -431,8 +461,17 @@ void model_forward(Model* model) {{
                         self.weight_content += weight_export(qweight, qbit, align_to)
                         self.model_init.append(f"model->{name}.scale = {scale};")
                 else:
-                    n_size = tensor.nelement() * tensor.element_size()
-                    self.model_init.append(f"model->{name}.data = (float *)malloc({n_size});")
+                    # Use memory pool instead of individual malloc
+                    if name in tensor_to_pool:
+                        pool_id, offset = tensor_to_pool[name]
+                        # Point tensor data to the memory pool base address
+                        # Multiple tensors can share the same pool if their lifetimes don't overlap
+                        # The offset is currently always 0 since we reuse the entire buffer
+                        self.model_init.append(f"model->{name}.data = model->memory_pool_{pool_id};")
+                    else:
+                        # Fallback to malloc if not in any pool (shouldn't happen normally)
+                        n_size = tensor.nelement() * tensor.element_size()
+                        self.model_init.append(f"model->{name}.data = (float *)malloc({n_size});")
             else:
                 dim = 1
                 dtype_str = "F32"
@@ -679,17 +718,135 @@ void model_forward(Model* model) {{
             return False
 
     
-    def tensor_lifetime(self):
-
+    def compute_tensor_lifetimes(self):
+        """
+        Compute the lifetime of each tensor in the computation graph.
+        
+        Returns:
+            dict: A dictionary mapping tensor names to (first_use, last_use) tuples,
+                  where use is represented by the node index in execution order.
+        """
         dag = self.extract_tensor_dag()
-        footprint = {}
-        for node in dag:
-            footprint[node] = 0
-            for dep in dag[node]:
-                tensor = self.tensors[dep]['tensor']
-                footprint[node] += tensor.element_size() * tensor.nelement()
-        print(footprint)
-        return
+        
+        # Get execution order of nodes
+        node_order = {}
+        idx = 0
+        output_node_idx = None
+        for node in self.graph.nodes:
+            if node.op == 'output':
+                # For output nodes, record which tensors are outputs
+                output_node_idx = idx
+                # Also add the output tensor itself if it exists in self.tensors
+                if node.name in self.tensors:
+                    node_order[node.name] = idx
+                for arg in node.args:
+                    if isinstance(arg, torch.fx.node.Node):
+                        if arg.name not in node_order:
+                            node_order[arg.name] = idx
+                idx += 1
+                continue
+            node_order[node.name] = idx
+            idx += 1
+        
+        # Track when each tensor is first created and last used
+        tensor_lifetimes = {}
+        
+        # Initialize lifetimes: first_use is when tensor is created
+        for node_name, node_idx in node_order.items():
+            if node_name not in self.tensors:
+                continue
+            tensor_info = self.tensors[node_name]
+            # Skip initialized tensors (weights) as they're used throughout
+            if tensor_info.get("initialized", False) and not tensor_info.get("bypass", False):
+                continue
+            tensor_lifetimes[node_name] = [node_idx, node_idx]
+        
+        # Update last_use by checking all dependencies
+        for node_name in node_order:
+            if node_name not in dag:
+                continue
+            node_idx = node_order[node_name]
+            for dep_name in dag[node_name]:
+                if dep_name in tensor_lifetimes:
+                    # Update the last use of the dependency
+                    tensor_lifetimes[dep_name][1] = max(tensor_lifetimes[dep_name][1], node_idx)
+        
+        # Handle output tensors - they must remain alive until the end
+        if output_node_idx is not None:
+            for node in self.graph.nodes:
+                if node.op == 'output':
+                    for arg in node.args:
+                        if isinstance(arg, torch.fx.node.Node) and arg.name in tensor_lifetimes:
+                            tensor_lifetimes[arg.name][1] = output_node_idx  # Keep until output
+        
+        return tensor_lifetimes
+    
+    def allocate_memory_pools(self):
+        """
+        Allocate memory pools for tensors by reusing buffers for non-overlapping lifetimes.
+        
+        Returns:
+            tuple: (memory_pools, tensor_to_pool) where:
+                - memory_pools is a list of (size, tensors_in_pool) tuples
+                - tensor_to_pool maps tensor names to (pool_id, offset_in_pool)
+        """
+        lifetimes = self.compute_tensor_lifetimes()
+        
+        # Collect uninitialized tensors that need memory allocation
+        tensors_to_allocate = []
+        for name, tensor_info in self.tensors.items():
+            # Only allocate memory for uninitialized tensors (activations/intermediates)
+            if not tensor_info.get("initialized", False):
+                if tensor_info["tensor"] is not None:
+                    size = tensor_info["tensor"].nelement() * tensor_info["tensor"].element_size()
+                    if name in lifetimes:
+                        tensors_to_allocate.append((name, size, lifetimes[name][0], lifetimes[name][1]))
+        
+        # Sort tensors by size (descending) for better packing
+        tensors_to_allocate.sort(key=lambda x: x[1], reverse=True)
+        
+        # Memory pools: each pool is a dict with 'size', 'tensors', and 'intervals'
+        memory_pools = []
+        tensor_to_pool = {}  # Maps tensor_name -> (pool_id, offset)
+        
+        # Greedy allocation: for each tensor, find or create a pool
+        for tensor_name, tensor_size, first_use, last_use in tensors_to_allocate:
+            allocated = False
+            
+            # Try to find an existing pool where this tensor can fit
+            for pool_id, pool in enumerate(memory_pools):
+                # Check if this tensor's lifetime overlaps with any tensor in this pool
+                can_reuse = True
+                for existing_tensor, existing_first, existing_last in pool['intervals']:
+                    # Check for overlap: [first_use, last_use] overlaps with [existing_first, existing_last]
+                    if not (last_use < existing_first or first_use > existing_last):
+                        can_reuse = False
+                        break
+                
+                if can_reuse:
+                    # We can reuse this pool
+                    # Update pool size if needed (take the maximum size of all tensors using this pool)
+                    pool['size'] = max(pool['size'], tensor_size)
+                    pool['tensors'].append(tensor_name)
+                    pool['intervals'].append((tensor_name, first_use, last_use))
+                    # Offset is 0 because tensors with non-overlapping lifetimes can reuse
+                    # the same memory starting from the pool's base address
+                    tensor_to_pool[tensor_name] = (pool_id, 0)
+                    allocated = True
+                    break
+            
+            # If no suitable pool found, create a new one
+            if not allocated:
+                pool_id = len(memory_pools)
+                memory_pools.append({
+                    'size': tensor_size,
+                    'tensors': [tensor_name],
+                    'intervals': [(tensor_name, first_use, last_use)]
+                })
+                # New pool, tensor starts at offset 0
+                tensor_to_pool[tensor_name] = (pool_id, 0)
+        
+        return memory_pools, tensor_to_pool
 
 
     def forward(self, *args):
@@ -714,8 +871,8 @@ if __name__ == "__main__":
     torch.manual_seed(0)
 
     # example_input = torch.randn(1, 256) # MNIST Flatten
-    example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
-    # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
+    # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
+    example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
@@ -723,8 +880,8 @@ if __name__ == "__main__":
     # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
 
-    m = LeNet(1)
-    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    # m = LeNet(1)
+    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
@@ -732,9 +889,9 @@ if __name__ == "__main__":
     # m = VGG(in_channels=3, num_class=10)
     # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
-    # m = MobileNetV2(10)
-    # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
-    # m.default_dataset = "CIFAR10"
+    # m = MobileNetV2(100)
+    # ckpt = torch.load("output/ckpt/mobilenetv2_cifar100.pth")
+    # m.default_dataset = "CIFAR100"
 
     # m = SqueezeNet(class_num=10)
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
@@ -744,9 +901,9 @@ if __name__ == "__main__":
     # m.default_dataset = "CIFAR10"
     # ckpt = torch.load("output/ckpt/shuffle_cifar10.pth")
 
-    # m = resnet_alt_8(10)
-    # m.default_dataset = "CIFAR10"
-    # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
+    m = resnet_alt_8(10)
+    m.default_dataset = "CIFAR10"
+    ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
     # m = resnet_alt_18(100)
     # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
@@ -763,6 +920,6 @@ if __name__ == "__main__":
     m.forward(example_input)
     # m.visualize_dag("model_full.png")
     # m.visualize_dag("model_simplified.png", simplified=True)
-    m.convert("project", "model", verbose = True)
+    m.convert("project", "model", verbose = False, mem_pool = True)
     # m.tensor_lifetime()
     # m.build("project", "mico_fpu", "TEST_NUM=1")
