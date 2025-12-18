@@ -7,7 +7,7 @@ import torch
 import sys
 sys.path.insert(0, '/home/runner/work/MiCo-python/MiCo-python')
 
-from models import MLP, LeNet, VGG
+from models import MLP, LeNet, VGG, resnet_alt_8
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
 
@@ -113,6 +113,14 @@ if __name__ == "__main__":
         {'in_channels': 3, 'num_class': 10},
         (1, 3, 32, 32),
         "VGG (CIFAR-10)"
+    ))
+    
+    # Test ResNet8 (non-sequential with skip connections)
+    results.append(test_model_memory(
+        resnet_alt_8,
+        {'n_class': 10},
+        (1, 3, 32, 32),
+        "ResNet8 (CIFAR-10)"
     ))
     
     # Print summary table

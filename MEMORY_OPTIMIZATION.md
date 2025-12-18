@@ -84,6 +84,9 @@ Memory savings achieved on various models:
 | MLP (4 layers) | 2.58 KB | 1.25 KB | 1.33 KB | 51.5% |
 | LeNet (MNIST) | 59.30 KB | 41.34 KB | 17.95 KB | 30.3% |
 | VGG (CIFAR-10) | 1212.08 KB | 576.00 KB | 636.08 KB | 52.5% |
+| ResNet8 (CIFAR-10) | 3150.08 KB | 768.00 KB | 2382.08 KB | 75.6% |
+
+**Note**: ResNet8 is a non-sequential model with skip connections (residual connections), demonstrating that the optimization works correctly even with complex dependency patterns.
 
 ### Example: MLP Memory Pool Usage
 
