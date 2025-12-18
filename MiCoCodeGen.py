@@ -397,6 +397,30 @@ void model_forward(Model* model) {{
         if self.example_inputs is None:
             raise ValueError("No example inputs provided. Please call forward() at least once.")
 
+        # === Compute memory pools for optimized allocation ===
+        memory_pools, tensor_to_pool = self.allocate_memory_pools()
+        
+        # Calculate total memory savings
+        total_without_pooling = 0
+        total_with_pooling = 0
+        for name, tensor_dict in self.tensors.items():
+            if not tensor_dict.get("initialized", False) and tensor_dict["tensor"] is not None:
+                total_without_pooling += tensor_dict["tensor"].nelement() * tensor_dict["tensor"].element_size()
+        for pool in memory_pools:
+            total_with_pooling += pool['size']
+        
+        print(f"Memory optimization: {total_without_pooling} bytes -> {total_with_pooling} bytes")
+        print(f"Memory saved: {total_without_pooling - total_with_pooling} bytes ({100.0 * (total_without_pooling - total_with_pooling) / total_without_pooling:.1f}%)")
+        print(f"Number of memory pools: {len(memory_pools)}")
+        
+        # === Add memory pool declarations to model struct ===
+        for pool_id, pool in enumerate(memory_pools):
+            self.model_struct.append(f"float *memory_pool_{pool_id};")
+        
+        # === Allocate memory pools in model_init ===
+        for pool_id, pool in enumerate(memory_pools):
+            self.model_init.append(f"model->memory_pool_{pool_id} = (float *)malloc({pool['size']});")
+
         # === Generate the tensor structs and initialize routines for the tensors in the C code. ===
         for name, tensor_dict in self.tensors.items():
             initialized = tensor_dict["initialized"]
@@ -431,8 +455,14 @@ void model_forward(Model* model) {{
                         self.weight_content += weight_export(qweight, qbit, align_to)
                         self.model_init.append(f"model->{name}.scale = {scale};")
                 else:
-                    n_size = tensor.nelement() * tensor.element_size()
-                    self.model_init.append(f"model->{name}.data = (float *)malloc({n_size});")
+                    # Use memory pool instead of individual malloc
+                    if name in tensor_to_pool:
+                        pool_id, offset = tensor_to_pool[name]
+                        self.model_init.append(f"model->{name}.data = model->memory_pool_{pool_id};")
+                    else:
+                        # Fallback to malloc if not in any pool (shouldn't happen normally)
+                        n_size = tensor.nelement() * tensor.element_size()
+                        self.model_init.append(f"model->{name}.data = (float *)malloc({n_size});")
             else:
                 dim = 1
                 dtype_str = "F32"
@@ -679,17 +709,132 @@ void model_forward(Model* model) {{
             return False
 
     
-    def tensor_lifetime(self):
-
+    def compute_tensor_lifetimes(self):
+        """
+        Compute the lifetime of each tensor in the computation graph.
+        
+        Returns:
+            dict: A dictionary mapping tensor names to (first_use, last_use) tuples,
+                  where use is represented by the node index in execution order.
+        """
         dag = self.extract_tensor_dag()
-        footprint = {}
-        for node in dag:
-            footprint[node] = 0
-            for dep in dag[node]:
-                tensor = self.tensors[dep]['tensor']
-                footprint[node] += tensor.element_size() * tensor.nelement()
-        print(footprint)
-        return
+        
+        # Get execution order of nodes
+        node_order = {}
+        idx = 0
+        output_node_idx = None
+        for node in self.graph.nodes:
+            if node.op == 'output':
+                # For output nodes, record which tensors are outputs
+                output_node_idx = idx
+                # Also add the output tensor itself if it exists in self.tensors
+                if node.name in self.tensors:
+                    node_order[node.name] = idx
+                for arg in node.args:
+                    if isinstance(arg, torch.fx.node.Node):
+                        if arg.name not in node_order:
+                            node_order[arg.name] = idx
+                idx += 1
+                continue
+            node_order[node.name] = idx
+            idx += 1
+        
+        # Track when each tensor is first created and last used
+        tensor_lifetimes = {}
+        
+        # Initialize lifetimes: first_use is when tensor is created
+        for node_name, node_idx in node_order.items():
+            if node_name not in self.tensors:
+                continue
+            tensor_info = self.tensors[node_name]
+            # Skip initialized tensors (weights) as they're used throughout
+            if tensor_info.get("initialized", False) and not tensor_info.get("bypass", False):
+                continue
+            tensor_lifetimes[node_name] = [node_idx, node_idx]
+        
+        # Update last_use by checking all dependencies
+        for node_name in node_order:
+            if node_name not in dag:
+                continue
+            node_idx = node_order[node_name]
+            for dep_name in dag[node_name]:
+                if dep_name in tensor_lifetimes:
+                    # Update the last use of the dependency
+                    tensor_lifetimes[dep_name][1] = max(tensor_lifetimes[dep_name][1], node_idx)
+        
+        # Handle output tensors - they must remain alive until the end
+        if output_node_idx is not None:
+            for node in self.graph.nodes:
+                if node.op == 'output':
+                    for arg in node.args:
+                        if isinstance(arg, torch.fx.node.Node) and arg.name in tensor_lifetimes:
+                            tensor_lifetimes[arg.name][1] = output_node_idx  # Keep until output
+        
+        return tensor_lifetimes
+    
+    def allocate_memory_pools(self):
+        """
+        Allocate memory pools for tensors by reusing buffers for non-overlapping lifetimes.
+        
+        Returns:
+            tuple: (memory_pools, tensor_to_pool) where:
+                - memory_pools is a list of (size, tensors_in_pool) tuples
+                - tensor_to_pool maps tensor names to (pool_id, offset_in_pool)
+        """
+        lifetimes = self.compute_tensor_lifetimes()
+        
+        # Collect uninitialized tensors that need memory allocation
+        tensors_to_allocate = []
+        for name, tensor_info in self.tensors.items():
+            # Only allocate memory for uninitialized tensors (activations/intermediates)
+            if not tensor_info.get("initialized", False):
+                if tensor_info["tensor"] is not None:
+                    size = tensor_info["tensor"].nelement() * tensor_info["tensor"].element_size()
+                    if name in lifetimes:
+                        tensors_to_allocate.append((name, size, lifetimes[name][0], lifetimes[name][1]))
+        
+        # Sort tensors by size (descending) for better packing
+        tensors_to_allocate.sort(key=lambda x: x[1], reverse=True)
+        
+        # Memory pools: each pool is a dict with 'size', 'tensors', and 'intervals'
+        memory_pools = []
+        tensor_to_pool = {}  # Maps tensor_name -> (pool_id, offset)
+        
+        # Greedy allocation: for each tensor, find or create a pool
+        for tensor_name, tensor_size, first_use, last_use in tensors_to_allocate:
+            allocated = False
+            
+            # Try to find an existing pool where this tensor can fit
+            for pool_id, pool in enumerate(memory_pools):
+                # Check if this tensor's lifetime overlaps with any tensor in this pool
+                can_reuse = True
+                for existing_tensor, existing_first, existing_last in pool['intervals']:
+                    # Check for overlap: [first_use, last_use] overlaps with [existing_first, existing_last]
+                    if not (last_use < existing_first or first_use > existing_last):
+                        can_reuse = False
+                        break
+                
+                if can_reuse:
+                    # We can reuse this pool
+                    # Update pool size if needed
+                    pool['size'] = max(pool['size'], tensor_size)
+                    pool['tensors'].append(tensor_name)
+                    pool['intervals'].append((tensor_name, first_use, last_use))
+                    tensor_to_pool[tensor_name] = (pool_id, 0)  # offset is always 0 for reused pools
+                    allocated = True
+                    break
+            
+            # If no suitable pool found, create a new one
+            if not allocated:
+                pool_id = len(memory_pools)
+                memory_pools.append({
+                    'size': tensor_size,
+                    'tensors': [tensor_name],
+                    'intervals': [(tensor_name, first_use, last_use)]
+                })
+                tensor_to_pool[tensor_name] = (pool_id, 0)
+        
+        return memory_pools, tensor_to_pool
 
 
     def forward(self, *args):
