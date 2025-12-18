@@ -380,7 +380,7 @@ void model_forward(Model* model) {{
         return out
 
     def convert(self, output_directory: str = "project", 
-                model_name: str = "model", verbose = False):
+                model_name: str = "model", verbose = False, mem_pool = True):
         """
         Convert the model to a C model.
 
@@ -398,7 +398,10 @@ void model_forward(Model* model) {{
             raise ValueError("No example inputs provided. Please call forward() at least once.")
 
         # === Compute memory pools for optimized allocation ===
-        memory_pools, tensor_to_pool = self.allocate_memory_pools()
+        memory_pools = []
+        tensor_to_pool = {}
+        if mem_pool:
+            memory_pools, tensor_to_pool = self.allocate_memory_pools()
         
         # Calculate total memory savings
         total_without_pooling = 0
@@ -408,13 +411,13 @@ void model_forward(Model* model) {{
                 total_without_pooling += tensor_dict["tensor"].nelement() * tensor_dict["tensor"].element_size()
         for pool in memory_pools:
             total_with_pooling += pool['size']
-        
-        print(f"Memory optimization: {total_without_pooling} bytes -> {total_with_pooling} bytes")
-        if total_without_pooling > 0:
-            saved_bytes = total_without_pooling - total_with_pooling
-            saved_percent = 100.0 * saved_bytes / total_without_pooling
-            print(f"Memory saved: {saved_bytes} bytes ({saved_percent:.1f}%)")
-        print(f"Number of memory pools: {len(memory_pools)}")
+        if len(memory_pools) > 0:
+            print(f"Memory optimization: {total_without_pooling} bytes -> {total_with_pooling} bytes")
+            if total_without_pooling > 0:
+                saved_bytes = total_without_pooling - total_with_pooling
+                saved_percent = 100.0 * saved_bytes / total_without_pooling
+                print(f"Memory saved: {saved_bytes} bytes ({saved_percent:.1f}%)")
+            print(f"Number of memory pools: {len(memory_pools)}")
         
         # === Add memory pool declarations to model struct ===
         for pool_id, pool in enumerate(memory_pools):
@@ -868,8 +871,8 @@ if __name__ == "__main__":
     torch.manual_seed(0)
 
     # example_input = torch.randn(1, 256) # MNIST Flatten
-    example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
-    # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
+    # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
+    example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
@@ -877,8 +880,8 @@ if __name__ == "__main__":
     # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
 
-    m = LeNet(1)
-    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    # m = LeNet(1)
+    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
@@ -886,9 +889,9 @@ if __name__ == "__main__":
     # m = VGG(in_channels=3, num_class=10)
     # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
-    # m = MobileNetV2(10)
-    # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
-    # m.default_dataset = "CIFAR10"
+    # m = MobileNetV2(100)
+    # ckpt = torch.load("output/ckpt/mobilenetv2_cifar100.pth")
+    # m.default_dataset = "CIFAR100"
 
     # m = SqueezeNet(class_num=10)
     # ckpt = torch.load("output/ckpt/squeeze_cifar10.pth")
@@ -898,9 +901,9 @@ if __name__ == "__main__":
     # m.default_dataset = "CIFAR10"
     # ckpt = torch.load("output/ckpt/shuffle_cifar10.pth")
 
-    # m = resnet_alt_8(10)
-    # m.default_dataset = "CIFAR10"
-    # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
+    m = resnet_alt_8(10)
+    m.default_dataset = "CIFAR10"
+    ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
     # m = resnet_alt_18(100)
     # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
@@ -917,6 +920,6 @@ if __name__ == "__main__":
     m.forward(example_input)
     # m.visualize_dag("model_full.png")
     # m.visualize_dag("model_simplified.png", simplified=True)
-    m.convert("project", "model", verbose = True)
+    m.convert("project", "model", verbose = False, mem_pool = True)
     # m.tensor_lifetime()
     # m.build("project", "mico_fpu", "TEST_NUM=1")
