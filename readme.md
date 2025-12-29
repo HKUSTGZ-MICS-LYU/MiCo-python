@@ -1,6 +1,8 @@
 # MiCo: End-to-End Mixed Precision Neural Network Co-Exploration Framework for Edge AI
 
-This is the Python codebase for MiCo Framework. (W.I.P.)
+This is the Python codebase for MiCo Framework. 
+
+MiCo is an end-to-end framework that helps you train/explore/deploy mixed precision quantized models.
 
 ## Pre-requisite
 

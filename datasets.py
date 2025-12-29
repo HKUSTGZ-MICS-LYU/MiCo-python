@@ -123,6 +123,36 @@ def cifar100(batch_size=32, num_works = 0, shuffle = True, augment = True):
 
     return train_loader, test_loader
 
+def imagenet(batch_size=32, num_works = 0, shuffle = True, resize: int = 256, root = "data"):
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                             std=[0.229, 0.224, 0.225])
+
+    train_transform = transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+    train_data = datasets.ImageNet(root=root, split="train", transform=train_transform)
+
+    test_transform = transforms.Compose([
+        transforms.Resize(resize),
+        transforms.CenterCrop(224),
+        transforms.ToTensor(),
+        normalize,
+    ])
+
+    test_data = datasets.ImageNet(root=root, split="val", transform=test_transform)
+
+    train_loader = DataLoader(train_data, batch_size, shuffle=True,
+                              num_workers=num_works)
+    test_loader = DataLoader(test_data, batch_size, shuffle=True,
+                             num_workers=num_works)
+    
+    return train_loader, test_loader
+
 def tinystories(max_seq_len, vocab_size, device, batch_size=32, num_works=0):
     from TinyStories import TinyStoriesTask
     train_loader = TinyStoriesTask.iter_batches(
