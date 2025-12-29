@@ -865,14 +865,20 @@ if __name__ == "__main__":
     import torch.nn as nn
     import torch.nn.functional as F
     import MiCoUtils as mico
+    from MiCoModel import from_torch
     from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, MobileNetV2, \
           resnet_alt_8, resnet_alt_18, shufflenet
+
+
+
+    from torchvision.models import resnet18, ResNet18_Weights, mobilenet_v2, MobileNet_V2_Weights
 
     torch.manual_seed(0)
 
     # example_input = torch.randn(1, 256) # MNIST Flatten
     # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
-    example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
+    # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
+    example_input = torch.randn(1, 3, 224, 224) # ImageNet
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
@@ -884,7 +890,7 @@ if __name__ == "__main__":
     # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
-    # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
+    # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
     # m = VGG(in_channels=3, num_class=10)
     # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
@@ -901,19 +907,27 @@ if __name__ == "__main__":
     # m.default_dataset = "CIFAR10"
     # ckpt = torch.load("output/ckpt/shuffle_cifar10.pth")
 
-    m = resnet_alt_8(10)
-    m.default_dataset = "CIFAR10"
-    ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
+    # m = resnet_alt_8(10)
+    # m.default_dataset = "CIFAR10"
+    # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
     # m = resnet_alt_18(100)
     # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
 
+    # m = from_torch(resnet18(weights=ResNet18_Weights.IMAGENET1K_V1))
+    
+    
+    m = from_torch(
+        mobilenet_v2(
+        weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+    )
+
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
 
-    m.load_state_dict(ckpt)
+    # m.load_state_dict(ckpt)
     m.set_qscheme([weight_q, activation_q])
-    m=fuse_model(m)
+    # m=fuse_model(m)
     m.eval()
 
     m = MiCoCodeGen(m, align_to=32)

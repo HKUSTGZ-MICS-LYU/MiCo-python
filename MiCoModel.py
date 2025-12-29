@@ -143,3 +143,18 @@ class MiCoModel(nn.Module):
                 print(" ".join(log))
         
         return res
+    
+def from_torch(model: torch.nn.Module, n_layers: int = -1):
+    if isinstance(model, MiCoModel):
+        model.n_layers = n_layers
+        return model
+
+    class MiCoWrapped(model.__class__, MiCoModel):
+        pass
+    
+    model.__class__ = MiCoWrapped
+    model.n_layers = len(model.get_qlayers())
+
+    print(f"Model with {model.n_layers} wrapped to MiCoModel.")
+
+    return model
