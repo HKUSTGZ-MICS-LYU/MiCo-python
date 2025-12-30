@@ -1,4 +1,5 @@
 import torch
+from torchvision.models import get_model
 from torch.utils.data.dataloader import DataLoader
 
 import numpy as np
@@ -12,7 +13,7 @@ import warnings
 
 from tqdm import tqdm
 
-from MiCoModel import MiCoModel
+from MiCoModel import MiCoModel, from_torch
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
 from SimUtils import sim_bitfusion, sim_mico
@@ -24,11 +25,11 @@ DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 warnings.filterwarnings("ignore")
 
 class MiCoEval:
-    def __init__(self, model: MiCoModel, 
+    def __init__(self, model: MiCoModel | str, 
                  epochs: int, 
                  train_loader: DataLoader, 
                  test_loader: DataLoader, 
-                 pretrained_model: str,
+                 pretrained_model: str = "",
                  lr=0.0001, model_name = "", 
                  objective='ptq_acc',
                  constraint='bops',
@@ -43,6 +44,11 @@ class MiCoEval:
         self.group_size = linear_group_size
         self.lr = lr
 
+        self.from_torch = isinstance(model, str)  # If model is a string, load from torchvision
+
+        self.load_pretrain()
+        print("Pretrained Model Loaded.")
+
         self.output_json = output_json
         self.model_name = model_name
         self.n_layers = self.model.n_layers
@@ -56,14 +62,11 @@ class MiCoEval:
         self.set_eval(objective)
         self.set_constraint(constraint)
         
-        self.load_pretrain()
-        print("Pretrained Model Loaded.")
         self.fp_acc = self.eval_fp()
-
         # Initial Conversion and Test
         res = self.eval_f([8]*self.n_layers*2)
         self.baseline_acc = res
-        self.layers = model.get_qlayers()
+        self.layers = self.model.get_qlayers()
         assert self.n_layers > 0, "No QLayer found! Please convert the model first."
         
         self.layer_macs = [layer.get_mac() for layer in self.layers]
@@ -74,7 +77,7 @@ class MiCoEval:
         self.misc_latency = 0.0
         self.misc_proxy = None
 
-        print("Model:", model._get_name())
+        print("Model:", self.model._get_name())
         print("Number of QLayers: ", self.n_layers)
         print("Total MACs: ", np.sum(self.layer_macs))
         print("Total Params: ", np.sum(self.layer_params))
@@ -123,10 +126,14 @@ class MiCoEval:
         }
 
     def load_pretrain(self):
-        ckpt = torch.load(self.pretrained_model, weights_only=False)
-        if "model" in ckpt:
-            ckpt = ckpt["model"]
-        self.model.load_state_dict(ckpt)
+        if self.from_torch:
+            self.model = get_model(self.model, weights="DEFAULT").to(DEVICE)
+            self.model = from_torch(self.model).to(DEVICE)
+        else:
+            ckpt = torch.load(self.pretrained_model, weights_only=False)
+            if "model" in ckpt:
+                ckpt = ckpt["model"]
+            self.model.load_state_dict(ckpt)
         return
 
     def set_proxy(self, matmul_proxy, conv2d_proxy):

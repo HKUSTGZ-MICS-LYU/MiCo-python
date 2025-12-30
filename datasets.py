@@ -146,9 +146,9 @@ def imagenet(batch_size=32, num_works = 0, shuffle = True, resize: int = 256, ro
 
     test_data = datasets.ImageNet(root=root, split="val", transform=test_transform)
 
-    train_loader = DataLoader(train_data, batch_size, shuffle=True,
+    train_loader = DataLoader(train_data, batch_size, shuffle=shuffle,
                               num_workers=num_works)
-    test_loader = DataLoader(test_data, batch_size, shuffle=True,
+    test_loader = DataLoader(test_data, batch_size, shuffle=shuffle,
                              num_workers=num_works)
     
     return train_loader, test_loader

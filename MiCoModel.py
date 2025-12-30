@@ -155,6 +155,6 @@ def from_torch(model: torch.nn.Module, n_layers: int = -1):
     model.__class__ = MiCoWrapped
     model.n_layers = len(model.get_qlayers())
 
-    print(f"Model with {model.n_layers} wrapped to MiCoModel.")
+    print(f"Model with {model.n_layers} layers wrapped to MiCoModel.")
 
     return model
