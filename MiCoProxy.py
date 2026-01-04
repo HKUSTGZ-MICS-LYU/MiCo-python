@@ -82,19 +82,19 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
     X_cbops_plus = np.column_stack((BMACS, W_LOADS, A_LOADS, N, M, K))
     X_raw = np.column_stack((N, M, K, QW, QA))
 
-    # Models to try
-    models_to_test = {
-        'LinearRegression': LinearRegression(),
-        'Ridge': Ridge(),
-        'Lasso': Lasso(),
-        'RandomForest': RandomForestRegressor(random_state=42),
-        'XGBRegressor': XGBRegressor(random_state=42),
-        'XGBRegressor_gblinear': XGBRegressor(booster='gblinear', random_state=42),
-        'WeightedEnsemble_0.5': WeightedEnsemble(0.5),
-        'WeightedEnsemble_0.8': WeightedEnsemble(0.8),
-        'WeightedEnsemble_1.0': WeightedEnsemble(1.0),
-        'ResidualEnsemble': ResidualEnsemble(random_state=42),
-        'LogXGBRegressor': LogXGBRegressor(random_state=42),
+    # Model factories - functions that create new model instances
+    model_factories = {
+        'LinearRegression': lambda: LinearRegression(),
+        'Ridge': lambda: Ridge(),
+        'Lasso': lambda: Lasso(),
+        'RandomForest': lambda: RandomForestRegressor(random_state=42),
+        'XGBRegressor': lambda: XGBRegressor(random_state=42),
+        'XGBRegressor_gblinear': lambda: XGBRegressor(booster='gblinear', random_state=42),
+        'WeightedEnsemble_0.5': lambda: WeightedEnsemble(0.5),
+        'WeightedEnsemble_0.8': lambda: WeightedEnsemble(0.8),
+        'WeightedEnsemble_1.0': lambda: WeightedEnsemble(1.0),
+        'ResidualEnsemble': lambda: ResidualEnsemble(random_state=42),
+        'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42),
     }
 
     feature_sets = {
@@ -104,7 +104,7 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
     }
 
     best_mape = float('inf')
-    best_model = None
+    best_model_factory = None
     best_model_name = None
     best_features_name = None
     best_X = None
@@ -114,7 +114,7 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
 
     # Try all combinations
     for feature_name, X in feature_sets.items():
-        for model_name, model in models_to_test.items():
+        for model_name, model_factory in model_factories.items():
             kf = KFold(n_splits=5, shuffle=True, random_state=42)
             mapes = []
             r2s = []
@@ -123,6 +123,8 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
                 X_train, X_test = X[train_index], X[test_index]
                 y_train, y_test = y[train_index], y[test_index]
                 
+                # Create a fresh model instance for each fold
+                model = model_factory()
                 model.fit(X_train, y_train)
                 y_pred = model.predict(X_test)
                 
@@ -134,10 +136,10 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
             
             print(f"  [{feature_name:8s}] {model_name:25s}: MAPE={mean_mape*100:6.2f}%, R2={mean_r2:7.4f}")
             
-            # Track best model
+            # Track best model factory
             if mean_mape < best_mape:
                 best_mape = mean_mape
-                best_model = model
+                best_model_factory = model_factory
                 best_model_name = model_name
                 best_features_name = feature_name
                 best_X = X
@@ -147,7 +149,8 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
     print(f"Best MAPE: {best_mape*100:.2f}%, R2 score during CV")
     print()
 
-    # Train best model on all data
+    # Create a fresh instance of best model and train on all data
+    best_model = best_model_factory()
     best_model.fit(best_X, y)
     return best_model
 
@@ -187,19 +190,19 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
     X_bops_plus = np.column_stack((BOPS, H, W, C, K, Ks))
     X_raw = np.column_stack((H, W, C, K, Ks, QW, QA))
 
-    # Models to try
-    models_to_test = {
-        'LinearRegression': LinearRegression(),
-        'Ridge': Ridge(),
-        'Lasso': Lasso(),
-        'RandomForest': RandomForestRegressor(random_state=42),
-        'XGBRegressor': XGBRegressor(random_state=42),
-        'XGBRegressor_gblinear': XGBRegressor(booster='gblinear', random_state=42),
-        'WeightedEnsemble_0.1': WeightedEnsemble(0.1),
-        'WeightedEnsemble_0.5': WeightedEnsemble(0.5),
-        'WeightedEnsemble_0.6': WeightedEnsemble(0.6),
-        'ResidualEnsemble': ResidualEnsemble(random_state=42),
-        'LogXGBRegressor': LogXGBRegressor(random_state=42),
+    # Model factories - functions that create new model instances
+    model_factories = {
+        'LinearRegression': lambda: LinearRegression(),
+        'Ridge': lambda: Ridge(),
+        'Lasso': lambda: Lasso(),
+        'RandomForest': lambda: RandomForestRegressor(random_state=42),
+        'XGBRegressor': lambda: XGBRegressor(random_state=42),
+        'XGBRegressor_gblinear': lambda: XGBRegressor(booster='gblinear', random_state=42),
+        'WeightedEnsemble_0.1': lambda: WeightedEnsemble(0.1),
+        'WeightedEnsemble_0.5': lambda: WeightedEnsemble(0.5),
+        'WeightedEnsemble_0.6': lambda: WeightedEnsemble(0.6),
+        'ResidualEnsemble': lambda: ResidualEnsemble(random_state=42),
+        'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42),
     }
 
     feature_sets = {
@@ -210,7 +213,7 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
     }
 
     best_mape = float('inf')
-    best_model = None
+    best_model_factory = None
     best_model_name = None
     best_features_name = None
     best_X = None
@@ -220,7 +223,7 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
 
     # Try all combinations
     for feature_name, X in feature_sets.items():
-        for model_name, model in models_to_test.items():
+        for model_name, model_factory in model_factories.items():
             kf = KFold(n_splits=5, shuffle=True, random_state=42)
             mapes = []
             r2s = []
@@ -229,6 +232,8 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
                 X_train, X_test = X[train_index], X[test_index]
                 y_train, y_test = y[train_index], y[test_index]
                 
+                # Create a fresh model instance for each fold
+                model = model_factory()
                 model.fit(X_train, y_train)
                 y_pred = model.predict(X_test)
                 
@@ -240,10 +245,10 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
             
             print(f"  [{feature_name:8s}] {model_name:25s}: MAPE={mean_mape*100:6.2f}%, R2={mean_r2:7.4f}")
             
-            # Track best model
+            # Track best model factory
             if mean_mape < best_mape:
                 best_mape = mean_mape
-                best_model = model
+                best_model_factory = model_factory
                 best_model_name = model_name
                 best_features_name = feature_name
                 best_X = X
@@ -253,7 +258,8 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
     print(f"Best MAPE: {best_mape*100:.2f}%, R2 score during CV")
     print()
 
-    # Train best model on all data
+    # Create a fresh instance of best model and train on all data
+    best_model = best_model_factory()
     best_model.fit(best_X, y)
     return best_model
 
