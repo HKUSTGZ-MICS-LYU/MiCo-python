@@ -75,21 +75,81 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
     W_LOADS = QW * MACS
     A_LOADS = QA * MACS
 
-    # X = np.column_stack((N, M, K, BMACS, W_LOADS, A_LOADS, QW, QA))
-    # X = np.column_stack((N, M, K, QW, QA))
-    # reg = XGBRegressor()
-
     y = latency
 
-    X = np.column_stack((BMACS, W_LOADS, A_LOADS))
-    if mico_type == 'high':
-        reg = WeightedEnsemble(1.0)
-    elif mico_type == "small":
-        reg = WeightedEnsemble(0.8)
-    else:
-        reg = WeightedEnsemble(0.8)
-    reg.fit(X, y)
-    return reg
+    # Feature sets to try
+    X_cbops = np.column_stack((BMACS, W_LOADS, A_LOADS))
+    X_cbops_plus = np.column_stack((BMACS, W_LOADS, A_LOADS, N, M, K))
+    X_raw = np.column_stack((N, M, K, QW, QA))
+
+    # Models to try
+    models_to_test = {
+        'LinearRegression': LinearRegression(),
+        'Ridge': Ridge(),
+        'Lasso': Lasso(),
+        'RandomForest': RandomForestRegressor(random_state=42),
+        'XGBRegressor': XGBRegressor(random_state=42),
+        'XGBRegressor_gblinear': XGBRegressor(booster='gblinear', random_state=42),
+        'WeightedEnsemble_0.5': WeightedEnsemble(0.5),
+        'WeightedEnsemble_0.8': WeightedEnsemble(0.8),
+        'WeightedEnsemble_1.0': WeightedEnsemble(1.0),
+        'ResidualEnsemble': ResidualEnsemble(random_state=42),
+        'LogXGBRegressor': LogXGBRegressor(random_state=42),
+    }
+
+    feature_sets = {
+        'CBOPs': X_cbops,
+        'CBOPs+': X_cbops_plus,
+        'Raw': X_raw,
+    }
+
+    best_mape = float('inf')
+    best_model = None
+    best_model_name = None
+    best_features_name = None
+    best_X = None
+
+    print(f"\nMiCo {mico_type.upper()} MatMul Proxy - Cross-Validation Results:")
+    print("=" * 80)
+
+    # Try all combinations
+    for feature_name, X in feature_sets.items():
+        for model_name, model in models_to_test.items():
+            kf = KFold(n_splits=5, shuffle=True, random_state=42)
+            mapes = []
+            r2s = []
+            
+            for train_index, test_index in kf.split(X):
+                X_train, X_test = X[train_index], X[test_index]
+                y_train, y_test = y[train_index], y[test_index]
+                
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                
+                mapes.append(mean_absolute_percentage_error(y_test, y_pred))
+                r2s.append(r2_score(y_test, y_pred))
+            
+            mean_mape = np.mean(mapes)
+            mean_r2 = np.mean(r2s)
+            
+            print(f"  [{feature_name:8s}] {model_name:25s}: MAPE={mean_mape*100:6.2f}%, R2={mean_r2:7.4f}")
+            
+            # Track best model
+            if mean_mape < best_mape:
+                best_mape = mean_mape
+                best_model = model
+                best_model_name = model_name
+                best_features_name = feature_name
+                best_X = X
+
+    print("=" * 80)
+    print(f"Best Model: {best_model_name} with {best_features_name} features")
+    print(f"Best MAPE: {best_mape*100:.2f}%, R2 score during CV")
+    print()
+
+    # Train best model on all data
+    best_model.fit(best_X, y)
+    return best_model
 
 def get_mico_conv2d_proxy(mico_type: str = 'small'):
     # Load Dataset
@@ -113,24 +173,89 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
 
     MACS = H_out * W_out * C * K * Ks * Ks
     Q_MAX = np.max([QA, QW], axis=0)
+    Q_MUL = QA * QW
+    BOPS = Q_MUL * MACS
     BMACS = MACS * Q_MAX
     W_LOADS = QW * MACS
     A_LOADS = QA * MACS
 
-    # X = np.column_stack((C, W, K, W_out, Ks, BMACS, W_LOADS, A_LOADS, QW, QA))
-    # X = np.column_stack((H, W, C, K, W_out, H_out, Ks, QW, QA))
-
     y = latency
 
-    X = np.column_stack((BMACS, W_LOADS, A_LOADS))
-    if mico_type == 'high':
-        reg = WeightedEnsemble(0.6)
-    elif mico_type == "small":
-        reg = WeightedEnsemble(0.1)
-    else:
-        reg = WeightedEnsemble(0.1)
-    reg.fit(X, y)
-    return reg
+    # Feature sets to try
+    X_cbops = np.column_stack((BMACS, W_LOADS, A_LOADS))
+    X_cbops_plus = np.column_stack((BMACS, W_LOADS, A_LOADS, H, W, C, K, Ks))
+    X_bops_plus = np.column_stack((BOPS, H, W, C, K, Ks))
+    X_raw = np.column_stack((H, W, C, K, Ks, QW, QA))
+
+    # Models to try
+    models_to_test = {
+        'LinearRegression': LinearRegression(),
+        'Ridge': Ridge(),
+        'Lasso': Lasso(),
+        'RandomForest': RandomForestRegressor(random_state=42),
+        'XGBRegressor': XGBRegressor(random_state=42),
+        'XGBRegressor_gblinear': XGBRegressor(booster='gblinear', random_state=42),
+        'WeightedEnsemble_0.1': WeightedEnsemble(0.1),
+        'WeightedEnsemble_0.5': WeightedEnsemble(0.5),
+        'WeightedEnsemble_0.6': WeightedEnsemble(0.6),
+        'ResidualEnsemble': ResidualEnsemble(random_state=42),
+        'LogXGBRegressor': LogXGBRegressor(random_state=42),
+    }
+
+    feature_sets = {
+        'CBOPs': X_cbops,
+        'CBOPs+': X_cbops_plus,
+        'BOPs+': X_bops_plus,
+        'Raw': X_raw,
+    }
+
+    best_mape = float('inf')
+    best_model = None
+    best_model_name = None
+    best_features_name = None
+    best_X = None
+
+    print(f"\nMiCo {mico_type.upper()} Conv2D Proxy - Cross-Validation Results:")
+    print("=" * 80)
+
+    # Try all combinations
+    for feature_name, X in feature_sets.items():
+        for model_name, model in models_to_test.items():
+            kf = KFold(n_splits=5, shuffle=True, random_state=42)
+            mapes = []
+            r2s = []
+            
+            for train_index, test_index in kf.split(X):
+                X_train, X_test = X[train_index], X[test_index]
+                y_train, y_test = y[train_index], y[test_index]
+                
+                model.fit(X_train, y_train)
+                y_pred = model.predict(X_test)
+                
+                mapes.append(mean_absolute_percentage_error(y_test, y_pred))
+                r2s.append(r2_score(y_test, y_pred))
+            
+            mean_mape = np.mean(mapes)
+            mean_r2 = np.mean(r2s)
+            
+            print(f"  [{feature_name:8s}] {model_name:25s}: MAPE={mean_mape*100:6.2f}%, R2={mean_r2:7.4f}")
+            
+            # Track best model
+            if mean_mape < best_mape:
+                best_mape = mean_mape
+                best_model = model
+                best_model_name = model_name
+                best_features_name = feature_name
+                best_X = X
+
+    print("=" * 80)
+    print(f"Best Model: {best_model_name} with {best_features_name} features")
+    print(f"Best MAPE: {best_mape*100:.2f}%, R2 score during CV")
+    print()
+
+    # Train best model on all data
+    best_model.fit(best_X, y)
+    return best_model
 
 def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: list):
     # Load Dataset
@@ -279,5 +404,28 @@ def get_bitfusion_conv2d_proxy(cbops_only: bool = False, linear: bool = False):
     return model
 
 if __name__ == "__main__":
+    # Test Bitfusion proxies with cross-validation
+    print("\n" + "="*80)
+    print("BITFUSION PROXY TUNING")
+    print("="*80)
     matmul_proxy = get_bitfusion_matmul_proxy()
     conv2d_proxy = get_bitfusion_conv2d_proxy()
+    
+    # Test MiCo proxies with cross-validation
+    print("\n" + "="*80)
+    print("MICO PROXY TUNING")
+    print("="*80)
+    
+    # Test for 'small' mico type
+    print("\n### Testing MiCo 'small' type ###")
+    mico_small_matmul_proxy = get_mico_matmul_proxy(mico_type='small')
+    mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
+    
+    # Test for 'high' mico type
+    print("\n### Testing MiCo 'high' type ###")
+    mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
+    mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
+    
+    print("\n" + "="*80)
+    print("ALL PROXY TUNING COMPLETED")
+    print("="*80)
