@@ -1,6 +1,7 @@
 import operator
 import os
 import inspect
+import logging
 from typing import Any, Dict, List, Tuple, Callable
 
 import numpy as np
@@ -121,7 +122,7 @@ void model_forward(Model* model) {{
         gm = torch.fx.GraphModule(model, graph)
         return graph, gm
 
-    def __init__(self, model: torch.nn.Module, align_to: int = 32):
+    def __init__(self, model: torch.nn.Module, align_to: int = 32, log_level: int = logging.INFO):
         graph, gm = MiCoCodeGen._extract_graph_module(model)
         super().__init__(gm)
 
@@ -129,6 +130,8 @@ void model_forward(Model* model) {{
         self.model: torch.nn.Module = model
         self.graph: torch.fx.Graph = graph
         self.gm: torch.fx.GraphModule = gm
+        self.logger = logging.getLogger("MiCoCodeGen")
+        self.logger.setLevel(log_level)
 
         # extract node information
         self.node_info: Dict[str, Tuple[Any, Any]] = {n.name: (n.args, n.kwargs) for n in self.graph.nodes}
@@ -280,7 +283,7 @@ void model_forward(Model* model) {{
     
 
     def handle_placeholder(self, n: torch.fx.node.Node, out: torch.Tensor):
-        print("placeholder:", n.name)
+        self.logger.log(logging.DEBUG, "placeholder:", n.name)
         self.add_uninitialized_tensor(n.name, out)
 
     def handle_get_attr(self, n: torch.fx.node.Node, out: torch.Tensor):
@@ -292,7 +295,7 @@ void model_forward(Model* model) {{
         Handle the case where the node is a call to a torch function (e.g. relu, elu, etc.)
         Uses the registry pattern to look up handlers for operations.
         """
-        print("call function:", n.name, n.target, n.args)
+        self.logger.log(logging.DEBUG, "call function:", n.name, n.target, n.args)
 
         # get all the related information
         function = n.target
@@ -313,7 +316,7 @@ void model_forward(Model* model) {{
             )
         
     def handle_call_method(self, n: torch.fx.node.Node, out: torch.Tensor):
-        print("call method:", n.name, n.target)
+        self.logger.log(logging.DEBUG, "call method:", n.name, n.target)
         method = n.target
         if method == "size":
             self.add_connect_tensor(n.name, out)
@@ -329,7 +332,7 @@ void model_forward(Model* model) {{
         Handle the case where the node is a call to a torch module.
         Uses the registry pattern to look up handlers for operations.
         """
-        print("call module:", n.name, n.target)
+        self.logger.log(logging.DEBUG, "call module:", n.name, n.target)
 
         module = self.get_module(n.target)
         layer_name = n.name
@@ -355,7 +358,7 @@ void model_forward(Model* model) {{
 
 
     def handle_output(self, n: torch.fx.node.Node, out: torch.Tensor):
-        print("output:", n.name, out.shape, out.dtype)
+        self.logger.log(logging.DEBUG, "output:", n.name, out.shape, out.dtype)
         n_size = out.nelement() * out.element_size()
         
         self.add_uninitialized_tensor(n.name, out)
@@ -868,8 +871,6 @@ if __name__ == "__main__":
     from MiCoModel import from_torch
     from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, MobileNetV2, \
           resnet_alt_8, resnet_alt_18, shufflenet
-
-
 
     from torchvision.models import resnet18, ResNet18_Weights, mobilenet_v2, MobileNet_V2_Weights
 
