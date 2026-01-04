@@ -16,7 +16,7 @@ from tqdm import tqdm
 from MiCoModel import MiCoModel, from_torch
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
-from SimUtils import sim_bitfusion, sim_mico
+from SimUtils import gen_sim_bitfusion, sim_mico
 
 from copy import deepcopy
 
@@ -36,7 +36,7 @@ class MiCoEval:
                  linear_group_size = 1,
                  output_json='output/json/mico_eval.json') -> None:
         
-        self.model = model
+        self.model = model.to(DEVICE)
         self.epochs = epochs
         self.train_loader = train_loader
         self.test_loader = test_loader
@@ -285,7 +285,11 @@ class MiCoEval:
         res = -1
 
         if target == 'bitfusion':
-            res = sim_bitfusion(self.model_name, wq, aq)
+            gen_model = deepcopy(self.model)
+            gen_model.set_qscheme([wq, aq], group_size=self.group_size)
+            self.input_size = self.train_loader.dataset[0][0].shape
+            example_input = torch.randn(1, *self.input_size).to(DEVICE)
+            res = gen_sim_bitfusion(gen_model, 16, example_input) # Default Batch Size = 16
         elif target == 'mico':
             assert self.mico_target is not None, "MiCo Target not set."
             gen_model = deepcopy(self.model)
@@ -320,7 +324,7 @@ class MiCoEval:
     
 # Test
 if __name__ == "__main__":
-    from models import MLP, LeNet, VGG
+    from models import MLP, LeNet, VGG, resnet_alt_8
     from datasets import mnist, cifar10
 
     # model = LeNet(1)
@@ -337,10 +341,18 @@ if __name__ == "__main__":
     # res = evaluator.constr([8]*model.n_layers*2)
     # print("BOPs:", res)
 
-    model = MLP(256, config={"Layers": [64, 64, 64, 10]})
-    train_loader, test_loader = mnist(shuffle=False, resize=16)
+    # model = MLP(256, config={"Layers": [64, 64, 64, 10]})
+    # train_loader, test_loader = mnist(shuffle=False, resize=16)
+    # evaluator = MiCoEval(model, 10, train_loader, test_loader, 
+    #                     "output/ckpt/mlp_mnist.pth", model_name="mlp")
+
+    model = resnet_alt_8(10)
+    train_loader, test_loader = cifar10(shuffle=False)
+    model.default_dataset = "CIFAR10"
+
     evaluator = MiCoEval(model, 10, train_loader, test_loader, 
-                        "output/ckpt/mlp_mnist.pth", model_name="mlp")
-    res = evaluator.eval_latency([8]*model.n_layers*2, 'mico')
+                         "output/ckpt/resnet8_cifar10.pth", model_name="resnet8")
+    
+    res = evaluator.eval_latency([8]*model.n_layers*2, 'bitfusion')
     print("Latency:", res)
 

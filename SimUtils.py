@@ -1,10 +1,37 @@
 import os
 import sys
 import json
+import torch
 import subprocess
+
+from MiCoModel import MiCoModel
+from MiCoGraphGen import MiCoGraphGen
 
 PWD = os.getcwd()
 
+def gen_sim_bitfusion(model: MiCoModel, batch_size = 1, example_input = None):
+
+    import sys
+    import logging
+
+    sys.path.append("hw/bitfusion")
+    from dnnweaver2.graph import Graph
+
+    if example_input is None:
+        if model.default_dataset.startswith("CIFAR"):
+            example_input = torch.randn(1, 3, 32, 32)
+        elif model.default_dataset == "IMAGENET":
+            example_input = torch.randn(1, 3, 224, 224)
+    
+    graph = Graph("Model", "Dataset", logging.INFO)
+    with graph.as_default():
+        m_graph = MiCoGraphGen(model, graph)
+        m_graph.batch_size = batch_size
+        m_graph(example_input)
+        res = m_graph.sim()
+    return res['Cycles']
+
+# NOTE: Deprecated function
 def run_bitfusion_sim(json_name, config):
     with open(f'{PWD}/hw/bitfusion/configs/{json_name}', 'w') as f:
         json.dump(config, f)
@@ -25,6 +52,7 @@ def run_bitfusion_sim(json_name, config):
     assert 'cycles' in result, "Bitfusion simulation failed!"
     return result['cycles']
 
+# NOTE: Deprecated function
 def sim_bitfusion(model_name: str, wq: list, aq: list):
 
     # Check if bitfusion is installed

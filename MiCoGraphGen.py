@@ -6,9 +6,6 @@ import numpy as np
 import torch
 import torch.nn
 import torch.fx
-import jinja2
-import tabulate
-import subprocess
 
 # Add hw.bitfusion to the Python path 
 # Remember to add it to the linter of your ide as well
@@ -368,12 +365,20 @@ if __name__ == "__main__":
     from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, MobileNetV2, \
           resnet_alt_8, resnet_alt_18
     
+    from torchvision.models import (
+        resnet18, ResNet18_Weights, 
+        mobilenet_v2, MobileNet_V2_Weights
+    )
+
+    from MiCoModel import from_torch
     from sim_utils import sim_results
+
     torch.manual_seed(0)
 
     # example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    example_input = torch.randn(1, 3, 32, 32)
+    # example_input = torch.randn(1, 3, 32, 32)
+    example_input = torch.randn(1, 3, 224, 224)
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
@@ -399,15 +404,18 @@ if __name__ == "__main__":
     # m.default_dataset = "CIFAR10"
     # ckpt = torch.load("output/ckpt/resnet8_cifar10.pth")
 
-    m = resnet_alt_18(100)
-    ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
+    # m = resnet_alt_18(100)
+    # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
+    # m.load_state_dict(ckpt)
+
+    m = from_torch(
+        resnet18(weights=ResNet18_Weights.IMAGENET1K_V1))
 
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
 
-    m.load_state_dict(ckpt)
     m.set_qscheme([weight_q, activation_q])
-    m=fuse_model(m)
+    # m=fuse_model(m)
     m.eval()
     graph = Graph("Model", "Dataset", logging.INFO)
     with graph.as_default():
