@@ -5,14 +5,14 @@ from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.ensemble import RandomForestRegressor
 from xgboost import XGBRegressor
 
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, KFold
 from sklearn.metrics import mean_absolute_percentage_error, r2_score
 
 
 class WeightedEnsemble:
     def __init__(self, weight_lin=0.5):
         self.lin = LinearRegression()
-        self.xgb = XGBRegressor()
+        self.xgb = XGBRegressor(random_state=42)
         self.wlin = weight_lin
         self.wxgb = 1.0 - weight_lin
         assert self.wlin + self.wxgb == 1.0, "Weights must sum to 1.0"
@@ -26,9 +26,9 @@ class WeightedEnsemble:
         return y
 
 class ResidualEnsemble:
-    def __init__(self):
-        self.lin = XGBRegressor(booster='gblinear', random_state=42)
-        self.xgb = XGBRegressor(random_state=42)
+    def __init__(self, random_state=42):
+        self.lin = XGBRegressor(booster='gblinear', random_state=random_state)
+        self.xgb = XGBRegressor(random_state=random_state)
     def fit(self, X, y):
         self.lin.fit(X, y)
         # Get residuals
@@ -40,6 +40,15 @@ class ResidualEnsemble:
         y_xgb = self.xgb.predict(X)
         y = y_lin + y_xgb
         return y
+
+class LogXGBRegressor:
+    def __init__(self, **kwargs):
+        self.model = XGBRegressor(**kwargs)
+    def fit(self, X, y):
+        self.model.fit(X, np.log1p(y))
+    def predict(self, X):
+        y_pred_log = self.model.predict(X)
+        return np.expm1(y_pred_log)
 
 def get_mico_matmul_proxy(mico_type: str = 'small'):
     # Load Dataset
@@ -176,19 +185,29 @@ def get_bitfusion_matmul_proxy(cbops_only: bool = False, linear: bool = False):
     X = X_cbops if cbops_only else X_cbops_plus
 
     # model = LinearRegression() if linear else XGBRegressor(booster='gblinear')
-    model = LinearRegression() if linear else ResidualEnsemble()
+    model = LinearRegression() if linear else ResidualEnsemble(random_state=42)
 
     # Evaluate
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    mapes = []
+    r2s = []
+    for train_index, test_index in kf.split(X):
+        X_train, X_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+        
+        # Create a new instance for each fold to avoid data leakage if the model has state
+        # For simple classes we can just re-fit, but let's be safe if we can.
+        # Since we don't have a clone method, we rely on fit() resetting state or overwriting it.
+        # XGBRegressor and LinearRegression fit() overwrites.
+        # ResidualEnsemble and LogXGBRegressor fit() also overwrites.
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        
+        mapes.append(mean_absolute_percentage_error(y_test, y_pred))
+        r2s.append(r2_score(y_test, y_pred))
     
-    print("Bitfusion MatMul Proxy Scores:")
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    mape = mean_absolute_percentage_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-    print(f"  MAPE: {mape*100:.2f}%, R2: {r2:.4f}")
+    print("Bitfusion MatMul Proxy Scores (5-Fold CV):")
+    print(f"  MAPE: {np.mean(mapes)*100:.2f}%, R2: {np.mean(r2s):.4f}")
 
     # Return Proxy Trained on All Data
     model.fit(X, y)
@@ -215,6 +234,8 @@ def get_bitfusion_conv2d_proxy(cbops_only: bool = False, linear: bool = False):
     W_out = (W - Ks) + 1
     MAC = H_out * W_out * C * K * Ks * Ks
     Q_MAX = np.max([QA, QW], axis=0)
+    Q_MUL = QA * QW
+    BOPS = Q_MUL * MAC
     BMACS = MAC * Q_MAX
     W_LOADS = QW * MAC
     A_LOADS = QA * MAC
@@ -223,25 +244,35 @@ def get_bitfusion_conv2d_proxy(cbops_only: bool = False, linear: bool = False):
     # CBOPs Features
     X_cbops = np.column_stack((BMACS, W_LOADS, A_LOADS)) 
 
-    # Detailed Features
+    # CBOPs + Layer Features
     X_cbops_plus = np.column_stack((BMACS, W_LOADS, A_LOADS, H, W, C, K, Ks))
+
+    # BOPs Features
+    X_bops_plus = np.column_stack((BOPS, H, W, C, K, Ks))
+
+    # RAW Features
+    # X_cbops_plus = np.column_stack((QW, QA, H, W, C, K, Ks))
 
     X = X_cbops if cbops_only else X_cbops_plus
 
     # model = LinearRegression() if linear else XGBRegressor(booster='gblinear')
-    model = LinearRegression() if linear else ResidualEnsemble()
-
+    model = LinearRegression() if linear else LogXGBRegressor(random_state=42)
     # Evaluate
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
-    
-    print("Bitfusion Conv2D Proxy Scores:")
-    model.fit(X_train, y_train)
-    y_pred = model.predict(X_test)
-    mape = mean_absolute_percentage_error(y_test, y_pred)
-    r2 = r2_score(y_test, y_pred)
-    print(f"  MAPE: {mape*100:.2f}%, R2: {r2:.4f}")
+    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+    mapes = []
+    r2s = []
+    for train_index, test_index in kf.split(X):
+        X_train, X_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+        
+        model.fit(X_train, y_train)
+        y_pred = model.predict(X_test)
+        
+        mapes.append(mean_absolute_percentage_error(y_test, y_pred))
+        r2s.append(r2_score(y_test, y_pred))
+
+    print("Bitfusion Conv2D Proxy Scores (5-Fold CV):")
+    print(f"  MAPE: {np.mean(mapes)*100:.2f}%, R2: {np.mean(r2s):.4f}")
 
     # Return Proxy Trained on All Data
     model.fit(X, y)

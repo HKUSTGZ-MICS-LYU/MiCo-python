@@ -1,4 +1,4 @@
-from SimUtils import benchmark_bitfusion_matmul, benchmark_bitfusion_conv2d
+from SimUtils import benchmark_bitfusion_matmul, benchmark_bitfusion_conv2d, gen_sim_bitfusion
 
 from itertools import product
 from tqdm import tqdm
@@ -6,8 +6,11 @@ if __name__ == '__main__':
 
     # MatMul Benchmark
     # Ns = [16]
-    # Ms = [64, 128, 256, 512]
-    # Ks = [64, 128, 256, 512]
+    # # Ms = [64, 128, 256, 512]
+    # # Ks = [64, 128, 256, 512]
+
+    # Ms = [1024, 2048, 4096]
+    # Ks = [1024, 2048, 4096]
 
     # dataset = []
     # sweep = tqdm(total=len(Ns) * len(Ms) * len(Ks))
@@ -17,7 +20,7 @@ if __name__ == '__main__':
     #     dataset += res
     #     sweep.update()
 
-    # with open('benchmark_results/bitfusion_matmul.csv', 'w') as f:
+    # with open('benchmark_results/bitfusion_matmul_large.csv', 'w') as f:
     #     f.write('N,M,K,QA,QW,Time\n')
     #     for row in dataset:
     #         f.write(','.join(map(str, row)) + '\n')
@@ -27,7 +30,7 @@ if __name__ == '__main__':
     HWs = [8, 32, 64]
     Cs = [1, 3, 16, 32, 256]
     Ks = [16, 32, 64, 256]
-    KSs = [3, 5]
+    KSs = [1, 3, 5]
 
     dataset = []
     sweep = tqdm(total=len(HWs) * len(Cs) * len(Ks) * len(KSs))

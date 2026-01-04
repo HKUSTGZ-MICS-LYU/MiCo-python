@@ -35,11 +35,16 @@ if __name__ == "__main__":
     evaluator.set_proxy(matmul_proxy, conv2d_proxy)
 
     dim = model.n_layers * 2
-    bitwidths = [2, 4, 8]
+    # bitwidths = [2, 4, 8]
+    bitwidths = [2, 3, 4, 5, 6, 7, 8]
+    target_ratio = 0.75
     max_latency = evaluator.eval_pred_latency([8] * dim)
     print("INT8 Predicted Latency:", max_latency)
     min_latency = evaluator.eval_pred_latency([2] * dim)
     print("INT2 Predicted Latency:", min_latency)
+    print("Maximum Achievable Speedup:", min_latency/max_latency)
+
+    assert max_latency*target_ratio >= min_latency, "Target latency is too low!"
 
     random.seed(0)
     np.random.seed(0)
@@ -47,7 +52,7 @@ if __name__ == "__main__":
         evaluator, n_inits=10, qtypes=bitwidths
     )
     res_x, res_y = searcher.search(
-        20, 'ptq_acc', 'latency_proxy', max_latency*0.8)
+        20, 'ptq_acc', 'latency_proxy', max_latency*target_ratio)
         
     print(f"Best Scheme: {res_x}")
     print(f"Best Accuracy: {res_y}")

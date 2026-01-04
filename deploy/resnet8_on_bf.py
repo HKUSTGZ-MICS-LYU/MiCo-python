@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from MiCoEval import MiCoEval
 from MiCoProxy import get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy
 
-from models import VGG
+from models import resnet_alt_8
 from datasets import cifar10
 
 from tqdm import tqdm
@@ -22,12 +22,12 @@ np.random.seed(0)
 
 if __name__ == "__main__":
 
-    model = VGG(3, 10)
-    train_loader, test_loader = cifar10(shuffle=False)
-    evaluator = MiCoEval(model, 10, train_loader, test_loader, 
-                         "output/ckpt/vgg_cifar10.pth",
-                         model_name="vgg",
-                         output_json="output/json/vgg_cifar10_search.json",)
+    model = resnet_alt_8(10)
+    train_loader, test_loader = cifar10(shuffle=False, num_works=8)
+    evaluator = MiCoEval(model, 1, train_loader, test_loader, 
+                         "output/ckpt/resnet8_cifar10.pth",
+                         model_name="resnet8",
+                         output_json="output/json/resnet8_cifar10_search.json",)
     
 
     matmul_proxy = get_bitfusion_matmul_proxy()
@@ -36,13 +36,13 @@ if __name__ == "__main__":
 
     dim = model.n_layers * 2
     bitwidths = [2, 3, 4, 5, 6, 7, 8]
-    target_ratio = 0.6
-
-    max_latency = evaluator.eval_bops([8] * dim)
+    target_ratio = 0.75
+    max_latency = evaluator.eval_pred_latency([8] * dim)
     print("INT8 Predicted Latency:", max_latency)
-    min_latency = evaluator.eval_bops([2] * dim)
+    min_latency = evaluator.eval_pred_latency([2] * dim)
     print("INT2 Predicted Latency:", min_latency)
     print("Maximum Achievable Speedup:", min_latency/max_latency)
+
     assert max_latency*target_ratio >= min_latency, "Target latency is too low!"
 
     random.seed(0)
@@ -51,7 +51,7 @@ if __name__ == "__main__":
         evaluator, n_inits=10, qtypes=bitwidths
     )
     res_x, res_y = searcher.search(
-        20, 'ptq_acc', 'bops', max_latency*target_ratio)
+        20, 'ptq_acc', 'latency_proxy', max_latency*target_ratio)
         
     print(f"Best Scheme: {res_x}")
     print(f"Best Accuracy: {res_y}")

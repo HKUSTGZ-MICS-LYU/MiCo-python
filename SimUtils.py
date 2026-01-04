@@ -31,7 +31,6 @@ def gen_sim_bitfusion(model: MiCoModel, batch_size = 1, example_input = None):
         res = m_graph.sim()
     return res['Cycles']
 
-# NOTE: Deprecated function
 def run_bitfusion_sim(json_name, config):
     with open(f'{PWD}/hw/bitfusion/configs/{json_name}', 'w') as f:
         json.dump(config, f)

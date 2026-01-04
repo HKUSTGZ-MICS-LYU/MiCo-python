@@ -263,12 +263,15 @@ class MiCoEval:
             layer_aloads = aq[i] * layer_macs
             layer_features = (layer_bmacs, layer_wloads, layer_aloads)
             layer_features += self.layers[i].layer_features
+            # layer_features as int
+            # layer_features_int = [int(f) for f in self.layers[i].layer_features]
+            # print("Layer Features:", layer_features_int)
             layer_features = np.array([layer_features])
             if isinstance(self.layers[i], BitConv2d):
                 layer_latencys += [float(self.conv2d_proxy.predict(layer_features)[0])]
             elif isinstance(self.layers[i], BitLinear):
                 layer_latencys += [float(self.matmul_proxy.predict(layer_features)[0])]
-        print(layer_latencys)
+        # print(layer_latencys)
         pred_latency = np.sum(layer_latencys)
         return pred_latency + self.misc_latency
 
