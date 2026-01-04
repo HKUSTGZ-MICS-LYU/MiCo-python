@@ -14,6 +14,7 @@ import warnings
 from tqdm import tqdm
 
 from MiCoModel import MiCoModel, from_torch
+from MiCoQLayers import BitConv2d, BitLinear
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
 from SimUtils import gen_sim_bitfusion, sim_mico
@@ -254,21 +255,21 @@ class MiCoEval:
         pred_latency = 0
         wq = np.array(scheme[:self.n_layers])
         aq = np.array(scheme[self.n_layers:])
-
+        layer_latencys = []
         for i in range(self.n_layers):
-            # layer_features = self.layers[i].layer_features
             layer_macs = self.layer_macs[i]
             layer_bmacs = layer_macs * np.max([aq[i], wq[i]])
             layer_wloads = wq[i] * layer_macs
             layer_aloads = aq[i] * layer_macs
-            # layer_features = (layer_bmacs, layer_wloads, layer_aloads, wq[i], aq[i])
             layer_features = (layer_bmacs, layer_wloads, layer_aloads)
+            layer_features += self.layers[i].layer_features
             layer_features = np.array([layer_features])
-            # layer_features = np.array([layer_bmacs, layer_wloads, layer_aloads]).reshape(1, -1)
-            if self.layers[i].layer_type == 'Conv2D':
-                pred_latency += self.conv2d_proxy.predict(layer_features)[0]
-            elif self.layers[i].layer_type == 'Linear':
-                pred_latency += self.matmul_proxy.predict(layer_features)[0]
+            if isinstance(self.layers[i], BitConv2d):
+                layer_latencys += [float(self.conv2d_proxy.predict(layer_features)[0])]
+            elif isinstance(self.layers[i], BitLinear):
+                layer_latencys += [float(self.matmul_proxy.predict(layer_features)[0])]
+        print(layer_latencys)
+        pred_latency = np.sum(layer_latencys)
         return pred_latency + self.misc_latency
 
     def eval_size(self, scheme:list):
@@ -301,11 +302,6 @@ class MiCoEval:
             codegen.forward(example_input)
             codegen.convert()
             codegen.build(target="mico_fpu")
-
-            # if self.mico_target == "high": 
-                # codegen.build(target="mico_fpu")
-            # else:
-            #     codegen.build(target="mico")
             
             res = sim_mico(self.mico_target)
         elif target == 'proxy':

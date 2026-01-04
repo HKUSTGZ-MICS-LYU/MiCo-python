@@ -25,6 +25,22 @@ class WeightedEnsemble:
         y = self.wlin * y_lin + self.wxgb * y_xgb
         return y
 
+class ResidualEnsemble:
+    def __init__(self):
+        self.lin = XGBRegressor(booster='gblinear', random_state=42)
+        self.xgb = XGBRegressor(random_state=42)
+    def fit(self, X, y):
+        self.lin.fit(X, y)
+        # Get residuals
+        y_lin = self.lin.predict(X)
+        residuals = y - y_lin
+        self.xgb.fit(X, residuals)
+    def predict(self, X):
+        y_lin = self.lin.predict(X)
+        y_xgb = self.xgb.predict(X)
+        y = y_lin + y_xgb
+        return y
+
 def get_mico_matmul_proxy(mico_type: str = 'small'):
     # Load Dataset
     with open(f'benchmark_results/mico_{mico_type}_bitlinear_test.csv', 'r') as f:
@@ -126,7 +142,7 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     return pred
 
 
-def get_bitfusion_matmul_proxy():
+def get_bitfusion_matmul_proxy(cbops_only: bool = False, linear: bool = False):
     # Load Dataset
     with open('benchmark_results/bitfusion_matmul.csv', 'r') as f:
         csv_data = csv.reader(f)
@@ -138,7 +154,7 @@ def get_bitfusion_matmul_proxy():
 
     M = data[:, 1]
     K = data[:, 2]
-    N = np.ones_like(M)
+    # N = np.ones_like(M)
 
     QA = data[:, 3]
     QW = data[:, 4]
@@ -150,17 +166,35 @@ def get_bitfusion_matmul_proxy():
     W_LOADS = QW * MACS
     A_LOADS = QA * MACS
 
-    # X = np.column_stack((N, M, K, BMACS, W_LOADS, A_LOADS, QW, QA))
-    # reg = XGBRegressor()
-
     y = latency
+    # CBOPs Features
+    X_cbops = np.column_stack((BMACS, W_LOADS, A_LOADS)) 
 
-    X = np.column_stack((BMACS, W_LOADS, A_LOADS))
-    reg = LinearRegression()
-    reg.fit(X, y)
-    return reg
+    # Detailed Features
+    X_cbops_plus = np.column_stack((BMACS, W_LOADS, A_LOADS, M, K))
 
-def get_bitfusion_conv2d_proxy():
+    X = X_cbops if cbops_only else X_cbops_plus
+
+    # model = LinearRegression() if linear else XGBRegressor(booster='gblinear')
+    model = LinearRegression() if linear else ResidualEnsemble()
+
+    # Evaluate
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    print("Bitfusion MatMul Proxy Scores:")
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    mape = mean_absolute_percentage_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    print(f"  MAPE: {mape*100:.2f}%, R2: {r2:.4f}")
+
+    # Return Proxy Trained on All Data
+    model.fit(X, y)
+    return model
+
+def get_bitfusion_conv2d_proxy(cbops_only: bool = False, linear: bool = False):
     # Load Dataset
     with open('benchmark_results/bitfusion_conv2d.csv', 'r') as f:
         csv_data = csv.reader(f)
@@ -179,20 +213,40 @@ def get_bitfusion_conv2d_proxy():
 
     H_out = (H - Ks) + 1
     W_out = (W - Ks) + 1
-
     MAC = H_out * W_out * C * K * Ks * Ks
     Q_MAX = np.max([QA, QW], axis=0)
     BMACS = MAC * Q_MAX
     W_LOADS = QW * MAC
     A_LOADS = QA * MAC
 
-    # X = np.column_stack((C,W,H,K,W_out,H_out,Ks,QW,QA))
-    # X = np.column_stack((C, W, K, W_out, Ks, BMACS, W_LOADS, A_LOADS, QW, QA))
-    # reg = XGBRegressor()
-
     y = latency
+    # CBOPs Features
+    X_cbops = np.column_stack((BMACS, W_LOADS, A_LOADS)) 
 
-    X = np.column_stack(((BMACS, W_LOADS, A_LOADS)))
-    reg = LinearRegression()
-    reg.fit(X, y)
-    return reg
+    # Detailed Features
+    X_cbops_plus = np.column_stack((BMACS, W_LOADS, A_LOADS, H, W, C, K, Ks))
+
+    X = X_cbops if cbops_only else X_cbops_plus
+
+    # model = LinearRegression() if linear else XGBRegressor(booster='gblinear')
+    model = LinearRegression() if linear else ResidualEnsemble()
+
+    # Evaluate
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.2, random_state=42
+    )
+    
+    print("Bitfusion Conv2D Proxy Scores:")
+    model.fit(X_train, y_train)
+    y_pred = model.predict(X_test)
+    mape = mean_absolute_percentage_error(y_test, y_pred)
+    r2 = r2_score(y_test, y_pred)
+    print(f"  MAPE: {mape*100:.2f}%, R2: {r2:.4f}")
+
+    # Return Proxy Trained on All Data
+    model.fit(X, y)
+    return model
+
+if __name__ == "__main__":
+    matmul_proxy = get_bitfusion_matmul_proxy()
+    conv2d_proxy = get_bitfusion_conv2d_proxy()
