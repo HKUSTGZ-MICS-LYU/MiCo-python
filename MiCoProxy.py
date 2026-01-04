@@ -146,7 +146,7 @@ def get_mico_matmul_proxy(mico_type: str = 'small'):
 
     print("=" * 80)
     print(f"Best Model: {best_model_name} with {best_features_name} features")
-    print(f"Best MAPE: {best_mape*100:.2f}%, R2 score during CV")
+    print(f"Best Cross-Validation MAPE: {best_mape*100:.2f}%")
     print()
 
     # Create a fresh instance of best model and train on all data
@@ -176,8 +176,7 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
 
     MACS = H_out * W_out * C * K * Ks * Ks
     Q_MAX = np.max([QA, QW], axis=0)
-    Q_MUL = QA * QW
-    BOPS = Q_MUL * MACS
+    BOPS = QA * QW * MACS
     BMACS = MACS * Q_MAX
     W_LOADS = QW * MACS
     A_LOADS = QA * MACS
@@ -255,7 +254,7 @@ def get_mico_conv2d_proxy(mico_type: str = 'small'):
 
     print("=" * 80)
     print(f"Best Model: {best_model_name} with {best_features_name} features")
-    print(f"Best MAPE: {best_mape*100:.2f}%, R2 score during CV")
+    print(f"Best Cross-Validation MAPE: {best_mape*100:.2f}%")
     print()
 
     # Create a fresh instance of best model and train on all data
