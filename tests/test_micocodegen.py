@@ -14,7 +14,7 @@ import shutil
 import unittest
 
 # Add the parent directory to the path
-sys.path.insert(0, '/home/runner/work/MiCo-python/MiCo-python')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import MLP, LeNet
 from MiCoCodeGen import MiCoCodeGen, MiCoTrace
