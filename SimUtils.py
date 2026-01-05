@@ -165,7 +165,7 @@ def benchmark_mico_matmul(N: int, M: int, K: int,
         f.write(f"#define K {K}\n")
 
     # Compile the benchmark
-    make_cmd = f'make recompile MAIN={mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
+    make_cmd = f'make recompile MAIN=tests/{mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
     cmd = f'cd {PWD}/project' + ' && ' + make_cmd
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -178,7 +178,7 @@ def benchmark_mico_matmul(N: int, M: int, K: int,
     
     # Run the benchmark
     cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
-        f'sh {mico_script} ../../project/{mico_main}.elf'
+        f'sh {mico_script} ../../project/tests/{mico_main}.elf'
 
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -219,7 +219,7 @@ def benchmark_mico_conv2d(H, W, C, K, KS,
         f.write(f"#define M {K}\n")
 
     # Compile the benchmark
-    make_cmd = f'make recompile MAIN={mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
+    make_cmd = f'make recompile MAIN=tests/{mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
     cmd = f'cd {PWD}/project' + ' && ' + make_cmd
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -232,7 +232,7 @@ def benchmark_mico_conv2d(H, W, C, K, KS,
     
     # Run the benchmark
     cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
-        f'sh {mico_script} ../../project/{mico_main}.elf'
+        f'sh {mico_script} ../../project/tests/{mico_main}.elf'
 
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -273,7 +273,7 @@ def benchmark_mico_pooling(C, H, W, K, S,
         f.write(f"#define S {S}\n")
 
     # Compile the benchmark
-    make_cmd = f'make recompile MAIN={mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
+    make_cmd = f'make recompile MAIN=tests/{mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
     cmd = f'cd {PWD}/project' + ' && ' + make_cmd
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -286,7 +286,7 @@ def benchmark_mico_pooling(C, H, W, K, S,
     
     # Run the benchmark
     cmd = f'cd {PWD}/hw/VexiiMico' + ' && ' + \
-        f'sh {mico_script} ../../project/{mico_main}.elf'
+        f'sh {mico_script} ../../project/tests/{mico_main}.elf'
 
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()

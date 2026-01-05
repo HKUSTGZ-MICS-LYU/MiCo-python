@@ -25,10 +25,19 @@ class WeightedEnsemble:
         y = self.wlin * y_lin + self.wxgb * y_xgb
         return y
 
+class LogXGBRegressor:
+    def __init__(self, **kwargs):
+        self.model = XGBRegressor(**kwargs)
+    def fit(self, X, y):
+        self.model.fit(X, np.log1p(y))
+    def predict(self, X):
+        y_pred_log = self.model.predict(X)
+        return np.expm1(y_pred_log)
+
 class ResidualEnsemble:
-    def __init__(self, random_state=42):
-        self.lin = XGBRegressor(booster='gblinear', random_state=random_state)
-        self.xgb = XGBRegressor(random_state=random_state)
+    def __init__(self, **kwargs):
+        self.lin = XGBRegressor(booster='gblinear', **kwargs)
+        self.xgb = XGBRegressor(**kwargs)
     def fit(self, X, y):
         self.lin.fit(X, y)
         # Get residuals
@@ -41,14 +50,19 @@ class ResidualEnsemble:
         y = y_lin + y_xgb
         return y
 
-class LogXGBRegressor:
-    def __init__(self, **kwargs):
-        self.model = XGBRegressor(**kwargs)
+class BitfusionProxy:
+    def __init__(self, model, cbops_only=False):
+        self.model = model
+        self.cbops_only = cbops_only
+
     def fit(self, X, y):
-        self.model.fit(X, np.log1p(y))
+        self.model.fit(X, y)
+
     def predict(self, X):
-        y_pred_log = self.model.predict(X)
-        return np.expm1(y_pred_log)
+        if self.cbops_only:
+            # Use only the first 3 features (BMACS, W_LOADS, A_LOADS)
+            return self.model.predict(X[:, :3])
+        return self.model.predict(X)
 
 def get_mico_matmul_proxy(mico_type: str = 'small'):
     # Load Dataset
@@ -315,8 +329,8 @@ def get_bitfusion_matmul_proxy(cbops_only: bool = False, linear: bool = False):
     X = X_cbops if cbops_only else X_cbops_plus
 
     # model = LinearRegression() if linear else XGBRegressor(booster='gblinear')
+    # model = LinearRegression() if linear else LogXGBRegressor(n_estimators=1000, max_depth=10, learning_rate=0.05, random_state=42)
     model = LinearRegression() if linear else ResidualEnsemble(random_state=42)
-
     # Evaluate
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
     mapes = []
@@ -325,11 +339,6 @@ def get_bitfusion_matmul_proxy(cbops_only: bool = False, linear: bool = False):
         X_train, X_test = X[train_index], X[test_index]
         y_train, y_test = y[train_index], y[test_index]
         
-        # Create a new instance for each fold to avoid data leakage if the model has state
-        # For simple classes we can just re-fit, but let's be safe if we can.
-        # Since we don't have a clone method, we rely on fit() resetting state or overwriting it.
-        # XGBRegressor and LinearRegression fit() overwrites.
-        # ResidualEnsemble and LogXGBRegressor fit() also overwrites.
         model.fit(X_train, y_train)
         y_pred = model.predict(X_test)
         
@@ -341,7 +350,7 @@ def get_bitfusion_matmul_proxy(cbops_only: bool = False, linear: bool = False):
 
     # Return Proxy Trained on All Data
     model.fit(X, y)
-    return model
+    return BitfusionProxy(model, cbops_only)
 
 def get_bitfusion_conv2d_proxy(cbops_only: bool = False, linear: bool = False):
     # Load Dataset
@@ -386,7 +395,7 @@ def get_bitfusion_conv2d_proxy(cbops_only: bool = False, linear: bool = False):
     X = X_cbops if cbops_only else X_cbops_plus
 
     # model = LinearRegression() if linear else XGBRegressor(booster='gblinear')
-    model = LinearRegression() if linear else LogXGBRegressor(random_state=42)
+    model = LinearRegression() if linear else LogXGBRegressor(n_estimators=1000, max_depth=10, learning_rate=0.05, random_state=42)
     # Evaluate
     kf = KFold(n_splits=5, shuffle=True, random_state=42)
     mapes = []
@@ -406,7 +415,7 @@ def get_bitfusion_conv2d_proxy(cbops_only: bool = False, linear: bool = False):
 
     # Return Proxy Trained on All Data
     model.fit(X, y)
-    return model
+    return BitfusionProxy(model, cbops_only)
 
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
@@ -417,20 +426,20 @@ if __name__ == "__main__":
     conv2d_proxy = get_bitfusion_conv2d_proxy()
     
     # Test MiCo proxies with cross-validation
-    print("\n" + "="*80)
-    print("MICO PROXY TUNING")
-    print("="*80)
+    # print("\n" + "="*80)
+    # print("MICO PROXY TUNING")
+    # print("="*80)
     
-    # Test for 'small' mico type
-    print("\n### Testing MiCo 'small' type ###")
-    mico_small_matmul_proxy = get_mico_matmul_proxy(mico_type='small')
-    mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
+    # # Test for 'small' mico type
+    # print("\n### Testing MiCo 'small' type ###")
+    # mico_small_matmul_proxy = get_mico_matmul_proxy(mico_type='small')
+    # mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
     
-    # Test for 'high' mico type
-    print("\n### Testing MiCo 'high' type ###")
-    mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
-    mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
+    # # Test for 'high' mico type
+    # print("\n### Testing MiCo 'high' type ###")
+    # mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
+    # mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
     
-    print("\n" + "="*80)
-    print("ALL PROXY TUNING COMPLETED")
-    print("="*80)
+    # print("\n" + "="*80)
+    # print("ALL PROXY TUNING COMPLETED")
+    # print("="*80)

@@ -78,13 +78,15 @@ def dist_to_roi(x, constr_func, constr_value, roi):
 
 def near_constr_sample(n_samples: int, qtypes: list, dims: int,
                        constr_func=None, constr_value=None,
-                       roi=0.2, layer_macs:list=None):
+                       roi=0.2, layer_macs:list=None, initial_pop=None):
     if constr_func is None:
         return random_sample(n_samples, qtypes)
     
     pop = []
     for q in qtypes:
         pop.append([q] * dims)
+    if initial_pop is not None:
+        pop += initial_pop
     
     gen = 0
     n_layers = dims // 2

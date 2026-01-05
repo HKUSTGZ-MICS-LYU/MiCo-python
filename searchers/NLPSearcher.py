@@ -8,7 +8,8 @@ from copy import deepcopy
 class NLPSearcher(QSearcher):
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
-                 qtypes: list = [4,5,6,7,8]) -> None:
+                 qtypes: list = [4,5,6,7,8],
+                 use_sos = False) -> None:
         super().__init__(evaluator, n_inits, qtypes)
 
         self.qbits = qtypes
@@ -16,6 +17,7 @@ class NLPSearcher(QSearcher):
         self.layer_params = self.evaluator.layer_macs
         self.layer_w = []
         self.best_trace = []
+        self.use_sos = use_sos
         return
     
     def calculate_w(self, qbits = 4):
@@ -41,7 +43,7 @@ class NLPSearcher(QSearcher):
             delta_acc = eps if delta_acc < eps else delta_acc
             w_value = delta_ops / delta_acc 
             s_value = 1.0 / w_value
-            self.layer_w.append(-s_value)
+            self.layer_w.append(float(-s_value))
         print("Layer-wise W: ", self.layer_w)
         return
 
@@ -59,7 +61,7 @@ class NLPSearcher(QSearcher):
         self.calculate_w(qbits=min(self.qbits))
         m = GEKKO(remote=False)
         m.options.IMODE = 3
-        m.options.SOLVER = 1
+        m.options.SOLVER = 3
 
         # Manual SOS1
         # q_vars = []
@@ -69,15 +71,16 @@ class NLPSearcher(QSearcher):
         #     q = m.sum([self.qbits[j] * b[j] for j in range(len(self.qbits))])
         #     q_vars.append(q)
 
-        # Integer Method
-        # q_vars = [m.CV(lb=min(self.qbits), ub=max(self.qbits), integer=True) \
-        #           for i in range(self.n_layers)]
-
-        # SOS1 Method
-        q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
-        for i in range(self.n_layers):
-            # We need to start from the highest bitwidth
-            q_vars[i].value = max(self.qbits) 
+        if self.use_sos:
+            # SOS1 Method
+            q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
+            for i in range(self.n_layers):
+                # We need to start from the highest bitwidth
+                q_vars[i].value = max(self.qbits) 
+        else:
+            # Integer Method
+            q_vars = [m.CV(lb=min(self.qbits), ub=max(self.qbits), integer=True) \
+                      for i in range(self.n_layers)]
         
         m.Equation(m.sum([(q_vars[i]**2) * self.layer_macs[i] 
                         for i in range(self.n_layers)]) <= constr_value)

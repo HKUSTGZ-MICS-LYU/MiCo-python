@@ -75,6 +75,11 @@ if __name__ == "__main__":
     print("R2:", r2)
     print("MAPE:", mape)
 
+    # Two Shot Correction
+    X_tune = X[:2]
+    Y_tune = Y[:2]
+
+    plt.plot(X, X, color='red', label='Ideal Prediction')
     plt.xlabel("Actual Latency (Cycles)")
     plt.ylabel("Predicted Latency (Cycles)")
     plt.legend()

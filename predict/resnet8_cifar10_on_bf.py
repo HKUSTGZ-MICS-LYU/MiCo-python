@@ -20,7 +20,7 @@ from searchers import (
     NLPSearcher, HAQSearcher, MiCoSearcher
 )
 
-N = 64
+N = 128
 
 random.seed(0)
 np.random.seed(0)
@@ -74,7 +74,11 @@ if __name__ == "__main__":
     print("R2:", r2)
     print("MAPE:", mape)
 
-    # plt.plot(Y, m*Y + b, color='orange', label='R^2={:.2f}, MAPE={:.2f}%'.format(r2, mape*100))
+    # Two Shot Correction
+    X_tune = X[:2]
+    Y_tune = Y[:2]
+
+    plt.plot(X, X, color='red', label='Ideal Prediction')
     plt.xlabel("Actual Latency (Cycles)")
     plt.ylabel("Predicted Latency (Cycles)")
     plt.legend()

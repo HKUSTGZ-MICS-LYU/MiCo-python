@@ -66,13 +66,18 @@ class MiCoSearcher(QSearcher):
         return self.evaluator.eval(scheme)
 
     def sample(self, n_samples: int):
+
+        # TODO: Extract High Quality Sampled Schemes
+        initial_pop = []
+
         return near_constr_sample(n_samples=n_samples,
                                  qtypes=self.qtypes,
                                  dims=self.dims,
                                  constr_func=self.constr,
                                  constr_value=self.constr_value,
                                  roi=self.roi,
-                                 layer_macs=self.evaluator.layer_macs)
+                                 layer_macs=self.evaluator.layer_macs,
+                                 initial_pop=initial_pop)
     
     def initial(self, n_samples: int):
         # return near_constr_sample(n_samples=n_samples,

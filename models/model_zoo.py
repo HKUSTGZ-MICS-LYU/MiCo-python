@@ -15,12 +15,17 @@ from datasets import (
     fashion_mnist,
     cifar10,
     cifar100,
-    tinystories
+    tinystories,
+    imagenet
 )
 
 import torch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+NUM_WORKS = 8
+
+IMAGENET_ROOT = "data"
 
 def from_zoo(name: str, shuffle = False, batch_size: int = 32):
 
@@ -28,35 +33,40 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
     train_loader, test_loader = None, None
     if name == "mlp_mnist":
         model = MLP(256, config={"Layers": [64, 64, 64, 10]}).to(device)
-        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, resize=16)
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, resize=16, num_works=NUM_WORKS)
     elif name == "lenet_mnist":
         model = LeNet(1).to(device)
-        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size)
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
     elif name == "cmsiscnn_cifar10":
         model = CmsisCNN(3).to(device)
-        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size)
+        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
     elif name == "vgg_cifar10":
         model = VGG(3, 10).to(device)
-        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size)
+        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
     elif name == "resnet8_cifar100":
         model = resnet_alt_8(100).to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
     elif name == "resnet18_cifar100":
         model = resnet_alt_18(100).to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
     elif name == "mobilenetv2_cifar100":
         model = MobileNetV2().to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
     elif name == "squeezenet_cifar100":
         model = SqueezeNet().to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size)
+        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
     elif name == "tinyllama":
         model = TinyLLaMa1M().to(device)
         train_loader, test_loader = tinystories(
             max_seq_len=model.params.max_seq_len,
             vocab_size=model.params.vocab_size,
             device=device,
-            batch_size=batch_size)
+            batch_size=batch_size,
+            num_works=NUM_WORKS)
+    elif "imagenet" in name:
+        model = name.replace("_imagenet", "")
+        train_loader, test_loader = imagenet(shuffle=shuffle,batch_size=batch_size, 
+                                             num_works=NUM_WORKS, root=IMAGENET_ROOT)
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader
