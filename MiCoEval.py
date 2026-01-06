@@ -37,7 +37,7 @@ class MiCoEval:
                  linear_group_size = 1,
                  output_json='output/json/mico_eval.json') -> None:
         
-        self.model = model.to(DEVICE)
+        self.model = model
         self.epochs = epochs
         self.train_loader = train_loader
         self.test_loader = test_loader
@@ -131,6 +131,7 @@ class MiCoEval:
             self.model = get_model(self.model, weights="DEFAULT").to(DEVICE)
             self.model = from_torch(self.model).to(DEVICE)
         else:
+            self.model = self.model.to(DEVICE)
             ckpt = torch.load(self.pretrained_model, weights_only=False)
             if "model" in ckpt:
                 ckpt = ckpt["model"]

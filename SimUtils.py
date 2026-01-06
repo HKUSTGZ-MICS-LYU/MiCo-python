@@ -5,7 +5,6 @@ import torch
 import subprocess
 
 from MiCoModel import MiCoModel
-from MiCoGraphGen import MiCoGraphGen
 
 PWD = os.getcwd()
 
@@ -15,6 +14,7 @@ def gen_sim_bitfusion(model: MiCoModel, batch_size = 1, example_input = None):
     import logging
 
     sys.path.append("hw/bitfusion")
+    from MiCoGraphGen import MiCoGraphGen
     from dnnweaver2.graph import Graph
 
     if example_input is None:
