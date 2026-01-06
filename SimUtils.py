@@ -1,4 +1,5 @@
 import os
+import re
 import sys
 import json
 import torch
@@ -83,13 +84,34 @@ def sim_mico(mico_type = "small"):
         print(proc.stderr.readlines())
         return None
     for line in output:
-        line = str(line.decode())
-        # print(line)
-        if line.startswith('[info] Execution Time: '):
-            cycles = int(line.split(': ')[1])
+        line_str = str(line.decode())
+        if 'Execution Time:' in line_str:
+            pat = r'Execution Time: (\d+)'
+            match = re.search(pat, line_str)
+            cycles = int(match.group(1))
             return cycles
     return None
 
+def run_host(main="main", opt="opt"):
+
+    # Run the benchmark
+    cmd = f'{PWD}/project/{main}.elf'
+    print("Running Host simulation...")
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    output = proc.stdout.readlines()
+    if proc.stderr:
+        print("Error in simulating the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    for line in output:
+        line_str = str(line.decode())
+        if 'Execution Time:' in line_str:
+            pat = r'Execution Time: (\d+)'
+            match = re.search(pat, line_str)
+            cycles = int(match.group(1))
+            return cycles
+    return None
 
 def benchmark_bitfusion_matmul(N:int, M:int, K:int):
 
@@ -304,7 +326,108 @@ def benchmark_mico_pooling(C, H, W, K, S,
             res.append((C, H, W, K, S, cycles))
     return res
 
+
+def benchmark_host_linear(N: int, M: int, K: int, 
+                   main="bitlinear_test",
+                   opt=""):
+    
+    res = []
+
+    # Set Matmul Size
+    with open(f"{PWD}/project/MiCo-Lib/test/{main}.h", "w") as f:
+        f.write(f"#define N {N}\n")
+        f.write(f"#define M {M}\n")
+        f.write(f"#define K {K}\n")
+
+    # Compile the benchmark
+    make_cmd = f'make recompile MAIN=tests/{main} OPT=\"{opt}\"'
+    cmd = f'cd {PWD}/project' + ' && ' + make_cmd
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    if proc.stderr:
+        print("Error in compiling the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    # print("Benchmark compiled successfully!")
+    
+    # Run the benchmark
+    cmd = f'{PWD}/project/tests/{main}.elf'
+
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    output = proc.stdout.readlines()
+    if proc.stderr:
+        print("Error in simulating the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    for line in output:
+        line = str(line.decode())
+        # Format: MiCo QAxQB Time: xxxxxx
+        if line.startswith('MiCo'):
+            qa = int(line[line.find('x')-1])
+            qb = int(line[line.find('x')+1])
+            cycles = int(line.split(': ')[1])
+            res.append((N, M, K, qa, qb, cycles))
+    return res
+
+def benchmark_host_conv2d(H, W, C, K, KS,
+                   main="bitconv2d_test",
+                   opt=""):
+    
+    # Check if mico is installed
+    if not os.path.exists(f'{PWD}/hw/VexiiMico'):
+        error = "VexiiMico not installed. Please install VexiiMico first."
+        raise FileNotFoundError(error)
+    
+    res = []
+
+    # Set Matmul Size
+    with open(f"{PWD}/project/MiCo-Lib/test/{main}.h", "w") as f:
+        f.write(f"#define N 1\n")
+        f.write(f"#define INC {C}\n")
+        f.write(f"#define INH {H}\n")
+        f.write(f"#define INW {W}\n")
+        f.write(f"#define K {KS}\n")
+        f.write(f"#define M {K}\n")
+
+    # Compile the benchmark
+    make_cmd = f'make recompile MAIN=tests/{main} OPT=\"{opt}\"'
+    cmd = f'cd {PWD}/project' + ' && ' + make_cmd
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    if proc.stderr:
+        print("Error in compiling the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    # print("Benchmark compiled successfully!")
+    
+    # Run the benchmark
+    cmd = f'{PWD}/project/tests/{main}.elf'
+
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    output = proc.stdout.readlines()
+    if proc.stderr:
+        print("Error in simulating the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+    
+    for line in output:
+        line = str(line.decode())
+        # Format: [info] MiCo QAxQB Time: xxxxxx
+        if line.startswith('MiCo'):
+            qa = int(line[line.find('x')-1])
+            qb = int(line[line.find('x')+1])
+            cycles = int(line.split(': ')[1])
+            res.append((H, W, C, K, KS, qa, qb, cycles))
+    return res
+
 # Test
 if __name__ == "__main__":
-    res = benchmark_mico_matmul(32, 32, 32, mico_main="bitlinear_test")
+    res = benchmark_host_linear(128, 256, 512, opt="")
+    print(res)
+    res = benchmark_host_conv2d(28, 28, 64, 128, 3, opt="")
     print(res)

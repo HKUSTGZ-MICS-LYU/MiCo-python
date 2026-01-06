@@ -3,6 +3,8 @@ from torchao import autoquant
 from torch import nn
 import numpy as np
 
+from typing import List, Tuple
+
 from tqdm import tqdm
 from MiCoUtils import (
     list_quantize_layers, 

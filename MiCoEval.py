@@ -72,6 +72,8 @@ class MiCoEval:
         
         self.layer_macs = [layer.get_mac() for layer in self.layers]
         self.layer_params = [layer.get_params() for layer in self.layers]
+        self.layer_type = [type(layer) for layer in self.layers]
+        self.layer_features = [layer.layer_features for layer in self.layers]
 
         # A Regression Model for Hardware Latency
         self.mico_target = "small"
@@ -86,6 +88,19 @@ class MiCoEval:
         print("FP Model Accuracy: ", self.fp_acc)
         return
     
+    def get_layer_info(self):
+        layer_info = []
+        for i in range(self.n_layers):
+            info = {
+                "Layer Index": i,
+                "Layer Type": str(self.layer_type[i]),
+                "Layer MACs": self.layer_macs[i],
+                "Layer Params": self.layer_params[i],
+                "Layer Features": self.layer_features[i]
+            }
+            layer_info.append(info)
+        return layer_info
+
     def eval(self, scheme: list):
         res = None
         if str(scheme) in self.data_trace:
@@ -164,14 +179,16 @@ class MiCoEval:
         example_input = torch.randn(1, *self.input_size).to(DEVICE)
         codegen.forward(example_input)
         for forward_pass in codegen.model_forward:
-            if ("bitconv2d" in forward_pass) or ("bitlinear" in forward_pass):
+            if ("bitconv2d" in forward_pass) or \
+                ("bitlinear" in forward_pass) or \
+                ('CONNECT' in forward_pass):
                 continue
             else:
                 layer_name = forward_pass.split('(')[0]
                 if layer_name in ignored_misc:
                     continue
                 else:
-                    layer_name = layer_name.strip('MiCo_')
+                    layer_name = layer_name.replace('MiCo_', '')
                     print("Misc Layer Name:", layer_name)
                     layer_args = forward_pass.split('(')[1].split(')')[0]
                     layer_args = layer_args.split(', ')
@@ -188,6 +205,8 @@ class MiCoEval:
                     if layer_name in ["avgpool4d_f32", "maxpool4d_f32"]:
                         layer_feature = layer_feature[4:] # Skip output shape
                         layer_feature = layer_feature[1:] # Skip batch size
+                        # TODO: Include Padding Size
+                        layer_feature = layer_feature[:-1] # Skip padding size
                     layer_feature = np.array([layer_feature])
                     print("Misc Layer Feature:", layer_feature)
                     layer_latency = self.misc_proxy(
@@ -259,15 +278,11 @@ class MiCoEval:
         layer_latencys = []
         for i in range(self.n_layers):
             layer_macs = self.layer_macs[i]
-            layer_bmacs = layer_macs * np.max([aq[i], wq[i]])
-            layer_wloads = wq[i] * layer_macs
-            layer_aloads = aq[i] * layer_macs
-            layer_features = (layer_bmacs, layer_wloads, layer_aloads)
-            layer_features += self.layers[i].layer_features
+            layer_features =  [layer_macs] + self.layer_features[i] + [aq[i], wq[i]]
+            layer_features = np.array([layer_features])
             # layer_features as int
             # layer_features_int = [int(f) for f in self.layers[i].layer_features]
             # print("Layer Features:", layer_features_int)
-            layer_features = np.array([layer_features])
             if isinstance(self.layers[i], BitConv2d):
                 layer_latencys += [float(self.conv2d_proxy.predict(layer_features)[0])]
             elif isinstance(self.layers[i], BitLinear):
@@ -288,16 +303,14 @@ class MiCoEval:
         aq = scheme[self.n_layers:]
 
         res = -1
-
+        gen_model = deepcopy(self.model)
         if target == 'bitfusion':
-            gen_model = deepcopy(self.model)
             gen_model.set_qscheme([wq, aq], group_size=self.group_size)
             self.input_size = self.train_loader.dataset[0][0].shape
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
             res = gen_sim_bitfusion(gen_model, 16, example_input) # Default Batch Size = 16
         elif target == 'mico':
             assert self.mico_target is not None, "MiCo Target not set."
-            gen_model = deepcopy(self.model)
             gen_model = fuse_model(gen_model)
             gen_model.set_qscheme([wq, aq], group_size=self.group_size)
             codegen = MiCoCodeGen(gen_model)
@@ -308,6 +321,17 @@ class MiCoEval:
             codegen.build(target="mico_fpu")
             
             res = sim_mico(self.mico_target)
+
+        elif target == 'host':
+            gen_model = fuse_model(gen_model)
+            gen_model.set_qscheme([wq, aq], group_size=self.group_size)
+            codegen = MiCoCodeGen(gen_model)
+            self.input_size = self.train_loader.dataset[0][0].shape
+            example_input = torch.randn(1, *self.input_size).to(DEVICE)
+            codegen.forward(example_input)
+            codegen.convert()
+            codegen.build(target="host")
+            
         elif target == 'proxy':
             res = self.eval_pred_latency(scheme)
         elif target == 'torchao':
