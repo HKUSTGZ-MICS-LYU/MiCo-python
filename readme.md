@@ -61,6 +61,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | Model | Layers | MPQ Search | MPQ Deploy (C) | MPQ Deploy (DNNWeaver) |
 | ----- | ------ | ---------- | ---------- | ---------- |
 | MLP   | Linear         | Supported | Supported | Supported |
+| HARMLP | Linear        | Supported | Supported | Supported |
 | LeNet | Linear, Conv2D | Supported | Supported | Supported |
 | CNN   | Linear, Conv2D | Supported | Supported | Supported |
 | VGG   | Linear, Conv2D | Supported | Supported | Supported |
@@ -80,6 +81,7 @@ Currently MiCo includes the following datasets:
 + CIFAR-10
 + CIFAR-100
 + TinyStories
++ UCI HAR (wearable sensors)
 
 ## Main Components
 Here are the main components/modules of MiCo.
