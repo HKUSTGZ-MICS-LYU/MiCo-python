@@ -71,6 +71,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | ShuffleNet | Linear, Conv2D | Supported | Supported | Not Yet |
 | LLaMa | Transformers (Linear) | Supported | Supported | Not Yet |
 | ViT   | Transformers (Linear) | Supported | Not Yet | Not Yet |
+| KWSConv1d | Linear, Conv1D | Supported | Supported | Supported |
 
 ## Supported Datasets
 
@@ -82,6 +83,7 @@ Currently MiCo includes the following datasets:
 + CIFAR-100
 + TinyStories
 + UCI HAR (wearable sensors)
++ SpeechCommands (keyword spotting)
 
 ## Main Components
 Here are the main components/modules of MiCo.

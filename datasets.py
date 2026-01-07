@@ -240,3 +240,61 @@ def uci_har(batch_size=64, num_workers=0, shuffle=True, root="data/uci_har", **k
     test_loader = DataLoader(test_dataset, batch_size, shuffle=False, num_workers=num_workers)
 
     return train_loader, test_loader
+
+
+def _speechcommands_label_to_index(walker):
+    labels = sorted({os.path.basename(os.path.dirname(p)) for p in walker})
+    return {label: idx for idx, label in enumerate(labels)}
+
+
+def speechcommands(batch_size=64, num_works=0, shuffle=True, root="data/speechcommands"):
+    import torchaudio
+    from torchaudio import transforms as T
+    from torchaudio.datasets import SPEECHCOMMANDS
+
+    class SubsetSC(SPEECHCOMMANDS):
+        def __init__(self, subset: str = None):
+            super().__init__(root, download=True)
+            def load_list(filename):
+                filepath = os.path.join(self._path, filename)
+                with open(filepath) as f:
+                    return [os.path.join(self._path, line.strip()) for line in f]
+            if subset == "validation":
+                self._walker = load_list("validation_list.txt")
+            elif subset == "testing":
+                self._walker = load_list("testing_list.txt")
+            elif subset == "training":
+                excludes = load_list("validation_list.txt") + load_list("testing_list.txt")
+                excludes = set(excludes)
+                self._walker = [w for w in self._walker if w not in excludes]
+
+    train_set = SubsetSC("training")
+    val_set = SubsetSC("validation")
+    test_set = SubsetSC("testing")
+
+    label_to_index = _speechcommands_label_to_index(train_set._walker)
+
+    target_sample_rate = 16000
+    resampler = T.Resample(orig_freq=target_sample_rate, new_freq=target_sample_rate)
+
+    def _preprocess(batch):
+        waveforms = []
+        labels = []
+        for waveform, sample_rate, label, *_ in batch:
+            if sample_rate != target_sample_rate:
+                waveform = resampler(waveform)
+            waveform = waveform.mean(dim=0, keepdim=True)
+            length = waveform.shape[-1]
+            if length < target_sample_rate:
+                pad = target_sample_rate - length
+                waveform = torch.nn.functional.pad(waveform, (0, pad))
+            else:
+                waveform = waveform[..., :target_sample_rate]
+            waveforms.append(waveform)
+            labels.append(label_to_index[label])
+        return torch.stack(waveforms), torch.tensor(labels, dtype=torch.long)
+
+    train_loader = DataLoader(train_set, batch_size, shuffle=shuffle, num_workers=num_works, collate_fn=_preprocess)
+    test_loader = DataLoader(test_set, batch_size, shuffle=False, num_workers=num_works, collate_fn=_preprocess)
+
+    return train_loader, test_loader

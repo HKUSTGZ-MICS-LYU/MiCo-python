@@ -387,4 +387,90 @@ class BitConv2d(nn.Conv2d):
             return y
         else:
             return F.conv2d(x, w, self.bias, self.stride, self.padding, 
-                    self.dilation, self.groups)
+                            self.dilation, self.groups)
+
+
+class BitConv1d(nn.Conv1d):
+
+    def __init__(self, in_channels: int, out_channels: int,
+                 kernel_size, stride=1, padding=0, dilation=1,
+                 groups=1, bias=True, padding_mode: str = 'zeros',
+                 device=None, dtype=None,
+                 qat=False, use_norm=False,
+                 qtype=DEFAULT_W_Q, act_q=DEFAULT_ACT_Q) -> None:
+        super().__init__(in_channels, out_channels, kernel_size, stride,
+                         padding, dilation, groups, bias, padding_mode,
+                         device, dtype)
+        self.stride = stride if isinstance(stride, tuple) else (stride,)
+        self.padding = padding if isinstance(padding, tuple) else (padding,)
+        self.qat = qat
+        self.qtype = qtype
+        self.act_q = act_q
+        self.use_norm = use_norm
+
+        self.qforward = False
+        self.qw = None
+        self.qw_scale = None
+        self.macs = None
+        self.act_l2 = None
+        self.layer_type = 'Conv1D'
+
+        self.in_l = None
+
+    def get_bops(self):
+        return self.macs * self.qtype * self.act_q
+
+    def get_mac(self):
+        return self.macs
+
+    def get_params(self):
+        return self.weight.numel()
+
+    def weight_quant(self, w: torch.Tensor):
+        u, s = weight_quant(w, self.qtype)
+        return u * s
+
+    def save_qweight(self):
+        self.qw, self.qw_scale = weight_quant(self.weight.data, self.qtype)
+        return
+
+    def export_qweight(self):
+        return {
+            "LayerType": "Conv1d",
+            "QType": self.qtype,
+            "ActQType": self.act_q,
+            "Scale": self.qw_scale.item(),
+            "Stride": self.stride,
+            "Padding": self.padding,
+            "Weight": self.qw.cpu().tolist(),
+        }
+
+    def rmsnorm(self, x: torch.Tensor, eps=1e-5):
+        y = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True))
+        return x / (y + eps)
+
+    def forward(self, x: torch.Tensor):
+        w = self.weight
+        if self.macs is None:
+            inl = x.shape[2]
+            self.in_l = inl
+            outc = self.out_channels
+            k = self.kernel_size[0]
+            stride = self.stride[0]
+            pad = self.padding[0]
+            outl = (inl - k + 2 * pad) / stride + 1
+            self.macs = k * self.in_channels * outl * outc
+            self.layer_features = [inl, self.in_channels, outc, k]
+        if self.qat:
+            x_norm = self.rmsnorm(x) if self.use_norm else x
+            x_quant = x_norm + (activation_nquant(x_norm, self.act_q) - x_norm).detach()
+            w_quant = w + (self.weight_quant(w) - w).detach()
+            return F.conv1d(x_quant, w_quant, self.bias, self.stride,
+                            self.padding, self.dilation, self.groups)
+        elif self.qforward is True:
+            qx = activation_nquant(x, self.act_q)
+            return F.conv1d(qx, self.qw * self.qw_scale, self.bias,
+                            self.stride, self.padding, self.dilation, self.groups)
+        else:
+            return F.conv1d(x, w, self.bias, self.stride,
+                            self.padding, self.dilation, self.groups)
