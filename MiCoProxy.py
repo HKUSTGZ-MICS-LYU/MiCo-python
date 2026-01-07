@@ -127,8 +127,9 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
         QW = data[:, 4]
 
         latency = data[:, -1]
-
         MACS = N * M * K
+        if 'bitfusion' in profile_dataset:
+            MACS = MACS / 16 # N is always 16 in Bitfusion matmul profiles    
         # N is not used for features
         RAW = (MACS, M, K, QA, QW)
     elif kernel_type == 'conv2d':
@@ -151,7 +152,6 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     model_factories = {
         'RandomForest': lambda: RandomForestRegressor(random_state=42),
         'XGBRegressor': lambda: XGBRegressor(random_state=42),
-        # 'ResidualEnsemble': lambda: ResidualEnsemble(random_state=42),
         'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
 

@@ -39,12 +39,24 @@ class MiCoSearcher(QSearcher):
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
                  qtypes: list = [4,5,6,7,8],
+                 regressor: str = "rf",
+                 initial_method: str = "orth",
+                 sample_method: str = "near-constr",
                  dim_trans: DimTransform = None) -> None:
         
         super().__init__(evaluator, n_inits, qtypes)
         
-        # self.n_inits = n_inits
-        # self.evaluator = evaluator
+        self.regressor = regressor
+        self.initial_method = initial_method
+        self.sample_method = sample_method
+        self.regressor_dict = {
+            "rf": self.rf_opt,
+            "xgb": self.xgb_opt,
+            "bayes": self.bayes_opt,
+            "bayes_ensemble": self.bayes_ensemble_opt
+        }
+        assert regressor in self.regressor_dict, f"Regressor {regressor} not supported."
+
         self.dims = self.dim
         self.qtypes = qtypes
         self.roi = 0.2 # Start with 20% ROI
@@ -53,6 +65,8 @@ class MiCoSearcher(QSearcher):
             assert self.dim_transform.out_dim == self.n_layers * 2
             self.dims = self.dim_transform.in_dim
         print("Searcher Input Dim:", self.dims)
+        self.sampled_X = None
+        self.sampled_y = None
         return
     
     def constr(self, scheme: list):
@@ -66,29 +80,38 @@ class MiCoSearcher(QSearcher):
         return self.evaluator.eval(scheme)
 
     def sample(self, n_samples: int):
+        if self.sample_method == "random":
+            n_samples = 5000 # Sample more for random sampling
+            return random_sample(n_samples, self.qtypes, self.dims)
+        elif self.sample_method == "near-constr":
+            # Extract High Quality Sampled Schemes
+            new_X = np.array(self.sampled_X[self.n_inits:])
+            new_Y = np.array(self.sampled_y[self.n_inits:])
+            topk = max(1, len(new_Y) // 4)
+            topk_indices = np.argsort(-new_Y)[:topk]
+            initial_pop = new_X[topk_indices].tolist()
 
-        # TODO: Extract High Quality Sampled Schemes
-        initial_pop = []
-
-        return near_constr_sample(n_samples=n_samples,
-                                 qtypes=self.qtypes,
-                                 dims=self.dims,
-                                 constr_func=self.constr,
-                                 constr_value=self.constr_value,
-                                 roi=self.roi,
-                                 layer_macs=self.evaluator.layer_macs,
-                                 initial_pop=initial_pop)
+            return near_constr_sample(n_samples=n_samples,
+                                     qtypes=self.qtypes,
+                                     dims=self.dims,
+                                     constr_func=self.constr,
+                                     constr_value=self.constr_value,
+                                     roi=self.roi,
+                                     layer_macs=self.evaluator.layer_macs,
+                                     initial_pop=initial_pop)
+        else:
+            raise ValueError(f"Sample method {self.sample_method} not supported.")
     
     def initial(self, n_samples: int):
-        # return near_constr_sample(n_samples=n_samples,
-        #                          qtypes=self.qtypes,
-        #                          dims=self.dims,
-        #                          constr_func=self.evaluator.constr,
-        #                          constr_value=self.constr_value)
-        return grid_sample(n_samples, self.qtypes, self.dims)
-        # return random_sample_min_max(n_samples, self.qtypes, self.dims)
+        if self.initial_method == "random":
+            return random_sample_min_max(n_samples, self.qtypes, self.dims)
+        elif self.initial_method == "orth":
+            return grid_sample(n_samples, self.qtypes, self.dims)
+        else:
+            raise ValueError(f"Initial method {self.initial_method} not supported.")
     
     def select(self, X, constr_value):
+        # Filter out the schemes that do not satisfy the constraint
         constrs = []
         for x in X:
             constrs.append(self.constr(x))
@@ -96,6 +119,34 @@ class MiCoSearcher(QSearcher):
         X = np.array(X)
         X = X[constrs].tolist()
         return X
+    
+    def optimize(self, X):
+        score = self.regressor_dict[self.regressor](X)
+
+        sort_score = np.argsort(-score)  # Descending order
+
+        # Convert sampled_X to list for reliable containment check
+        sampled_X_list = self.sampled_X
+        if isinstance(self.sampled_X, np.ndarray):
+            sampled_X_list = self.sampled_X.tolist()
+
+        topn = 0
+        best_idx = sort_score[topn]
+        best_x = X[best_idx]
+        
+        while best_x in sampled_X_list:
+            topn += 1
+            if topn >= len(X):
+                print("All candidate schemes have been sampled!")
+                topn = 0 # Fallback to best score (even if sampled)
+                break
+            best_idx = sort_score[topn]
+            best_x = X[best_idx]
+        best_y = score[best_idx]
+
+        print("Predicted Best Scheme:", best_x)
+        print("Predicted Score:", best_y)
+        return best_x, best_y
 
     def search(self, n_iter: int, target: str, 
                constr: str = None, 
@@ -107,14 +158,14 @@ class MiCoSearcher(QSearcher):
             self.constr_value = constr_value
         
         # Initialize the search space
-        sampled_X = self.initial(self.n_inits)
-        sampled_y = []
-        for x in sampled_X:
+        self.sampled_X = self.initial(self.n_inits)
+        self.sampled_y = []
+        for x in self.sampled_X:
             print("Initial Scheme:", x)
             y = self.eval(x)
             print("Initial Result:", y)
-            sampled_y.append(y)
-        sampled_y = np.array(sampled_y)
+            self.sampled_y.append(y)
+        self.sampled_y = np.array(self.sampled_y)
 
         final_x = None
         final_y = None
@@ -135,21 +186,15 @@ class MiCoSearcher(QSearcher):
             else:
                 X = self.sample(self.NUM_SAMPLES)
 
-            # best_x, best_y = self.bayes_opt(sampled_X, sampled_y, X)
-            # best_x, best_y = self.xgb_opt(sampled_X, sampled_y, X)
-            best_x, best_y = self.rf_opt(sampled_X, sampled_y, X)
-            # best_x, best_y = self.bayes_ensemble_opt(sampled_X, sampled_y, X)
-            
-            print("Predicted Best Scheme:", best_x)
-            print("Predicted Best Result:", best_y)
+            best_x, pred_y = self.optimize(X)
             eval_y = self.eval(best_x)
             print("Actual Best Result:", eval_y)
             if (final_y is None) or (eval_y > final_y):
                 final_x = best_x
                 final_y = eval_y
 
-            sampled_X = np.vstack([sampled_X, best_x])
-            sampled_y = np.append(sampled_y, eval_y)
+            self.sampled_X = np.vstack([self.sampled_X, best_x])
+            self.sampled_y = np.append(self.sampled_y, eval_y)
             
             self.best_trace.append(final_y)
 
@@ -161,10 +206,10 @@ class MiCoSearcher(QSearcher):
             print(f"Constraint Value: {constr_x} ({constr_x/constr_value:.5f})")
         return final_x, final_y
 
-    def bayes_opt(self, sampled_X, sampled_y, X):
+    def bayes_opt(self, X):
 
-        X_tensor = torch.tensor(sampled_X, dtype=torch.float)
-        Y_tensor = torch.tensor(sampled_y, dtype=torch.float).unsqueeze(-1)
+        X_tensor = torch.tensor(self.sampled_X, dtype=torch.float)
+        Y_tensor = torch.tensor(self.sampled_y, dtype=torch.float).unsqueeze(-1)
 
         gpr = SingleTaskGP(X_tensor, Y_tensor, 
                             covar_module=ScaleKernel(MaternKernel(
@@ -176,42 +221,37 @@ class MiCoSearcher(QSearcher):
         max_Y = max(Y_tensor)
         acq = LogExpectedImprovement(gpr, best_f=max_Y)
         acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
-        best = torch.argmax(acq_val)
-        best_x = X[best]
-        best_y = gpr.posterior(
-                torch.tensor([best_x], dtype=torch.float)).mean.item()
+        # best = torch.argmax(acq_val)
+        # best_x = X[best]
+        # best_y = gpr.posterior(
+        #         torch.tensor([best_x], dtype=torch.float)).mean.item()
             
-        return best_x, best_y
+        return acq_val.cpu().numpy()
     
-    def bayes_ensemble_opt(self, sampled_X, sampled_y, X):
+    def bayes_ensemble_opt(self, X):
 
-        X_tensor = torch.tensor(sampled_X, dtype=torch.float)
-        Y_tensor = torch.tensor(sampled_y, dtype=torch.float).unsqueeze(-1)
+        X_tensor = torch.tensor(self.sampled_X, dtype=torch.float)
+        Y_tensor = torch.tensor(self.sampled_y, dtype=torch.float).unsqueeze(-1)
 
         model = MPGPEnsemble(X_tensor, Y_tensor)
 
         max_Y = max(Y_tensor)
         acq = LogExpectedImprovement(model, best_f=max_Y)
         acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
-        best = torch.argmax(acq_val)
-        best_x = X[best]
-        best_x_tensor = torch.tensor(best_x, dtype=torch.float).view(1, -1)
-        best_y = model.posterior(best_x_tensor).mean.item()
-            
-        return best_x, best_y
+        # best = torch.argmax(acq_val)
+        # best_x = X[best]
+        # best_x_tensor = torch.tensor(best_x, dtype=torch.float).view(1, -1)
+        # best_y = model.posterior(best_x_tensor).mean.item()
+        return acq_val.cpu().numpy()
     
-    def xgb_opt(self, sampled_X, sampled_y, X):
+    def xgb_opt(self, X):
         xgb = XGBRegressor()
 
-        xgb.fit(sampled_X, sampled_y)
+        xgb.fit(self.sampled_X, self.sampled_y)
         y_pred = xgb.predict(X)
-        best_idx = np.argmax(y_pred)
-        best_x = X[best_idx]
-        best_y = y_pred[best_idx]
-
-        return best_x, best_y
+        return y_pred
     
-    def rf_opt(self, sampled_X, sampled_y, X):
+    def rf_opt(self, X):
         
         if self.dims > 10:
             # Prevent overfitting for high-dimensional data
@@ -222,10 +262,6 @@ class MiCoSearcher(QSearcher):
             # Use default parameters for low-dimensional data
             rf = RandomForestRegressor()
 
-        rf.fit(sampled_X, sampled_y)
+        rf.fit(self.sampled_X, self.sampled_y)
         y_pred = rf.predict(X)
-        best_idx = np.argmax(y_pred)
-        best_x = X[best_idx]
-        best_y = y_pred[best_idx]
-
-        return best_x, best_y
+        return y_pred
