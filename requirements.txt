@@ -1,9 +1,12 @@
 torch
 torchvision
-torchaudio
 botorch
 gekko
 matplotlib
+
+# for Audio Dataset
+torchaudio
+torchcodec
 
 # for LLaMa
 requests

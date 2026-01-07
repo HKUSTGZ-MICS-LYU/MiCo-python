@@ -75,8 +75,9 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         model = HARMLP().to(device)
         train_loader, test_loader = uci_har(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif name == "kws_conv1d":
-        model = KWSConv1d().to(device)
-        train_loader, test_loader = speechcommands(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+        model = KWSConv1d(n_classes=35).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=1)
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader

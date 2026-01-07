@@ -11,6 +11,7 @@ conda create -n mico_env python=3.10
 conda activate mico_env
 
 conda install pygmo
+# You can check the file to select which packages to install
 pip install -r requirements.txt
 ```
 
@@ -84,6 +85,8 @@ Currently MiCo includes the following datasets:
 + TinyStories
 + UCI HAR (wearable sensors)
 + SpeechCommands (keyword spotting)
+
+*(SpeechCommands requires a few more packages and libraries to install)*
 
 ## Main Components
 Here are the main components/modules of MiCo.

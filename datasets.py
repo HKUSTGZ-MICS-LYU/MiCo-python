@@ -252,6 +252,10 @@ def speechcommands(batch_size=64, num_works=0, shuffle=True, root="data/speechco
     from torchaudio import transforms as T
     from torchaudio.datasets import SPEECHCOMMANDS
 
+    # Check root path exists
+    if not os.path.exists(root):
+        os.makedirs(root, exist_ok=True)
+
     class SubsetSC(SPEECHCOMMANDS):
         def __init__(self, subset: str = None):
             super().__init__(root, download=True)
@@ -294,7 +298,11 @@ def speechcommands(batch_size=64, num_works=0, shuffle=True, root="data/speechco
             labels.append(label_to_index[label])
         return torch.stack(waveforms), torch.tensor(labels, dtype=torch.long)
 
-    train_loader = DataLoader(train_set, batch_size, shuffle=shuffle, num_workers=num_works, collate_fn=_preprocess)
-    test_loader = DataLoader(test_set, batch_size, shuffle=False, num_workers=num_works, collate_fn=_preprocess)
+    train_loader = DataLoader(
+        train_set, batch_size, shuffle=shuffle, 
+        num_workers=num_works, collate_fn=_preprocess)
+    test_loader = DataLoader(
+        test_set, batch_size, shuffle=False, 
+        num_workers=num_works, collate_fn=_preprocess)
 
     return train_loader, test_loader
