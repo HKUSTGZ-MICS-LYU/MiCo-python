@@ -8,6 +8,9 @@ from models import (
     resnet_alt_18,
     SqueezeNet,
     MobileNetV2,
+    HARMLP,
+    KWSConv1d,
+    DSCNNKWS,
 )
 
 from datasets import (
@@ -16,14 +19,16 @@ from datasets import (
     cifar10,
     cifar100,
     tinystories,
-    imagenet
+    imagenet,
+    uci_har,
+    speechcommands,
 )
 
 import torch
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-NUM_WORKS = 8
+NUM_WORKERS = 8
 
 IMAGENET_ROOT = "data"
 
@@ -33,19 +38,19 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
     train_loader, test_loader = None, None
     if name == "mlp_mnist":
         model = MLP(256, config={"Layers": [64, 64, 64, 10]}).to(device)
-        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, resize=16, num_works=NUM_WORKS)
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, resize=16, num_works=NUM_WORKERS)
     elif name == "lenet_mnist":
         model = LeNet(1).to(device)
-        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif "cifar10" in name:
         # Parse Model + Dataset
         model_name, dataset_name = name.split("_")
         n_classes = 10
         if dataset_name == "cifar10":
-            train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
+            train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
         elif dataset_name == "cifar100":
             n_classes = 100
-            train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
+            train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
         model_dict = {
             "cmsiscnn": CmsisCNN(3),
             "vgg": VGG(3, n_classes),
@@ -62,11 +67,22 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             vocab_size=model.params.vocab_size,
             device=device,
             batch_size=batch_size,
-            num_works=NUM_WORKS)
+            num_works=NUM_WORKERS)
     elif "imagenet" in name:
         model = name.replace("_imagenet", "")
         train_loader, test_loader = imagenet(shuffle=shuffle,batch_size=batch_size, 
-                                             num_works=NUM_WORKS, root=IMAGENET_ROOT)
+                                             num_works=NUM_WORKERS, root=IMAGENET_ROOT)
+    elif name == "har_mlp":
+        model = HARMLP().to(device)
+        train_loader, test_loader = uci_har(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+    elif name == "kws_conv1d":
+        model = KWSConv1d(n_classes=35).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=1)
+    elif name == "kws_ds_cnn":
+        model = DSCNNKWS(n_classes=35).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=1)
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader

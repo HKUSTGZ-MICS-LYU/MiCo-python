@@ -11,6 +11,7 @@ conda create -n mico_env python=3.10
 conda activate mico_env
 
 conda install pygmo
+# You can check the file to select which packages to install
 pip install -r requirements.txt
 ```
 
@@ -61,6 +62,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | Model | Layers | MPQ Search | MPQ Deploy (C) | MPQ Deploy (DNNWeaver) |
 | ----- | ------ | ---------- | ---------- | ---------- |
 | MLP   | Linear         | Supported | Supported | Supported |
+| HARMLP | Linear        | Supported | Supported | Supported |
 | LeNet | Linear, Conv2D | Supported | Supported | Supported |
 | CNN   | Linear, Conv2D | Supported | Supported | Supported |
 | VGG   | Linear, Conv2D | Supported | Supported | Supported |
@@ -70,6 +72,8 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | ShuffleNet | Linear, Conv2D | Supported | Supported | Not Yet |
 | LLaMa | Transformers (Linear) | Supported | Supported | Not Yet |
 | ViT   | Transformers (Linear) | Supported | Not Yet | Not Yet |
+| KWSConv1d | Linear, Conv1D | Supported | Supported | Supported |
+| DSCNNKWS | Linear, Conv1D (Depthwise Separable) | Supported | Supported | Supported |
 
 ## Supported Datasets
 
@@ -80,6 +84,10 @@ Currently MiCo includes the following datasets:
 + CIFAR-10
 + CIFAR-100
 + TinyStories
++ UCI HAR (wearable sensors)
++ SpeechCommands (keyword spotting)
+
+*(SpeechCommands requires a few more packages and libraries to install)*
 
 ## Main Components
 Here are the main components/modules of MiCo.
