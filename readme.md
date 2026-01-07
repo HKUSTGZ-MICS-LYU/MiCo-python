@@ -73,6 +73,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | LLaMa | Transformers (Linear) | Supported | Supported | Not Yet |
 | ViT   | Transformers (Linear) | Supported | Not Yet | Not Yet |
 | KWSConv1d | Linear, Conv1D | Supported | Supported | Supported |
+| DSCNNKWS | Linear, Conv1D (Depthwise Separable) | Supported | Supported | Supported |
 
 ## Supported Datasets
 
