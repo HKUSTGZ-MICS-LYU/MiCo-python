@@ -37,24 +37,24 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
     elif name == "lenet_mnist":
         model = LeNet(1).to(device)
         train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
-    elif name == "cmsiscnn_cifar10":
-        model = CmsisCNN(3).to(device)
-        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
-    elif name == "vgg_cifar10":
-        model = VGG(3, 10).to(device)
-        train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
-    elif name == "resnet8_cifar100":
-        model = resnet_alt_8(100).to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
-    elif name == "resnet18_cifar100":
-        model = resnet_alt_18(100).to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
-    elif name == "mobilenetv2_cifar100":
-        model = MobileNetV2().to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
-    elif name == "squeezenet_cifar100":
-        model = SqueezeNet().to(device)
-        train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
+    elif "cifar10" in name:
+        # Parse Model + Dataset
+        model_name, dataset_name = name.split("_")
+        n_classes = 10
+        if dataset_name == "cifar10":
+            train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
+        elif dataset_name == "cifar100":
+            n_classes = 100
+            train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKS)
+        model_dict = {
+            "cmsiscnn": CmsisCNN(3),
+            "vgg": VGG(3, n_classes),
+            "resnet8": resnet_alt_8(n_classes),
+            "resnet18": resnet_alt_18(n_classes),
+            "mobilenetv2": MobileNetV2(n_classes),
+            "squeezenet": SqueezeNet(n_classes)
+        }
+        model = model_dict[model_name].to(device)
     elif name == "tinyllama":
         model = TinyLLaMa1M().to(device)
         train_loader, test_loader = tinystories(
