@@ -32,7 +32,7 @@ import torch
 import torch.nn
 import torch.nn.functional as F
 
-from MiCoQLayers import BitConv2d, BitLinear
+from MiCoQLayers import BitConv1d, BitConv2d, BitLinear
 
 
 class MiCoOpRegistry:
@@ -221,6 +221,34 @@ def handle_adaptive_avg_pool2d(codegen, n, out, input_names, input_args):
     codegen.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, n.name, input_names, [output_size])
 
 
+@MiCoOpRegistry.register_function(torch.nn.functional.avg_pool1d)
+def handle_avg_pool1d(codegen, n, out, input_names, input_args):
+    """Handler for 1D average pooling function."""
+    codegen.add_uninitialized_tensor(n.name, out)
+    kernel_size = _extract_kernel_size(input_args[1])
+    stride = input_args[2] if len(input_args) > 2 else 1
+    codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, n.name, input_names, 
+                             [kernel_size, stride])
+
+
+@MiCoOpRegistry.register_function(torch.nn.functional.max_pool1d)
+def handle_max_pool1d(codegen, n, out, input_names, input_args):
+    """Handler for 1D max pooling function."""
+    codegen.add_uninitialized_tensor(n.name, out)
+    kernel_size = _extract_kernel_size(input_args[1])
+    stride = input_args[2] if len(input_args) > 2 else 1
+    codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, n.name, input_names,
+                             [kernel_size, stride])
+
+
+@MiCoOpRegistry.register_function(torch.nn.functional.adaptive_avg_pool1d)
+def handle_adaptive_avg_pool1d(codegen, n, out, input_names, input_args):
+    """Handler for 1D adaptive average pooling function."""
+    codegen.add_uninitialized_tensor(n.name, out)
+    output_size = _extract_output_size(input_args[1])
+    codegen.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, n.name, input_names, [output_size])
+
+
 @MiCoOpRegistry.register_function(torch.flatten)
 def handle_flatten(codegen, n, out, input_names, input_args):
     """Handler for flatten operation."""
@@ -238,6 +266,30 @@ def handle_cat(codegen, n, out, input_names, input_args):
 # ============================================================================
 # Module Handlers
 # ============================================================================
+
+@MiCoOpRegistry.register_module(BitConv1d)
+def handle_bitconv1d_module(codegen, n, out, module, input_names):
+    """Handler for BitConv2d quantized convolution module."""
+    layer_name = n.name
+    weight = module.weight
+    bias = module.bias
+    input_names.append(f"{layer_name}_weight")
+    input_names.append(f"{layer_name}_bias")
+
+    codegen.add_uninitialized_tensor(layer_name, out)
+    codegen.add_initialized_tensor(f"{layer_name}_weight", weight, 
+                                    quant=module.qtype, scale=module.qw_scale)
+    codegen.add_initialized_tensor(f"{layer_name}_bias", bias)
+
+    codegen.add_forward_call("MiCo_bitconv1d_{dtype}", out, layer_name, input_names, [
+        round(module.qtype),
+        round(module.act_q),
+        module.stride,   # assume same stride for both dimensions
+        module.padding,  # assume same padding for both dimensions
+        module.dilation[0], # assume same dilation for both dimensions
+        module.groups,
+        codegen.align_to
+    ])
 
 @MiCoOpRegistry.register_module(BitConv2d)
 def handle_bitconv2d_module(codegen, n, out, module, input_names):
@@ -283,6 +335,25 @@ def handle_bitlinear_module(codegen, n, out, module, input_names):
         round(module.act_q),
         codegen.align_to])
 
+@MiCoOpRegistry.register_module(torch.nn.Conv1d)
+def handle_conv1d_module(codegen, n, out, module, input_names):
+    """Handler for Conv2d module."""
+    layer_name = n.name
+    weight = module.weight
+    bias = module.bias
+    input_names.append(f"{layer_name}_weight")
+    input_names.append(f"{layer_name}_bias")
+
+    codegen.add_uninitialized_tensor(layer_name, out)
+    codegen.add_initialized_tensor(f"{layer_name}_weight", module.weight)
+    codegen.add_initialized_tensor(f"{layer_name}_bias", module.bias)
+    
+    codegen.add_forward_call("MiCo_conv1d_{dtype}", out, layer_name, input_names, [
+        module.stride[0],   # assume same stride for both dimensions
+        module.padding[0],  # assume same padding for both dimensions
+        module.dilation[0], # assume same dilation for both dimensions
+        module.groups
+    ])
 
 @MiCoOpRegistry.register_module(torch.nn.Conv2d)
 def handle_conv2d_module(codegen, n, out, module, input_names):
@@ -376,6 +447,35 @@ def handle_maxpool2d_module(codegen, n, out, module, input_names):
 @MiCoOpRegistry.register_module(torch.nn.AdaptiveAvgPool2d)
 def handle_adaptive_avgpool2d_module(codegen, n, out, module, input_names):
     """Handler for AdaptiveAvgPool2d module."""
+    layer_name = n.name
+    codegen.add_uninitialized_tensor(layer_name, out)
+    output_size = _extract_output_size(module.output_size)
+    codegen.add_forward_call("MiCo_adaptive_avgpool{dim}d_{dtype}", out, layer_name, input_names, [output_size])
+
+
+@MiCoOpRegistry.register_module(torch.nn.AvgPool1d)
+def handle_avgpool1d_module(codegen, n, out, module, input_names):
+    """Handler for AvgPool1d module."""
+    layer_name = n.name
+    codegen.add_uninitialized_tensor(layer_name, out)
+    kernel_size = _extract_kernel_size(module.kernel_size)
+    codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
+                             [kernel_size, module.stride, module.padding])
+
+
+@MiCoOpRegistry.register_module(torch.nn.MaxPool1d)
+def handle_maxpool1d_module(codegen, n, out, module, input_names):
+    """Handler for MaxPool1d module."""
+    layer_name = n.name
+    codegen.add_uninitialized_tensor(layer_name, out)
+    kernel_size = _extract_kernel_size(module.kernel_size)
+    codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
+                             [kernel_size, module.stride, module.padding])
+
+
+@MiCoOpRegistry.register_module(torch.nn.AdaptiveAvgPool1d)
+def handle_adaptive_avgpool1d_module(codegen, n, out, module, input_names):
+    """Handler for AdaptiveAvgPool1d module."""
     layer_name = n.name
     codegen.add_uninitialized_tensor(layer_name, out)
     output_size = _extract_output_size(module.output_size)

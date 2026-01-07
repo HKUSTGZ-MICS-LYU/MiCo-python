@@ -1,4 +1,4 @@
-from MiCoQLayers import BitLinear, BitConv2d
+from MiCoQLayers import BitLinear, BitConv2d, BitConv1d
 
 import copy
 import struct
@@ -154,6 +154,24 @@ def __replace_layer(model: nn.Module,
             )
             getattr(model, name).weight = weights
             getattr(model, name).bias = bias
+
+        elif isinstance(module, nn.Conv1d):
+            weight_type = weight_types_list.pop(0)
+            act_type = act_types_list.pop(0)
+            weights = module.weight
+            bias = module.bias
+            has_bias = True if (use_bias) and (module.bias is not None) else False
+            setattr(
+                model, name,
+                BitConv1d(module.in_channels, module.out_channels, module.kernel_size, 
+                          module.stride, module.padding, module.dilation, module.groups, 
+                          bias = has_bias, qtype = weight_type, act_q = act_type,
+                          qat = quant_aware, use_norm=use_norm,
+                          device=device)
+            )
+            getattr(model, name).weight = weights
+            getattr(model, name).bias = bias
+        
         else:
             __replace_layer(module, weight_types_list, act_types_list, 
                                     quant_aware=quant_aware, device=device, group_size=group_size,

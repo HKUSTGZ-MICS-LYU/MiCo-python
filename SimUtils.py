@@ -375,12 +375,7 @@ def benchmark_host_linear(N: int, M: int, K: int,
 def benchmark_host_conv2d(H, W, C, K, KS,
                    main="bitconv2d_test",
                    opt=""):
-    
-    # Check if mico is installed
-    if not os.path.exists(f'{PWD}/hw/VexiiMico'):
-        error = "VexiiMico not installed. Please install VexiiMico first."
-        raise FileNotFoundError(error)
-    
+        
     res = []
 
     # Set Matmul Size
@@ -417,7 +412,7 @@ def benchmark_host_conv2d(H, W, C, K, KS,
     
     for line in output:
         line = str(line.decode())
-        # Format: [info] MiCo QAxQB Time: xxxxxx
+        # Format: MiCo QAxQB Time: xxxxxx
         if line.startswith('MiCo'):
             qa = int(line[line.find('x')-1])
             qb = int(line[line.find('x')+1])

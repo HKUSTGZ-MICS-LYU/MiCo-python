@@ -202,7 +202,54 @@ class SimpleRMSNorm(nn.Module):
         """Forward method of SimpleRMSNorm"""
         return F.normalize(x, dim=-1) * self.scale
 
-class BitLinear(nn.Linear):
+class BitQLayer:
+    def __init__(self, qtype=DEFAULT_W_Q, act_q=DEFAULT_ACT_Q, qat=False, use_norm=False, group_size=1):
+        super().__init__()
+        self.qtype = qtype
+        self.act_q = act_q
+        self.qat = qat
+        self.use_norm = use_norm
+        self.group_size = group_size
+        
+        self.qforward = False
+        self.qw = None
+        self.qw_scale = None
+        self.macs = None
+        self.act_l2 = None
+
+    def get_bops(self):
+        return self.get_mac() * self.qtype * self.act_q
+    
+    def get_mac(self):
+        if self.macs is None:
+            return 0
+        return self.macs
+    
+    def get_params(self):
+        return self.weight.numel()
+    
+    def _weight_quant_impl(self, w):
+        if self.group_size > 1:
+            return weight_quantnb_group(w, self.qtype, dim=1, group_size=self.group_size)
+        else:
+            return weight_quant(w, self.qtype)
+
+    def weight_quant(self, w: torch.Tensor):
+        u, s = self._weight_quant_impl(w)
+        return u * s
+    
+    def save_qweight(self):
+        self.qw, self.qw_scale = self._weight_quant_impl(self.weight.data)
+    
+    def export_qweight(self):
+        return {
+            "QType": self.qtype, 
+            "ActQType": self.act_q,
+            "Scale": self.qw_scale.item(), 
+            "Weight": self.qw.cpu().tolist()
+        }
+
+class BitLinear(nn.Linear, BitQLayer):
 
     def __init__(self, in_features: int, out_features: int, bias: bool = True, 
                  device=None, dtype=None,
@@ -212,29 +259,17 @@ class BitLinear(nn.Linear):
                  qtype = DEFAULT_W_Q,
                  act_q = DEFAULT_ACT_Q) -> None:
         
-        self.qtype = qtype
-        self.act_q = act_q
-        self.qat = qat
-        self.use_norm = use_norm
-        self.act_l2 = None
+        nn.Linear.__init__(self, in_features, out_features, bias, device, dtype)
+        BitQLayer.__init__(self, qtype, act_q, qat, use_norm, group_size)
+
         self.in_w = in_features
         self.in_h = 1
-        self.group_size = group_size
 
         self.layer_features = [in_features, out_features] # M, K
         self.layer_type = 'Linear'
 
-        self.qforward = False
-        super().__init__(in_features, out_features, bias, device, dtype)
-
-    def get_bops(self):
-        return self.get_mac() * self.qtype * self.act_q
-    
     def get_mac(self):
         return self.in_features * self.out_features
-    
-    def get_params(self):
-        return self.weight.numel()
     
     def act_quant(self, x: torch.Tensor):
         if self.group_size > 1:
@@ -242,32 +277,11 @@ class BitLinear(nn.Linear):
         else:
             return activation_nquant(x, self.act_q)
 
-    def weight_quant(self, w: torch.Tensor):
-        if self.group_size > 1:
-            u, s = weight_quantnb_group(w, self.qtype, dim=1, group_size=self.group_size)
-        else:
-            u, s = weight_quant(w, self.qtype)
-        return u*s
-    
-    def save_qweight(self):
-        w = self.weight.data
-        if self.group_size > 1:
-            u, s = weight_quantnb_group(w, self.qtype, dim=1, group_size=self.group_size)
-        else:
-            u, s = weight_quant(w, self.qtype)
-        self.qw = u
-        self.qw_scale = s
-        return
-    
     def export_qweight(self):
-        # Export quantized weight in binary format
-        return {"LayerType": "Linear",
-                "QType": self.qtype, 
-                "ActQType": self.act_q,
-                "Scale": self.qw_scale.item(), 
-                "Weight": self.qw.cpu().tolist()}
+        res = super().export_qweight()
+        res["LayerType"] = "Linear"
+        return res
     
-
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         w = self.weight
         if self.qat:
@@ -288,7 +302,7 @@ class BitLinear(nn.Linear):
             return F.linear(x, w, bias=self.bias)
 
 
-class BitConv2d(nn.Conv2d):
+class BitConv2d(nn.Conv2d, BitQLayer):
 
     def __init__(self, in_channels: int, out_channels: int, 
                  kernel_size, 
@@ -302,52 +316,25 @@ class BitConv2d(nn.Conv2d):
                  use_norm = False,
                  qtype = DEFAULT_W_Q,
                  act_q = DEFAULT_ACT_Q) -> None:
-        super().__init__(in_channels, out_channels, kernel_size, stride, 
+        nn.Conv2d.__init__(self, in_channels, out_channels, kernel_size, stride, 
                          padding, dilation, groups, bias, padding_mode, 
                          device, dtype)
+        BitQLayer.__init__(self, qtype, act_q, qat, use_norm)
         self.stride = stride
         self.padding = padding
-        self.qat = qat
-        self.qtype = qtype
-        self.act_q = act_q
-        self.use_norm = use_norm
 
-        self.qforward = False
-        self.qw = None
-        self.qw_scale = None
-        self.macs = None
-        self.act_l2 = None
         self.layer_type = 'Conv2D'
-
         self.in_w = None
         self.in_h = None
-
-    def get_bops(self):
-        return self.macs * self.qtype * self.act_q
-
-    def get_mac(self):
-        return self.macs
-
-    def get_params(self):
-        return self.weight.numel()
-
-    def weight_quant(self, w: torch.Tensor):
-        u, s = weight_quant(w, self.qtype)
-        return u*s
-    
-    def save_qweight(self):
-        self.qw, self.qw_scale = weight_quant(self.weight.data, self.qtype)
-        return
     
     def export_qweight(self):
-        # Export quantized weight in binary format
-        return {"LayerType": "Conv2d",
-                "QType": self.qtype, 
-                "ActQType": self.act_q,
-                "Scale": self.qw_scale.item(),
-                "Stride": self.stride,
-                "Padding": self.padding,
-                "Weight": self.qw.cpu().tolist()}
+        res = super().export_qweight()
+        res.update({
+            "LayerType": "Conv2d",
+            "Stride": self.stride,
+            "Padding": self.padding
+        })
+        return res
 
     def rmsnorm(self, x: torch.Tensor, eps = 1e-5):
         y = torch.sqrt(torch.mean(x**2, dim=(-2,-1), keepdim=True))            
@@ -390,7 +377,7 @@ class BitConv2d(nn.Conv2d):
                             self.dilation, self.groups)
 
 
-class BitConv1d(nn.Conv1d):
+class BitConv1d(nn.Conv1d, BitQLayer):
 
     def __init__(self, in_channels: int, out_channels: int,
                  kernel_size, stride=1, padding=0, dilation=1,
@@ -398,52 +385,24 @@ class BitConv1d(nn.Conv1d):
                  device=None, dtype=None,
                  qat=False, use_norm=False,
                  qtype=DEFAULT_W_Q, act_q=DEFAULT_ACT_Q) -> None:
-        super().__init__(in_channels, out_channels, kernel_size, stride,
+        nn.Conv1d.__init__(self, in_channels, out_channels, kernel_size, stride,
                          padding, dilation, groups, bias, padding_mode,
                          device, dtype)
+        BitQLayer.__init__(self, qtype, act_q, qat, use_norm)
         self.stride = stride if isinstance(stride, tuple) else (stride,)
         self.padding = padding if isinstance(padding, tuple) else (padding,)
-        self.qat = qat
-        self.qtype = qtype
-        self.act_q = act_q
-        self.use_norm = use_norm
 
-        self.qforward = False
-        self.qw = None
-        self.qw_scale = None
-        self.macs = None
-        self.act_l2 = None
         self.layer_type = 'Conv1D'
-
         self.in_l = None
 
-    def get_bops(self):
-        return self.macs * self.qtype * self.act_q
-
-    def get_mac(self):
-        return self.macs
-
-    def get_params(self):
-        return self.weight.numel()
-
-    def weight_quant(self, w: torch.Tensor):
-        u, s = weight_quant(w, self.qtype)
-        return u * s
-
-    def save_qweight(self):
-        self.qw, self.qw_scale = weight_quant(self.weight.data, self.qtype)
-        return
-
     def export_qweight(self):
-        return {
+        res = super().export_qweight()
+        res.update({
             "LayerType": "Conv1d",
-            "QType": self.qtype,
-            "ActQType": self.act_q,
-            "Scale": self.qw_scale.item(),
             "Stride": self.stride,
-            "Padding": self.padding,
-            "Weight": self.qw.cpu().tolist(),
-        }
+            "Padding": self.padding
+        })
+        return res
 
     def rmsnorm(self, x: torch.Tensor, eps=1e-5):
         y = torch.sqrt(torch.mean(x ** 2, dim=-1, keepdim=True))

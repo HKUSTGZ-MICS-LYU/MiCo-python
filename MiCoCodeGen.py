@@ -11,7 +11,7 @@ import torch.fx
 import jinja2
 import subprocess
 
-from MiCoQLayers import BitConv2d, BitLinear, weight_quant
+from MiCoQLayers import BitQLayer, BitConv2d, BitConv1d, BitLinear, weight_quant
 from MiCoUtils import weight_export, fuse_model, fuse_model_seq, get_model_macs
 from MiCoRegistry import MiCoOpRegistry
 
@@ -22,9 +22,10 @@ Modified Trace Module to Support BitConv2d and BitLinear
 class MiCoTrace(torch.fx.Tracer):        
     def is_leaf_module(self, m: torch.nn.Module, module_qualified_name: str) -> bool:
         return (
-            ((m.__module__.startswith("torch.nn") or m.__module__.startswith("torch.ao.nn"))
-            or (isinstance(m, BitLinear) or isinstance(m, BitConv2d))
-            or (hasattr(m, "MiCo_func")))
+            ((m.__module__.startswith("torch.nn") or
+            m.__module__.startswith("torch.ao.nn"))
+            or isinstance(m, BitQLayer)
+            or hasattr(m, "MiCo_func"))
             and not isinstance(m, torch.nn.Sequential)
         )
 
@@ -547,9 +548,9 @@ void model_forward(Model* model) {{
         target_options = ""
         # compile the model
         if target == "mico":
-            target_options += "TARGET=vexii OPT=simd MARCH=rv32imc"
+            target_options += "TARGET=vexii OPT=simd MARCH=rv32imac"
         if target == "mico_fpu":
-            target_options += "TARGET=vexii OPT=simd MARCH=rv32imfc"
+            target_options += "TARGET=vexii OPT=simd MARCH=rv32imafc"
         elif target == "vexii":
             target_options += "TARGET=vexii MARCH=rv32imc"
         elif target == "vexii_fpu":
@@ -606,7 +607,7 @@ void model_forward(Model* model) {{
             if n.name == node:
                 if n.op == 'call_module':
                     module = self.get_module(n.target)
-                    is_bit_op = isinstance(module, (BitConv2d, BitLinear))
+                    is_bit_op = isinstance(module, (BitQLayer))
                     break
         return is_bit_op
     
@@ -683,7 +684,7 @@ void model_forward(Model* model) {{
                     if n.op == 'call_module':
                         module = self.get_module(n.target)
                         node_type = type(module).__name__
-                        is_bit_op = isinstance(module, (BitConv2d, BitLinear))
+                        is_bit_op = isinstance(module, (BitQLayer))
                     elif n.op == 'call_function':
                         node_type = n.target.__name__ if hasattr(n.target, '__name__') else str(n.target)
                     else:
@@ -870,7 +871,7 @@ if __name__ == "__main__":
     import MiCoUtils as mico
     from MiCoModel import from_torch
     from models import MLP, LeNet, CmsisCNN, VGG, SqueezeNet, MobileNetV2, \
-          resnet_alt_8, resnet_alt_18, shufflenet
+          resnet_alt_8, resnet_alt_18, shufflenet, KWSConv1d
 
     from torchvision.models import resnet18, ResNet18_Weights, mobilenet_v2, MobileNet_V2_Weights
 
@@ -880,6 +881,7 @@ if __name__ == "__main__":
     # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
     # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
     example_input = torch.randn(1, 3, 224, 224) # ImageNet
+    example_input = torch.randn(1, 1, 16000) # KWS 1D input
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
@@ -917,17 +919,18 @@ if __name__ == "__main__":
 
     # m = from_torch(resnet18(weights=ResNet18_Weights.IMAGENET1K_V1))
     
+    m = KWSConv1d()
     
-    m = from_torch(
-        mobilenet_v2(
-        weights=MobileNet_V2_Weights.IMAGENET1K_V1)
-    )
+    # m = from_torch(
+    #     mobilenet_v2(
+    #     weights=MobileNet_V2_Weights.IMAGENET1K_V1)
+    # )
 
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
 
     # m.load_state_dict(ckpt)
-    m.set_qscheme([weight_q, activation_q])
+    # m.set_qscheme([weight_q, activation_q])
     # m=fuse_model(m)
     m.eval()
 

@@ -377,8 +377,8 @@ if __name__ == "__main__":
 
     # example_input = torch.randn(1, 256)
     # example_input = torch.randn(1, 1, 28, 28)
-    # example_input = torch.randn(1, 3, 32, 32)
-    example_input = torch.randn(1, 3, 224, 224)
+    example_input = torch.randn(1, 3, 32, 32)
+    # example_input = torch.randn(1, 3, 224, 224)
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
@@ -389,8 +389,8 @@ if __name__ == "__main__":
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10_mp.pth")
 
-    # m = VGG(in_channels=3, num_class=10)
-    # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
+    m = VGG(in_channels=3, num_class=10)
+    ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
     # m = MobileNetV2(10)
     # ckpt = torch.load("output/ckpt/mobilenetv2_cifar10.pth")
@@ -408,8 +408,8 @@ if __name__ == "__main__":
     # ckpt = torch.load("output/ckpt/resnet18_cifar100.pth", map_location="cpu")
     # m.load_state_dict(ckpt)
 
-    m = from_torch(
-        resnet18(weights=ResNet18_Weights.IMAGENET1K_V1))
+    # m = from_torch(
+    #     resnet18(weights=ResNet18_Weights.IMAGENET1K_V1))
 
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers

@@ -13,10 +13,10 @@ class KWSConv1d(MiCoModel):
         self.default_dataset = "SPEECHCOMMANDS"
 
         self.features = nn.Sequential(
-            BitConv1d(1, 32, kernel_size=9, stride=2, padding=4, act_q=8, qtype=8),
+            nn.Conv1d(1, 32, kernel_size=9, stride=2, padding=4),
             nn.ReLU(),
             nn.MaxPool1d(4),
-            BitConv1d(32, 64, kernel_size=9, stride=2, padding=4, act_q=8, qtype=8),
+            nn.Conv1d(32, 64, kernel_size=9, stride=2, padding=4),
             nn.ReLU(),
             nn.MaxPool1d(4),
         )
