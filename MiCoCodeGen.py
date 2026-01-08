@@ -143,7 +143,7 @@ void model_forward(Model* model) {{
         
         # Gemmini mode: use different memory layout for weights
         # - For Linear: weight shape [K, M] instead of [M, K]
-        # - For Conv2d: input NHWC and weight OIKhKw
+        # - For Conv2d: weight in KhKwIO format instead of OIHW
         self.gemmini_mode = gemmini_mode
 
         self.reset()

@@ -308,10 +308,9 @@ def handle_bitconv2d_module(codegen, n, out, module, input_names):
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
 
-    # Gemmini mode: weight stays in OIHW format (OIKhKw)
-    # No transformation needed for weight, but we note that 
-    # input will be expected in NHWC format at runtime
-    # The weight shape [O, I, Kh, Kw] is already OIKhKw
+    # Gemmini mode: permute weight from OIHW [O, I, Kh, Kw] to KhKwIO [Kh, Kw, I, O]
+    if codegen.gemmini_mode:
+        weight = weight.permute(2, 3, 1, 0).contiguous()
 
     codegen.add_uninitialized_tensor(layer_name, out)
     codegen.add_initialized_tensor(f"{layer_name}_weight", weight, 
@@ -384,11 +383,12 @@ def handle_conv2d_module(codegen, n, out, module, input_names):
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
 
-    # Gemmini mode: weight stays in OIHW format (OIKhKw)
-    # No transformation needed for weight
+    # Gemmini mode: permute weight from OIHW [O, I, Kh, Kw] to KhKwIO [Kh, Kw, I, O]
+    if codegen.gemmini_mode:
+        weight = weight.permute(2, 3, 1, 0).contiguous()
 
     codegen.add_uninitialized_tensor(layer_name, out)
-    codegen.add_initialized_tensor(f"{layer_name}_weight", module.weight)
+    codegen.add_initialized_tensor(f"{layer_name}_weight", weight)
     codegen.add_initialized_tensor(f"{layer_name}_bias", module.bias)
     
     codegen.add_forward_call("MiCo_conv2d_{dtype}", out, layer_name, input_names, [

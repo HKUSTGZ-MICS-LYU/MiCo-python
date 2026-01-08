@@ -146,7 +146,7 @@ class TestGemminiModeConv2dWeight(unittest.TestCase):
             shutil.rmtree(self.temp_dir)
     
     def test_conv2d_weight_shape_gemmini_mode(self):
-        """Test that Conv2d weight shape is OIHW in Gemmini mode (same as PyTorch)."""
+        """Test that Conv2d weight shape is KhKwIO in Gemmini mode."""
         model = LeNet(1)
         weight_q = [8] * model.n_layers
         activation_q = [8] * model.n_layers
@@ -158,16 +158,43 @@ class TestGemminiModeConv2dWeight(unittest.TestCase):
         example_input = torch.randn(1, 1, 28, 28)
         codegen.forward(example_input)
         
-        # Check that weight tensor shape is [O, I, Kh, Kw]
+        # Check that weight tensor shape is [Kh, Kw, I, O] (KhKwIO format)
         # First conv layer has out_channels=6, in_channels=1, kernel_size=5
         # Tensor name is layers_0_weight
         weight_tensor = codegen.tensors['layers_0_weight']['tensor']
         self.assertEqual(len(weight_tensor.shape), 4)
-        # Shape should be [6, 1, 5, 5] (OIHW format)
-        self.assertEqual(weight_tensor.shape[0], 6)   # out_channels
-        self.assertEqual(weight_tensor.shape[1], 1)   # in_channels
-        self.assertEqual(weight_tensor.shape[2], 5)   # kernel_h
-        self.assertEqual(weight_tensor.shape[3], 5)   # kernel_w
+        # Shape should be [5, 5, 1, 6] (KhKwIO format)
+        self.assertEqual(weight_tensor.shape[0], 5)   # kernel_h
+        self.assertEqual(weight_tensor.shape[1], 5)   # kernel_w
+        self.assertEqual(weight_tensor.shape[2], 1)   # in_channels
+        self.assertEqual(weight_tensor.shape[3], 6)   # out_channels
+    
+    def test_conv2d_weight_values_permuted(self):
+        """Test that Conv2d weight values are correctly permuted in Gemmini mode."""
+        model = LeNet(1)
+        weight_q = [8] * model.n_layers
+        activation_q = [8] * model.n_layers
+        model.set_qscheme([weight_q, activation_q])
+        model = fuse_model(model)
+        model.eval()
+        
+        # Get original weight before codegen
+        original_weight = model.layers[0].weight.detach().clone()
+        
+        # Normal mode
+        codegen_normal = MiCoCodeGen(model, gemmini_mode=False)
+        example_input = torch.randn(1, 1, 28, 28)
+        codegen_normal.forward(example_input)
+        normal_weight = codegen_normal.tensors['layers_0_weight']['tensor']
+        
+        # Gemmini mode
+        codegen_gemmini = MiCoCodeGen(model, gemmini_mode=True)
+        codegen_gemmini.forward(example_input)
+        gemmini_weight = codegen_gemmini.tensors['layers_0_weight']['tensor']
+        
+        # Verify permutation: gemmini_weight should equal normal_weight.permute(2, 3, 1, 0)
+        expected_weight = normal_weight.permute(2, 3, 1, 0)
+        self.assertTrue(torch.allclose(gemmini_weight, expected_weight))
 
 
 class TestGemminiModeConvert(unittest.TestCase):
