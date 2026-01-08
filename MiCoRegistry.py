@@ -284,8 +284,8 @@ def handle_bitconv1d_module(codegen, n, out, module, input_names):
     codegen.add_forward_call("MiCo_bitconv1d_{dtype}", out, layer_name, input_names, [
         round(module.qtype),
         round(module.act_q),
-        module.stride,   # assume same stride for both dimensions
-        module.padding,  # assume same padding for both dimensions
+        module.stride[0],   # assume same stride for both dimensions
+        module.padding[0],  # assume same padding for both dimensions
         module.dilation[0], # assume same dilation for both dimensions
         module.groups,
         codegen.align_to

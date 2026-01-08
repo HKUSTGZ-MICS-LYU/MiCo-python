@@ -880,7 +880,7 @@ if __name__ == "__main__":
     # example_input = torch.randn(1, 256) # MNIST Flatten
     # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
     # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
-    example_input = torch.randn(1, 3, 224, 224) # ImageNet
+    # example_input = torch.randn(1, 3, 224, 224) # ImageNet
     example_input = torch.randn(1, 1, 16000) # KWS 1D input
 
     # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
@@ -919,7 +919,8 @@ if __name__ == "__main__":
 
     # m = from_torch(resnet18(weights=ResNet18_Weights.IMAGENET1K_V1))
     
-    m = KWSConv1d()
+    m = KWSConv1d(35)
+    ckpt = torch.load("output/ckpt/kws_conv1d.pth", map_location="cpu")
     
     # m = from_torch(
     #     mobilenet_v2(
@@ -929,8 +930,8 @@ if __name__ == "__main__":
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
 
-    # m.load_state_dict(ckpt)
-    # m.set_qscheme([weight_q, activation_q])
+    m.load_state_dict(ckpt)
+    m.set_qscheme([weight_q, activation_q])
     # m=fuse_model(m)
     m.eval()
 
