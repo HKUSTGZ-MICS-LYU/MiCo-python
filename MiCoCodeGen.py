@@ -213,6 +213,9 @@ void model_forward(Model* model) {{
         """
         Add an uninitialized tensor to the C code.
         """
+        if (len(tensor.shape) == 4) and self.gemmini_mode:
+            # Convert NCHW to NHWC for Conv2d weights
+            tensor = tensor.permute(0, 2, 3, 1).contiguous()
         self.tensors[name] = {
             "tensor": tensor,
             "initialized": False,
@@ -884,20 +887,20 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    example_input = torch.randn(1, 256) # MNIST Flatten
-    # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
+    # example_input = torch.randn(1, 256) # MNIST Flatten
+    example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
     # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
     # example_input = torch.randn(1, 3, 224, 224) # ImageNet
     # example_input = torch.randn(1, 1, 16000) # KWS 1D input
 
-    m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
-    ckpt = torch.load("output/ckpt/mlp_mnist.pth")
+    # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
+    # ckpt = torch.load("output/ckpt/mlp_mnist.pth")
 
     # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
 
-    # m = LeNet(1)
-    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    m = LeNet(1)
+    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")

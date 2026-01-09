@@ -258,7 +258,10 @@ def handle_adaptive_avg_pool1d(codegen, n, out, input_names, input_args):
 def handle_flatten(codegen, n, out, input_names, input_args):
     """Handler for flatten operation."""
     codegen.add_connect_tensor(n.name, out)
-    codegen.add_forward_call("MiCo_CONNECT", out, n.name, input_names)
+    if codegen.gemmini_mode:
+        codegen.add_forward_call("MiCo_NHWC2NCHW_flatten_{dtype}", out, n.name, input_names)
+    else:
+        codegen.add_forward_call("MiCo_CONNECT", out, n.name, input_names)
 
 
 @MiCoOpRegistry.register_function(torch.cat)
@@ -510,7 +513,10 @@ def handle_flatten_module(codegen, n, out, module, input_names):
     """Handler for Flatten module."""
     layer_name = n.name
     codegen.add_connect_tensor(layer_name, out)
-    codegen.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
+    if codegen.gemmini_mode:
+        codegen.add_forward_call("MiCo_NHWC2NCHW_flatten_{dtype}", out, layer_name, input_names)
+    else:
+        codegen.add_forward_call("MiCo_CONNECT", out, layer_name, input_names)
 
 
 @MiCoOpRegistry.register_module(torch.nn.Linear)
