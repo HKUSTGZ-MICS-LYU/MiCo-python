@@ -289,7 +289,7 @@ void model_forward(Model* model) {{
     
 
     def handle_placeholder(self, n: torch.fx.node.Node, out: torch.Tensor):
-        self.logger.log(logging.DEBUG, "placeholder:", n.name)
+        self.logger.log(logging.DEBUG, f"placeholder: {n.name}")
         self.add_uninitialized_tensor(n.name, out)
 
     def handle_get_attr(self, n: torch.fx.node.Node, out: torch.Tensor):
@@ -301,7 +301,7 @@ void model_forward(Model* model) {{
         Handle the case where the node is a call to a torch function (e.g. relu, elu, etc.)
         Uses the registry pattern to look up handlers for operations.
         """
-        self.logger.log(logging.DEBUG, "call function:", n.name, n.target, n.args)
+        self.logger.log(logging.DEBUG, f"call function: {n.name} {n.target} {n.args}")
 
         # get all the related information
         function = n.target
@@ -322,7 +322,7 @@ void model_forward(Model* model) {{
             )
         
     def handle_call_method(self, n: torch.fx.node.Node, out: torch.Tensor):
-        self.logger.log(logging.DEBUG, "call method:", n.name, n.target)
+        self.logger.log(logging.DEBUG, f"call method:  {n.name} {n.target}")
         method = n.target
         if method == "size":
             self.add_connect_tensor(n.name, out)
@@ -338,7 +338,7 @@ void model_forward(Model* model) {{
         Handle the case where the node is a call to a torch module.
         Uses the registry pattern to look up handlers for operations.
         """
-        self.logger.log(logging.DEBUG, "call module:", n.name, n.target)
+        self.logger.log(logging.DEBUG, f"call module: {n.name} {n.target}")
 
         module = self.get_module(n.target)
         layer_name = n.name
@@ -364,7 +364,7 @@ void model_forward(Model* model) {{
 
 
     def handle_output(self, n: torch.fx.node.Node, out: torch.Tensor):
-        self.logger.log(logging.DEBUG, "output:", n.name, out.shape, out.dtype)
+        self.logger.log(logging.DEBUG, f"output: {n.name} {out.shape} {out.dtype}")
         n_size = out.nelement() * out.element_size()
         
         self.add_uninitialized_tensor(n.name, out)

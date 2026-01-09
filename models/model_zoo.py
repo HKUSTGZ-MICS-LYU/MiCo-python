@@ -7,10 +7,11 @@ from models import (
     resnet_alt_8,
     resnet_alt_18,
     SqueezeNet,
+    shufflenet,
     MobileNetV2,
+    ViT,
     HARMLP,
     KWSConv1d,
-    DSCNNKWS,
 )
 
 from datasets import (
@@ -52,12 +53,14 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             n_classes = 100
             train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
         model_dict = {
+            "vit": ViT(3,n_classes),
             "cmsiscnn": CmsisCNN(3),
             "vgg": VGG(3, n_classes),
             "resnet8": resnet_alt_8(n_classes),
             "resnet18": resnet_alt_18(n_classes),
             "mobilenetv2": MobileNetV2(n_classes),
-            "squeezenet": SqueezeNet(n_classes)
+            "squeezenet": SqueezeNet(n_classes),
+            "shufflenet": shufflenet(n_classes),
         }
         model = model_dict[model_name].to(device)
     elif name == "tinyllama":
@@ -77,10 +80,6 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = uci_har(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif name == "kws_conv1d":
         model = KWSConv1d(n_classes=35).to(device)
-        train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=1)
-    elif name == "kws_ds_cnn":
-        model = DSCNNKWS(n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=1)
     else:
