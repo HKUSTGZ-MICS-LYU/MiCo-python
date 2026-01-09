@@ -140,12 +140,14 @@ void model_forward(Model* model) {{
         # initialize jinja2 code generation environment
         self.env = jinja2.Environment()
         self.align_to = align_to
-        
         # Gemmini mode: use different memory layout for weights
         # - For Linear: weight shape [K, M] instead of [M, K]
-        # - For Conv2d: weight in KhKwIO format instead of OIHW
+        # - For Conv2d: weight in HWIO format instead of OIHW
         self.gemmini_mode = gemmini_mode
-
+        if self.gemmini_mode:
+            print("Gemmini mode enabled: using Gemmini memory layout for weights.")
+            self.align_to = 1 # disable alignment for Gemmini mode
+        
         self.reset()
     
     def reset(self):
@@ -462,7 +464,7 @@ void model_forward(Model* model) {{
                         self.weight_content += tensor.detach().numpy().tobytes()
                         # If align > 32, we need to align the weight data to the specified alignment
                         # Currently only consider 64-bit alignment
-                        if len(self.weight_content) % (align_to // 8) != 0:
+                        if len(self.weight_content) % (max(1, align_to // 8)) != 0:
                             self.weight_content += b'\x00' * (len(self.weight_content) % (align_to // 8))
                     else:
                         qweight, scale = weight_quant(tensor, qbit)
@@ -882,14 +884,14 @@ if __name__ == "__main__":
 
     torch.manual_seed(0)
 
-    # example_input = torch.randn(1, 256) # MNIST Flatten
+    example_input = torch.randn(1, 256) # MNIST Flatten
     # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
     # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
     # example_input = torch.randn(1, 3, 224, 224) # ImageNet
-    example_input = torch.randn(1, 1, 16000) # KWS 1D input
+    # example_input = torch.randn(1, 1, 16000) # KWS 1D input
 
-    # m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
-    # ckpt = torch.load("output/ckpt/mlp_mnist_mp.pth")
+    m = MLP(in_features=256, config={"Layers": [64, 64, 64, 10]})
+    ckpt = torch.load("output/ckpt/mlp_mnist.pth")
 
     # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
@@ -924,8 +926,8 @@ if __name__ == "__main__":
 
     # m = from_torch(resnet18(weights=ResNet18_Weights.IMAGENET1K_V1))
     
-    m = KWSConv1d(35)
-    ckpt = torch.load("output/ckpt/kws_conv1d.pth", map_location="cpu")
+    # m = KWSConv1d(35)
+    # ckpt = torch.load("output/ckpt/kws_conv1d.pth", map_location="cpu")
     
     # m = from_torch(
     #     mobilenet_v2(
@@ -940,7 +942,7 @@ if __name__ == "__main__":
     # m=fuse_model(m)
     m.eval()
 
-    m = MiCoCodeGen(m, align_to=32)
+    m = MiCoCodeGen(m, align_to=32, gemmini_mode=True)
     m.forward(example_input)
     # m.visualize_dag("model_full.png")
     # m.visualize_dag("model_simplified.png", simplified=True)
