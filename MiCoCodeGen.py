@@ -123,7 +123,7 @@ void model_forward(Model* model) {{
         gm = torch.fx.GraphModule(model, graph)
         return graph, gm
 
-    def __init__(self, model: torch.nn.Module, align_to: int = 32, log_level: int = logging.INFO):
+    def __init__(self, model: torch.nn.Module, align_to: int = 32, log_level: int = logging.INFO, gemmini_mode: bool = False):
         graph, gm = MiCoCodeGen._extract_graph_module(model)
         super().__init__(gm)
 
@@ -140,6 +140,11 @@ void model_forward(Model* model) {{
         # initialize jinja2 code generation environment
         self.env = jinja2.Environment()
         self.align_to = align_to
+        
+        # Gemmini mode: use different memory layout for weights
+        # - For Linear: weight shape [K, M] instead of [M, K]
+        # - For Conv2d: weight in KhKwIO format instead of OIHW
+        self.gemmini_mode = gemmini_mode
 
         self.reset()
     

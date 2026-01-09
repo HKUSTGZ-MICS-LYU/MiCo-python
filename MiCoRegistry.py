@@ -187,6 +187,11 @@ def handle_linear(codegen, n, out, input_names, input_args):
         raise ValueError(f"Invalid arguments for linear function: {input_args}")
     weight = codegen.model.state_dict()[input_args[1].target]
     bias = codegen.model.state_dict()[input_args[2].target]
+    
+    # Gemmini mode: transpose weight from [M, K] to [K, M]
+    if codegen.gemmini_mode:
+        weight = weight.t().contiguous()
+    
     codegen.add_uninitialized_tensor(n.name, out)
     codegen.add_initialized_tensor(f"{input_names[1]}", weight)
     codegen.add_initialized_tensor(f"{input_names[2]}", bias)
@@ -269,12 +274,15 @@ def handle_cat(codegen, n, out, input_names, input_args):
 
 @MiCoOpRegistry.register_module(BitConv1d)
 def handle_bitconv1d_module(codegen, n, out, module, input_names):
-    """Handler for BitConv2d quantized convolution module."""
+    """Handler for BitConv1d quantized convolution module."""
     layer_name = n.name
     weight = module.weight
     bias = module.bias
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
+
+    # Gemmini mode: weight format is OIK (OutChannels, InChannels, KernelSize)
+    # No transformation needed as this is already the PyTorch format
 
     codegen.add_uninitialized_tensor(layer_name, out)
     codegen.add_initialized_tensor(f"{layer_name}_weight", weight, 
@@ -299,6 +307,10 @@ def handle_bitconv2d_module(codegen, n, out, module, input_names):
     bias = module.bias
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
+
+    # Gemmini mode: permute weight from OIHW [O, I, Kh, Kw] to KhKwIO [Kh, Kw, I, O]
+    if codegen.gemmini_mode:
+        weight = weight.permute(2, 3, 1, 0).contiguous()
 
     codegen.add_uninitialized_tensor(layer_name, out)
     codegen.add_initialized_tensor(f"{layer_name}_weight", weight, 
@@ -325,6 +337,10 @@ def handle_bitlinear_module(codegen, n, out, module, input_names):
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
 
+    # Gemmini mode: transpose weight from [M, K] to [K, M]
+    if codegen.gemmini_mode:
+        weight = weight.t().contiguous()
+
     codegen.add_uninitialized_tensor(layer_name, out)
     codegen.add_initialized_tensor(f"{layer_name}_weight", weight, 
                                     quant=module.qtype, scale=module.qw_scale)
@@ -337,12 +353,15 @@ def handle_bitlinear_module(codegen, n, out, module, input_names):
 
 @MiCoOpRegistry.register_module(torch.nn.Conv1d)
 def handle_conv1d_module(codegen, n, out, module, input_names):
-    """Handler for Conv2d module."""
+    """Handler for Conv1d module."""
     layer_name = n.name
     weight = module.weight
     bias = module.bias
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
+
+    # Gemmini mode: weight format is OIK (OutChannels, InChannels, KernelSize)
+    # No transformation needed as this is already the PyTorch format
 
     codegen.add_uninitialized_tensor(layer_name, out)
     codegen.add_initialized_tensor(f"{layer_name}_weight", module.weight)
@@ -364,8 +383,12 @@ def handle_conv2d_module(codegen, n, out, module, input_names):
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
 
+    # Gemmini mode: permute weight from OIHW [O, I, Kh, Kw] to KhKwIO [Kh, Kw, I, O]
+    if codegen.gemmini_mode:
+        weight = weight.permute(2, 3, 1, 0).contiguous()
+
     codegen.add_uninitialized_tensor(layer_name, out)
-    codegen.add_initialized_tensor(f"{layer_name}_weight", module.weight)
+    codegen.add_initialized_tensor(f"{layer_name}_weight", weight)
     codegen.add_initialized_tensor(f"{layer_name}_bias", module.bias)
     
     codegen.add_forward_call("MiCo_conv2d_{dtype}", out, layer_name, input_names, [
@@ -498,6 +521,10 @@ def handle_linear_module(codegen, n, out, module, input_names):
     bias = module.bias
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
+
+    # Gemmini mode: transpose weight from [M, K] to [K, M]
+    if codegen.gemmini_mode:
+        weight = weight.t().contiguous()
 
     codegen.add_uninitialized_tensor(layer_name, out)
     codegen.add_initialized_tensor(f"{layer_name}_weight", weight)
