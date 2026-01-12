@@ -219,7 +219,8 @@ void model_forward(Model* model) {{
         self.tensors[name] = {
             "tensor": tensor,
             "initialized": False,
-            "quantized" : quant
+            "quantized" : quant,
+            "bypass": False
         }
     
     def add_initialized_tensor(self, name: str, tensor: torch.Tensor, quant = 0, scale = 0.0):
@@ -237,7 +238,7 @@ void model_forward(Model* model) {{
     def add_connect_tensor(self, name: str, tensor: torch.Tensor, quant = 0):
         self.tensors[name] = {
             "tensor": tensor,
-            "initialized": True,
+            "initialized": False,
             "quantized" : quant,
             "bypass": True
         }
@@ -458,10 +459,8 @@ void model_forward(Model* model) {{
 
                 for i in range(dim):
                     self.model_init.append(f"model->{name}.shape[{i}] = {tensor.shape[i]};")
-
+                
                 if initialized:
-                    if tensor_dict["bypass"]:
-                        continue
                     if qbit == 0:
                         self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
                         self.weight_content += tensor.detach().numpy().tobytes()
@@ -475,6 +474,8 @@ void model_forward(Model* model) {{
                         self.weight_content += weight_export(qweight, qbit, align_to)
                         self.model_init.append(f"model->{name}.scale = {scale};")
                 else:
+                    if tensor_dict["bypass"]:
+                        continue
                     # Use memory pool instead of individual malloc
                     if name in tensor_to_pool:
                         pool_id, offset = tensor_to_pool[name]
@@ -805,7 +806,6 @@ void model_forward(Model* model) {{
                 - tensor_to_pool maps tensor names to (pool_id, offset_in_pool)
         """
         lifetimes = self.compute_tensor_lifetimes()
-        
         # Collect uninitialized tensors that need memory allocation
         tensors_to_allocate = []
         for name, tensor_info in self.tensors.items():
@@ -859,7 +859,6 @@ void model_forward(Model* model) {{
                 })
                 # New pool, tensor starts at offset 0
                 tensor_to_pool[tensor_name] = (pool_id, 0)
-        
         return memory_pools, tensor_to_pool
 
 
@@ -888,8 +887,8 @@ if __name__ == "__main__":
     torch.manual_seed(0)
 
     # example_input = torch.randn(1, 256) # MNIST Flatten
-    example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
-    # example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
+    # example_input = torch.randn(1, 1, 28, 28) # MNIST 28x28
+    example_input = torch.randn(1, 3, 32, 32) # CIFAR-10/100
     # example_input = torch.randn(1, 3, 224, 224) # ImageNet
     # example_input = torch.randn(1, 1, 16000) # KWS 1D input
 
@@ -899,14 +898,14 @@ if __name__ == "__main__":
     # m = MLP(in_features=256, config={"Layers": [61, 53, 31, 10]})
     # ckpt = torch.load("output/ckpt/mlp_mnist_misalign.pth")
 
-    m = LeNet(1)
-    ckpt = torch.load("output/ckpt/lenet_mnist.pth")
+    # m = LeNet(1)
+    # ckpt = torch.load("output/ckpt/lenet_mnist.pth")
 
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
-    # m = VGG(in_channels=3, num_class=10)
-    # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
+    m = VGG(in_channels=3, num_class=10)
+    ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
     # m = MobileNetV2(100)
     # ckpt = torch.load("output/ckpt/mobilenetv2_cifar100.pth")
@@ -945,7 +944,7 @@ if __name__ == "__main__":
     # m=fuse_model(m)
     m.eval()
 
-    m = MiCoCodeGen(m, align_to=32, gemmini_mode=True)
+    m = MiCoCodeGen(m, align_to=32, gemmini_mode = False)
     m.forward(example_input)
     # m.visualize_dag("model_full.png")
     # m.visualize_dag("model_simplified.png", simplified=True)
