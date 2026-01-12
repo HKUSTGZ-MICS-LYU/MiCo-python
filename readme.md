@@ -72,7 +72,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | ShuffleNet | Linear, Conv2D | Supported | Supported | Not Yet |
 | LLaMa | Transformers (Linear) | Supported | Supported | Not Yet |
 | ViT   | Transformers (Linear) | Supported | Not Yet | Not Yet |
-| KWSConv1d | Linear, Conv1D | Supported | Not Yet | Not Yet |
+| KWSConv1d | Linear, Conv1D | Supported | Supported | Not Yet |
 
 
 ## Supported Datasets
@@ -119,6 +119,10 @@ Here are the main components/modules of MiCo.
 + `profile`: Scripts for hardware profiling (require hardware submodules).
 + `project`: C project templates for MPQ inference on CPUs (require MiCo Library submodule).
 + `benchmark_results`: Profiled hardware kernel datasets for hardware-aware proxy models.
+
+## Chipyard Integration
+
+[doc/CHIPYARD_INTEGRATION.md](doc/CHIPYARD_INTEGRATION.md)
 
 ## Publication
 
