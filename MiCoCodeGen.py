@@ -862,15 +862,18 @@ void model_forward(Model* model) {{
             
             # Try to find an existing pool where this tensor can fit
             for pool_id, pool in enumerate(memory_pools):
+                # First check for connector-based conflicts (in-place operation prevention)
+                # This checks if any tensor in the pool conflicts with the new tensor
+                pool_tensors = set(pool['tensors'])
+                if tensor_conflicts & pool_tensors:
+                    # There's a conflict - can't use this pool
+                    continue
+                
                 # Check if this tensor's lifetime overlaps with any tensor in this pool
                 can_reuse = True
                 for existing_tensor, existing_first, existing_last in pool['intervals']:
                     # Check for overlap: [first_use, last_use] overlaps with [existing_first, existing_last]
                     if not (last_use < existing_first or first_use > existing_last):
-                        can_reuse = False
-                        break
-                    # Check for connector-based conflicts (in-place operation prevention)
-                    if existing_tensor in tensor_conflicts:
                         can_reuse = False
                         break
                 

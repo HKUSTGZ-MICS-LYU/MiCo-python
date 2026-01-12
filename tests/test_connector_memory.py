@@ -34,14 +34,15 @@ class TestConnectorMemoryPool(unittest.TestCase):
         """Set up test fixtures."""
         torch.manual_seed(42)
     
-    def _check_no_inplace_issues(self, codegen):
+    def _find_connector_conflicts(self, codegen):
         """
-        Check that no connector-related in-place issues exist.
+        Find any connector-related conflicts where source and user tensors share a pool.
         
-        Returns True if no issues found, False otherwise.
+        Returns a list of (source_tensor, user_tensor, pool_id) tuples for any conflicts found.
         """
         dag = codegen.extract_tensor_dag()
         memory_pools, tensor_to_pool = codegen.allocate_memory_pools()
+        conflicts = []
         
         for name, info in codegen.tensors.items():
             if info.get('bypass', False):
@@ -51,14 +52,19 @@ class TestConnectorMemoryPool(unittest.TestCase):
                     source_tensor = deps[0]  # The tensor the connector points to
                     # Find who uses this connector
                     users = [n for n, d in dag.items() if name in d]
-                    if users:
-                        for user in users:
-                            if source_tensor in tensor_to_pool and user in tensor_to_pool:
-                                source_pool = tensor_to_pool[source_tensor][0]
-                                user_pool = tensor_to_pool[user][0]
-                                if source_pool == user_pool:
-                                    return False, f"{source_tensor} and {user} share pool {source_pool}"
-        return True, "No issues found"
+                    for user in users:
+                        if source_tensor in tensor_to_pool and user in tensor_to_pool:
+                            source_pool = tensor_to_pool[source_tensor][0]
+                            user_pool = tensor_to_pool[user][0]
+                            if source_pool == user_pool:
+                                conflicts.append((source_tensor, user, source_pool))
+        return conflicts
+    
+    def _assert_no_connector_conflicts(self, codegen):
+        """Assert that no connector-related conflicts exist."""
+        conflicts = self._find_connector_conflicts(codegen)
+        self.assertEqual(len(conflicts), 0,
+            f"Found connector conflicts: {conflicts}")
     
     def test_mlp_connector_memory(self):
         """Test MLP model doesn't have connector memory issues."""
@@ -73,8 +79,7 @@ class TestConnectorMemoryPool(unittest.TestCase):
         example_input = torch.randn(1, 32)
         codegen.forward(example_input)
         
-        ok, msg = self._check_no_inplace_issues(codegen)
-        self.assertTrue(ok, msg)
+        self._assert_no_connector_conflicts(codegen)
     
     def test_lenet_connector_memory(self):
         """Test LeNet model doesn't have connector memory issues."""
@@ -89,8 +94,7 @@ class TestConnectorMemoryPool(unittest.TestCase):
         example_input = torch.randn(1, 1, 28, 28)
         codegen.forward(example_input)
         
-        ok, msg = self._check_no_inplace_issues(codegen)
-        self.assertTrue(ok, msg)
+        self._assert_no_connector_conflicts(codegen)
     
     def test_connector_source_not_in_user_pool(self):
         """
@@ -108,23 +112,8 @@ class TestConnectorMemoryPool(unittest.TestCase):
         example_input = torch.randn(1, 64)
         codegen.forward(example_input)
         
-        dag = codegen.extract_tensor_dag()
-        memory_pools, tensor_to_pool = codegen.allocate_memory_pools()
-        
-        # Find all connector tensors and verify their sources are not in the same pool as users
-        for name, info in codegen.tensors.items():
-            if info.get('bypass', False):
-                deps = dag.get(name, [])
-                if deps:
-                    source_tensor = deps[0]
-                    users = [n for n, d in dag.items() if name in d]
-                    for user in users:
-                        if source_tensor in tensor_to_pool and user in tensor_to_pool:
-                            source_pool = tensor_to_pool[source_tensor][0]
-                            user_pool = tensor_to_pool[user][0]
-                            self.assertNotEqual(source_pool, user_pool,
-                                f"Source tensor {source_tensor} and user tensor {user} "
-                                f"should not share pool {source_pool}")
+        # Use the helper method to check for conflicts
+        self._assert_no_connector_conflicts(codegen)
 
 
 class TestConnectorConflictDetection(unittest.TestCase):
