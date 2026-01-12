@@ -806,6 +806,36 @@ void model_forward(Model* model) {{
                 - tensor_to_pool maps tensor names to (pool_id, offset_in_pool)
         """
         lifetimes = self.compute_tensor_lifetimes()
+        dag = self.extract_tensor_dag()
+        
+        # Build connector aliasing information
+        # Connector tensors (bypass=True) share memory with their input tensor
+        # We need to prevent the source tensor from sharing a pool with tensors
+        # that use the connector as input (to avoid in-place operations)
+        connector_to_source = {}  # connector_name -> source_tensor_name
+        for name, tensor_info in self.tensors.items():
+            if tensor_info.get("bypass", False):
+                deps = dag.get(name, [])
+                if deps:
+                    # The connector points to its first dependency
+                    connector_to_source[name] = deps[0]
+        
+        # Build conflict set: tensors that must not share the same pool
+        # If tensor_A -> connector -> tensor_B, then tensor_A and tensor_B conflict
+        conflicts = {}  # tensor_name -> set of conflicting tensor names
+        for connector_name, source_name in connector_to_source.items():
+            # Find all tensors that use this connector as input
+            for node_name, deps in dag.items():
+                if connector_name in deps:
+                    # node_name uses connector_name which aliases source_name
+                    # So source_name and node_name must not share a pool
+                    if source_name not in conflicts:
+                        conflicts[source_name] = set()
+                    if node_name not in conflicts:
+                        conflicts[node_name] = set()
+                    conflicts[source_name].add(node_name)
+                    conflicts[node_name].add(source_name)
+        
         # Collect uninitialized tensors that need memory allocation
         tensors_to_allocate = []
         for name, tensor_info in self.tensors.items():
@@ -827,8 +857,18 @@ void model_forward(Model* model) {{
         for tensor_name, tensor_size, first_use, last_use in tensors_to_allocate:
             allocated = False
             
+            # Get the set of tensors that conflict with this tensor
+            tensor_conflicts = conflicts.get(tensor_name, set())
+            
             # Try to find an existing pool where this tensor can fit
             for pool_id, pool in enumerate(memory_pools):
+                # First check for connector-based conflicts (in-place operation prevention)
+                # This checks if any tensor in the pool conflicts with the new tensor
+                pool_tensors = set(pool['tensors'])
+                if tensor_conflicts & pool_tensors:
+                    # There's a conflict - can't use this pool
+                    continue
+                
                 # Check if this tensor's lifetime overlaps with any tensor in this pool
                 can_reuse = True
                 for existing_tensor, existing_first, existing_last in pool['intervals']:
