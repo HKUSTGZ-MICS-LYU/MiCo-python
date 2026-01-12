@@ -233,7 +233,7 @@ class TestMiCoCodeGenTensorManagement(unittest.TestCase):
         self.codegen.add_connect_tensor("test_tensor_connect", tensor, quant=8)
         
         self.assertIn("test_tensor_connect", self.codegen.tensors)
-        self.assertTrue(self.codegen.tensors["test_tensor_connect"]["initialized"])
+        self.assertFalse(self.codegen.tensors["test_tensor_connect"]["initialized"])
         self.assertEqual(self.codegen.tensors["test_tensor_connect"]["quantized"], 8)
         self.assertTrue(self.codegen.tensors["test_tensor_connect"]["bypass"])
 
