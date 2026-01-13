@@ -249,7 +249,7 @@ def _speechcommands_label_to_index(walker):
 
 def speechcommands(batch_size=64, num_works=0, 
                    shuffle=True, root="data/speechcommands",
-                   spectrogram: bool = False):
+                   preprocess: str = 'raw'):
     from torchaudio import transforms as T
     from torchaudio.datasets import SPEECHCOMMANDS
 
@@ -297,13 +297,21 @@ def speechcommands(batch_size=64, num_works=0,
                 waveform = waveform[..., :target_sample_rate]
             waveforms.append(waveform)
             labels.append(label_to_index[label])
-        if spectrogram:
+        if preprocess == 'spectrogram':
             spectrogram_transform = T.MelSpectrogram(
                 sample_rate=target_sample_rate,
                 n_mels=40
             )
             waveforms = [spectrogram_transform(waveform) for waveform in waveforms]
-
+        elif preprocess == 'mfcc':
+            mfcc_transform = T.MFCC(
+                sample_rate=target_sample_rate,
+                n_mfcc=64,
+                melkwargs={"n_mels": 64}
+            )
+            waveforms = [mfcc_transform(waveform) for waveform in waveforms]
+            # Reshape: (batch, n_mfcc, time)
+            # waveforms = [waveform.squeeze(0) for waveform in waveforms]
         return torch.stack(waveforms), torch.tensor(labels, dtype=torch.long)
 
     train_loader = DataLoader(
@@ -318,7 +326,7 @@ def speechcommands(batch_size=64, num_works=0,
 
 # if __name__ == "__main__":
 #     train_loader, test_loader = speechcommands(
-#         batch_size=32, num_works=1, shuffle=True, spectrogram=True
+#         batch_size=32, num_works=1, shuffle=True, preprocess='mfcc'
 #     )
 #     for batch in train_loader:
 #         waveforms, labels = batch

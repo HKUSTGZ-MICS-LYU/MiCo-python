@@ -72,7 +72,7 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | ShuffleNet | Linear, Conv2D | Supported | Supported | Not Yet |
 | LLaMa | Transformers (Linear) | Supported | Supported | Not Yet |
 | ViT   | Transformers (Linear) | Supported | Not Yet | Not Yet |
-| KWSConv1d | Linear, Conv1D | Supported | Supported | Not Yet |
+| M5    | Linear, Conv1D | Supported | Supported | Not Yet |
 | DS CNN    | Linear, Conv2D | Supported | Supported | Supported |
 
 

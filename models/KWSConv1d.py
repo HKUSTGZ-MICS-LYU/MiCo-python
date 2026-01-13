@@ -2,7 +2,6 @@ import torch
 from torch import nn
 
 from MiCoModel import MiCoModel
-from MiCoQLayers import BitConv1d
 
 
 class KWSConv1d(MiCoModel):

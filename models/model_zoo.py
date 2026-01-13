@@ -82,14 +82,22 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
 
         model = KWSConv1d(n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=1)
+            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+    elif name == "m5_kws":
+        from models.M5 import M5
+        from datasets import speechcommands
+
+        model = M5(n_input=1, n_output=35, stride=16, n_channel=32).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif name == "dscnn_kws":
         from models.DSCNN import DSCNN
         from datasets import speechcommands
 
-        model = DSCNN(n_classes=35).to(device)
+        model = DSCNN(n_classes=35, input_size=[64, 81]).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=1, spectrogram=True)
+            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS, 
+            preprocess="mfcc")
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader
