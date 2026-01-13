@@ -300,9 +300,7 @@ def speechcommands(batch_size=64, num_works=0,
         if spectrogram:
             spectrogram_transform = T.MelSpectrogram(
                 sample_rate=target_sample_rate,
-                n_mels=32,
-                n_fft=1024,
-                hop_length=512
+                n_mels=40
             )
             waveforms = [spectrogram_transform(waveform) for waveform in waveforms]
 

@@ -15,19 +15,21 @@ class DSCNN(MiCoModel):
     n_blocks = 4
     default_dataset = "SPEECHCOMMANDS_2D"
 
-    def __init__(self, in_channels: int = 1, n_classes = 35, input_size = 32) -> None:
+    def __init__(self, in_channels: int = 1, n_classes = 35, input_size = [40, 81]) -> None:
         super(DSCNN, self).__init__()
 
         self.in_channels = in_channels
         self.input_size = input_size
-        self.flat_size = ((input_size // 2) ** 2) * self.n_filters * in_channels
+        self.flat_size = (self.input_size[0] // 2, self.input_size[1] // 2)
+        self.final_size = self.n_filters * self.flat_size[0] * self.flat_size[1]
         self.default_dataset = "SPEECHCOMMANDS_2D"
         input_conv = [
             # Input Conv
-            nn.Conv2d(in_channels, self.n_filters, kernel_size=(3,3), 
+            nn.Conv2d(in_channels, self.n_filters, kernel_size=(10,4), 
                       stride=(2,2), padding=2),
             nn.BatchNorm2d(self.n_filters),
-            nn.ReLU()
+            nn.ReLU(),
+            nn.Dropout(0.2)
         ]
 
         depthwise_blocks = []
@@ -46,9 +48,9 @@ class DSCNN(MiCoModel):
 
         output_conv = [
             nn.Dropout(0.4),
-            nn.AdaptiveAvgPool2d((input_size//2, input_size//2)),
+            nn.AdaptiveAvgPool2d((self.flat_size[0], self.flat_size[1])),
             nn.Flatten(),
-            nn.Linear(self.flat_size, n_classes),
+            nn.Linear(self.final_size, n_classes),
         ]
 
         layers = input_conv + depthwise_blocks + output_conv
@@ -64,7 +66,7 @@ class DSCNN(MiCoModel):
 # if __name__ == "__main__":
 
 #     model = DSCNN(in_channels=1, n_classes=35)
-#     x = torch.randn((1,1,32,32))
+#     x = torch.randn((1,1,40,81))
 #     y = model(x)
 #     print(y.shape)
 
