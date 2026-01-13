@@ -1,4 +1,4 @@
-from MiCoQLayers import BitLinear, BitConv2d, BitConv1d
+from MiCoQLayers import BitLinear, BitConv2d, BitConv1d, BitQLayer
 
 import copy
 import struct
@@ -18,7 +18,9 @@ from torchao.quantization.quant_api import(
 def list_quantize_layers(model: nn.Module):
     layers = []
     for name, module in model.named_children():
-        if isinstance(module, nn.Linear) or isinstance(module, nn.Conv2d):
+        if isinstance(module, nn.Linear) \
+            or isinstance(module, nn.Conv2d) \
+            or isinstance(module, nn.Conv1d):
             layers.append(module)
         else:
             layers += list_quantize_layers(module)
@@ -27,7 +29,7 @@ def list_quantize_layers(model: nn.Module):
 def list_qlayers(model: nn.Module):
     layers = []
     for name, module in model.named_children():
-        if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
+        if isinstance(module, BitQLayer):
             layers.append(module)
         else:
             layers += list_qlayers(module)
@@ -36,7 +38,7 @@ def list_qlayers(model: nn.Module):
 def list_qlayers_names(model: nn.Module):
     layers = []
     for name, module in model.named_children():
-        if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
+        if isinstance(module, BitQLayer):
             layers.append(name)
         else:
             layers += list_quantize_layers(module)
@@ -180,7 +182,7 @@ def __replace_layer(model: nn.Module,
 
 def set_to_qforward(model: nn.Module):
     for name, module in model.named_children():
-        if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
+        if isinstance(module, BitQLayer):
             module.qforward = True
             module.save_qweight()
         else:
@@ -189,7 +191,7 @@ def set_to_qforward(model: nn.Module):
 
 def unset_qforward(model: nn.Module):
     for name, module in model.named_children():
-        if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
+        if isinstance(module, BitQLayer):
             module.qforward = False
             module.qw = None
             module.qw_scale = None
@@ -220,7 +222,7 @@ def get_model_params(model: nn.Module):
 def get_model_size(model: nn.Module):
     size = 0
     for name, module in model.named_children():
-        if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
+        if isinstance(module, BitQLayer):
             size += module.weight.numel() * module.qtype
         else:
             size += get_model_size(module)
@@ -229,9 +231,7 @@ def get_model_size(model: nn.Module):
 def get_model_macs(model: nn.Module):
     macs = 0
     for name, module in model.named_children():
-        if isinstance(module, BitLinear):
-            macs += module.get_mac()
-        elif isinstance(module, BitConv2d):
+        if isinstance(module, BitQLayer):
             macs += module.get_mac()
         else:
             macs += get_model_macs(module)
@@ -240,7 +240,7 @@ def get_model_macs(model: nn.Module):
 def export_layer_weights(model: nn.Module):
     data = {}
     for name, module in model.named_children():
-        if isinstance(module, BitLinear) or isinstance(module, BitConv2d):
+        if isinstance(module, BitQLayer):
             data[name] = module.export_qweight()
         else:
             sub_data = export_layer_weights(module)

@@ -30,6 +30,8 @@ class M5(MiCoModel):
             nn.Linear(2 * n_channel, n_output)
         ]
         self.layers = nn.Sequential(*self.layers)
+        self.n_layers = len(self.get_qlayers())
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = self.layers(x)
         return x

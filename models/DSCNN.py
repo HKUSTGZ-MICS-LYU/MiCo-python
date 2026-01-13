@@ -56,6 +56,7 @@ class DSCNN(MiCoModel):
         layers = input_conv + depthwise_blocks + output_conv
 
         self.layers = nn.Sequential(*layers)
+        self.n_layers = len(self.get_qlayers())
         return
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
