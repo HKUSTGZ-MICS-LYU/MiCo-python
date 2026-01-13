@@ -9,6 +9,8 @@ from models.SqueezeNet import SqueezeNet
 from models.ShuffleNet import shufflenet
 from models.HARMLP import HARMLP
 from models.KWSConv1d import KWSConv1d
+from models.DSCNN import DSCNN
+
 
 from models.LLaMa import Transformer, TinyLLaMa28M, TinyLLaMa11M, TinyLLaMa7M, TinyLLaMa3M, TinyLLaMa1M, TinyLLaMa447K
 from models.ViT import ViT, ViT1M_cifar10, ViT1M_cifar100, ViTNAS

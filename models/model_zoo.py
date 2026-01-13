@@ -11,7 +11,6 @@ from models import (
     MobileNetV2,
     ViT,
     HARMLP,
-    KWSConv1d,
 )
 
 from datasets import (
@@ -22,7 +21,6 @@ from datasets import (
     tinystories,
     imagenet,
     uci_har,
-    speechcommands,
 )
 
 import torch
@@ -79,9 +77,19 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         model = HARMLP().to(device)
         train_loader, test_loader = uci_har(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif name == "kws_conv1d":
+        from models import KWSConv1d
+        from datasets import speechcommands
+
         model = KWSConv1d(n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=1)
+    elif name == "dscnn_kws":
+        from models.DSCNN import DSCNN
+        from datasets import speechcommands
+
+        model = DSCNN(n_classes=35).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=1, spectrogram=True)
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader

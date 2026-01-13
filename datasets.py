@@ -247,8 +247,9 @@ def _speechcommands_label_to_index(walker):
     return {label: idx for idx, label in enumerate(labels)}
 
 
-def speechcommands(batch_size=64, num_works=0, shuffle=True, root="data/speechcommands"):
-    import torchaudio
+def speechcommands(batch_size=64, num_works=0, 
+                   shuffle=True, root="data/speechcommands",
+                   spectrogram: bool = False):
     from torchaudio import transforms as T
     from torchaudio.datasets import SPEECHCOMMANDS
 
@@ -296,6 +297,15 @@ def speechcommands(batch_size=64, num_works=0, shuffle=True, root="data/speechco
                 waveform = waveform[..., :target_sample_rate]
             waveforms.append(waveform)
             labels.append(label_to_index[label])
+        if spectrogram:
+            spectrogram_transform = T.MelSpectrogram(
+                sample_rate=target_sample_rate,
+                n_mels=32,
+                n_fft=1024,
+                hop_length=512
+            )
+            waveforms = [spectrogram_transform(waveform) for waveform in waveforms]
+
         return torch.stack(waveforms), torch.tensor(labels, dtype=torch.long)
 
     train_loader = DataLoader(
@@ -306,3 +316,13 @@ def speechcommands(batch_size=64, num_works=0, shuffle=True, root="data/speechco
         num_workers=num_works, collate_fn=_preprocess)
 
     return train_loader, test_loader
+
+
+# if __name__ == "__main__":
+#     train_loader, test_loader = speechcommands(
+#         batch_size=32, num_works=1, shuffle=True, spectrogram=True
+#     )
+#     for batch in train_loader:
+#         waveforms, labels = batch
+#         print(waveforms.shape, labels.shape)
+#         break
