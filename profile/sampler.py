@@ -344,10 +344,15 @@ class ProfileSampler(ABC):
                     lo = max(r[0], int(center_val * (1 - range_factor)))
                     hi = min(r[1], int(center_val * (1 + range_factor)))
                     
-                    use_log = param in self.log_scale_params and lo > 0
-                    if use_log and lo > 0:
+                    # Ensure valid range (lo < hi)
+                    if lo >= hi:
+                        lo = r[0]
+                        hi = r[1]
+                    
+                    use_log = param in self.log_scale_params and lo > 0 and hi > 0
+                    if use_log:
                         val = math.exp(
-                            random.uniform(math.log(max(1, lo)), math.log(hi))
+                            random.uniform(math.log(max(1, lo)), math.log(max(1, hi)))
                         )
                     else:
                         val = random.uniform(lo, hi)

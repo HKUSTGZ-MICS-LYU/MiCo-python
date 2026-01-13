@@ -293,6 +293,33 @@ class TestAdaptiveSampling(unittest.TestCase):
                     break
         
         self.assertTrue(found_near_error)
+    
+    def test_fine_grained_boundary_edge_case(self):
+        """Test fine-grained sampling near boundaries."""
+        sampler = MatMulSampler(
+            ranges={'N': [16], 'M': (16, 64), 'K': (16, 64)},
+            strategy='adaptive',
+            seed=42
+        )
+        
+        # Error samples at boundaries - this should not crash
+        error_samples = [(16, 16, 16), (16, 64, 64)]
+        
+        samples = sampler.generate(
+            num_samples=20,
+            error_samples=error_samples,
+            show_progress=False
+        )
+        
+        self.assertEqual(len(samples), 20)
+        # All samples should be within valid ranges
+        for sample in samples:
+            N, M, K = sample
+            self.assertEqual(N, 16)
+            self.assertGreaterEqual(M, 16)
+            self.assertLessEqual(M, 64)
+            self.assertGreaterEqual(K, 16)
+            self.assertLessEqual(K, 64)
 
 
 if __name__ == "__main__":
