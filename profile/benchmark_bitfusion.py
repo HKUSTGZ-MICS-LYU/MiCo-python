@@ -2,6 +2,10 @@ from SimUtils import benchmark_bitfusion_matmul, benchmark_bitfusion_conv2d, gen
 
 from itertools import product
 from tqdm import tqdm
+
+# Import shared samplers for adaptive profiling
+from profile.sampler import MatMulSampler, Conv2DSampler
+
 if __name__ == '__main__':
 
     # MatMul Benchmark
@@ -25,6 +29,16 @@ if __name__ == '__main__':
     #     for row in dataset:
     #         f.write(','.join(map(str, row)) + '\n')
 
+    # --- Example: Adaptive MatMul Benchmark using sampler ---
+    # sampler = MatMulSampler(
+    #     ranges={'N': [16], 'M': (64, 4096), 'K': (64, 4096)},
+    #     strategy='adaptive'  # 'random', 'corner', 'prior', 'lhs', 'adaptive'
+    # )
+    # matmul_samples = sampler.generate(num_samples=100)
+    # for N, M, K in tqdm(matmul_samples, desc="Adaptive MatMul"):
+    #     res = benchmark_bitfusion_matmul(N, M, K)
+    #     ...
+
     # Conv2D Benchmark
 
     HWs = [8, 32, 64]
@@ -44,3 +58,13 @@ if __name__ == '__main__':
         f.write('H,W,C,K,Ks,QA,QW,Time\n')
         for row in dataset:
             f.write(','.join(map(str, row)) + '\n')
+
+    # --- Example: Adaptive Conv2D Benchmark using sampler ---
+    # sampler = Conv2DSampler(
+    #     ranges={'HW': (8, 64), 'C': (1, 256), 'K': (16, 256), 'KS': [1, 3, 5]},
+    #     strategy='adaptive'
+    # )
+    # conv2d_samples = sampler.generate(num_samples=100)
+    # for HW, C, K, KS in tqdm(conv2d_samples, desc="Adaptive Conv2D"):
+    #     res = benchmark_bitfusion_conv2d(HW, HW, C, K, KS)
+    #     ...
