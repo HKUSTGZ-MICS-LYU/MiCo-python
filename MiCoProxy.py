@@ -38,6 +38,15 @@ class LogXGBRegressor:
         y_pred_log = self.model.predict(X)
         return np.expm1(y_pred_log)
 
+class LogRandomForestRegressor:
+    def __init__(self, **kwargs):
+        self.model = RandomForestRegressor(**kwargs)
+    def fit(self, X, y):
+        self.model.fit(X, np.log1p(y))
+    def predict(self, X):
+        y_pred_log = self.model.predict(X)
+        return np.expm1(y_pred_log)
+
 class ResidualEnsemble:
     def __init__(self, **kwargs):
         self.lin = XGBRegressor(booster='gblinear', **kwargs)
@@ -150,12 +159,14 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
 
     # Model factories - functions that create new model instances
     model_factories = {
-        'RandomForest': lambda: RandomForestRegressor(random_state=42),
-        'XGBRegressor': lambda: XGBRegressor(random_state=42),
-        'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+        # 'RandomForest': lambda: RandomForestRegressor(random_state=42),
+        'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+        # 'XGBRegressor': lambda: XGBRegressor(random_state=42),
+        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
 
-    feature_sets = ['raw', 'bops+', 'cbops', 'cbops+']
+    # feature_sets = ['raw', 'bops+', 'cbops', 'cbops+']
+    feature_sets = ['cbops+']
 
     best_mape = float('inf')
     best_model_factory = None
@@ -238,10 +249,10 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     return pred
 
 def get_bitfusion_matmul_proxy():
-    return get_proxy('benchmark_results/bitfusion_matmul.csv', 'matmul')
+    return get_proxy('benchmark_results/bitfusion_matmul_samples.csv', 'matmul')
 
 def get_bitfusion_conv2d_proxy():
-    return get_proxy('benchmark_results/bitfusion_conv2d.csv', 'conv2d')
+    return get_proxy('benchmark_results/bitfusion_conv2d_samples.csv', 'conv2d')
 
 def get_host_matmul_proxy(opt="opt"):
     return get_proxy(
@@ -249,13 +260,19 @@ def get_host_matmul_proxy(opt="opt"):
         'matmul'
     )
 
+def get_host_conv2d_proxy(opt="opt"):
+    return get_proxy(
+        f'benchmark_results/host_{opt}_bitconv2d_test.csv',
+        'conv2d'
+    )
+
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
-    print("\n" + "="*80)
-    print("BITFUSION PROXY TUNING")
-    print("="*80)
-    matmul_proxy = get_bitfusion_matmul_proxy()
-    conv2d_proxy = get_bitfusion_conv2d_proxy()
+    # print("\n" + "="*80)
+    # print("BITFUSION PROXY TUNING")
+    # print("="*80)
+    # matmul_proxy = get_bitfusion_matmul_proxy()
+    # conv2d_proxy = get_bitfusion_conv2d_proxy()
     
     # # Test MiCo proxies with cross-validation
     # print("\n" + "="*80)
@@ -273,12 +290,13 @@ if __name__ == "__main__":
     # mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
     
     # # Test Host MatMul proxy with cross-validation
-    # print("\n" + "="*80)
-    # print("HOST PROXY TUNING")
-    # print("="*80)
+    print("\n" + "="*80)
+    print("HOST PROXY TUNING")
+    print("="*80)
 
     # print("\n### Testing Host 'opt' proxy ###")
-    # host_matmul_proxy = get_host_matmul_proxy(opt="opt")
+    host_matmul_proxy = get_host_matmul_proxy(opt="opt")
+    host_conv2d_proxy = get_host_conv2d_proxy(opt="opt")
 
     # print("\n### Testing Host 'lut' proxy ###")
     # host_matmul_proxy_lut = get_host_matmul_proxy(opt="lut")
