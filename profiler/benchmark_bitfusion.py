@@ -4,7 +4,7 @@ from itertools import product
 from tqdm import tqdm
 
 # Import shared samplers for adaptive profiling
-from profile.sampler import MatMulSampler, Conv2DSampler
+from profiler.sampler import MatMulSampler, Conv2DSampler
 
 if __name__ == '__main__':
 

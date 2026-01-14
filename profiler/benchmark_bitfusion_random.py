@@ -4,7 +4,7 @@ from tqdm import tqdm
 import os
 
 # Import the shared sampler classes
-from profile.sampler import MatMulSampler, Conv2DSampler
+from profiler.sampler import MatMulSampler, Conv2DSampler
 
 
 def generate_matmul_samples(num_samples, ranges, strategy='adaptive'):
