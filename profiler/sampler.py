@@ -26,7 +26,7 @@ import math
 from abc import ABC, abstractmethod
 from typing import Dict, List, Tuple, Union, Set, Any, Optional
 from tqdm import tqdm
-
+from itertools import product
 
 # Type alias for range specification
 RangeSpec = Union[int, List[int], Tuple[int, int]]
@@ -476,9 +476,7 @@ class MatMulSampler(ProfileSampler):
         m_values = self.get_corner_values(self.ranges['M'])
         k_values = self.get_corner_values(self.ranges['K'])
         
-        for n in n_values:
-            for m in m_values:
-                for k in k_values:
+        for n, m, k in product(n_values, m_values, k_values):
                     samples.add((n, m, k))
         
         return samples
@@ -496,12 +494,8 @@ class MatMulSampler(ProfileSampler):
         k_priors = self.get_prior_values(
             self.ranges['K'], self.PRIOR_CHANNELS
         )
-        
-        for n in n_priors:
-            for m in m_priors:
-                for k in k_priors:
-                    samples.add((n, m, k))
-        
+        for n, m, k in product(n_priors, m_priors, k_priors):
+            samples.add((n, m, k))
         return samples
 
 
@@ -542,16 +536,17 @@ class Conv2DSampler(ProfileSampler):
         )
     
     def _generate_sample(self) -> Tuple[int, int, int, int]:
-        """Generate a single Conv2D sample (HW, C, K, KS)."""
+        """Generate a single Conv2D sample (HW, C, K, KS, S)."""
         HW = self.get_random_val(self.ranges['HW'], log_scale=False)
         C = self.get_random_val(self.ranges['C'], log_scale=True)
         K = self.get_random_val(self.ranges['K'], log_scale=True)
         KS = self.get_random_val(self.ranges['KS'])
-        return (HW, C, K, KS)
+        S = self.get_random_val(self.ranges['S'])
+        return (HW, C, K, KS, S)
     
     def _validate_sample(self, sample: Tuple) -> bool:
         """Validate Conv2D sample (kernel size <= feature map size)."""
-        HW, C, K, KS = sample
+        HW, C, K, KS, S = sample
         return KS <= HW
     
     def _get_corner_samples(self) -> Set[Tuple[int, int, int, int]]:
@@ -562,13 +557,12 @@ class Conv2DSampler(ProfileSampler):
         c_values = self.get_corner_values(self.ranges['C'])
         k_values = self.get_corner_values(self.ranges['K'])
         ks_values = self.get_corner_values(self.ranges['KS'])
+        s_values = self.get_corner_values(self.ranges['S'])
         
-        for hw in hw_values:
-            for c in c_values:
-                for k in k_values:
-                    for ks in ks_values:
-                        if ks <= hw:
-                            samples.add((hw, c, k, ks))
+        value_space = product(hw_values, c_values, k_values, ks_values, s_values)
+        for (hw, c, k, ks, s) in value_space:
+            if ks <= hw:
+               samples.add((hw, c, k, ks, s))
         
         return samples
     
@@ -582,13 +576,12 @@ class Conv2DSampler(ProfileSampler):
         ks_priors = self.get_prior_values(
             self.ranges['KS'], self.PRIOR_KERNEL_SIZES
         )
+        s_priors = self.get_prior_values(self.ranges['S'], self.PRIOR_STRIDES)
         
-        for hw in hw_priors:
-            for c in c_priors:
-                for k in k_priors:
-                    for ks in ks_priors:
-                        if ks <= hw:
-                            samples.add((hw, c, k, ks))
+        value_space = product(hw_priors, c_priors, k_priors, ks_priors, s_priors)
+        for (hw, c, k, ks, s) in value_space:
+            if ks <= hw:
+               samples.add((hw, c, k, ks, s))
         
         return samples
 

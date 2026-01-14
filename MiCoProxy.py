@@ -85,8 +85,8 @@ class MiCoProxy:
         self.preprocess_type = preprocess
 
     def preprocess(self, X):
-        # Linear Features (MACS, QA, QW, M, K)
-        # Conv2D Features (MACS, QA, QW, H, W, C, K, Ks)
+        # Linear Features (MACS, M, K, QA, QW)
+        # Conv2D Features (MACS, H, W, C, K, Ks, S, QA, QW)
         MACS = X[:, 0]
         QA = X[:, -2]
         QW = X[:, -1]
@@ -142,17 +142,17 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
         # N is not used for features
         RAW = (MACS, M, K, QA, QW)
     elif kernel_type == 'conv2d':
-        H,W,C,K,Ks = data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4]
+        H,W,C,K,Ks,S = data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4], data[:, 5]
 
-        QA = data[:, 5]
-        QW = data[:, 6]
+        QA = data[:, 6]
+        QW = data[:, 7]
 
         latency = data[:, -1]
 
-        H_out = (H - Ks) + 1
-        W_out = (W - Ks) + 1
+        H_out = (H - Ks) / S + 1
+        W_out = (W - Ks) / S + 1
         MACS = H_out * W_out * C * K * Ks * Ks
-        RAW = (MACS, H, W, C, K, Ks, QA, QW)
+        RAW = (MACS, H, W, C, K, Ks, S, QA, QW)
     
     y = latency
     X = np.column_stack(RAW)
@@ -252,7 +252,7 @@ def get_bitfusion_matmul_proxy():
     return get_proxy('benchmark_results/bitfusion_matmul_samples.csv', 'matmul')
 
 def get_bitfusion_conv2d_proxy():
-    return get_proxy('benchmark_results/bitfusion_conv2d_samples.csv', 'conv2d')
+    return get_proxy('benchmark_results/bitfusion_conv2d_resnet8.csv', 'conv2d')
 
 def get_host_matmul_proxy(opt="opt"):
     return get_proxy(
@@ -268,11 +268,11 @@ def get_host_conv2d_proxy(opt="opt"):
 
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
-    # print("\n" + "="*80)
-    # print("BITFUSION PROXY TUNING")
-    # print("="*80)
-    # matmul_proxy = get_bitfusion_matmul_proxy()
-    # conv2d_proxy = get_bitfusion_conv2d_proxy()
+    print("\n" + "="*80)
+    print("BITFUSION PROXY TUNING")
+    print("="*80)
+    matmul_proxy = get_bitfusion_matmul_proxy()
+    conv2d_proxy = get_bitfusion_conv2d_proxy()
     
     # # Test MiCo proxies with cross-validation
     # print("\n" + "="*80)
@@ -290,13 +290,13 @@ if __name__ == "__main__":
     # mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
     
     # # Test Host MatMul proxy with cross-validation
-    print("\n" + "="*80)
-    print("HOST PROXY TUNING")
-    print("="*80)
+    # print("\n" + "="*80)
+    # print("HOST PROXY TUNING")
+    # print("="*80)
 
-    # print("\n### Testing Host 'opt' proxy ###")
-    host_matmul_proxy = get_host_matmul_proxy(opt="opt")
-    host_conv2d_proxy = get_host_conv2d_proxy(opt="opt")
+    # # print("\n### Testing Host 'opt' proxy ###")
+    # host_matmul_proxy = get_host_matmul_proxy(opt="opt")
+    # host_conv2d_proxy = get_host_conv2d_proxy(opt="opt")
 
     # print("\n### Testing Host 'lut' proxy ###")
     # host_matmul_proxy_lut = get_host_matmul_proxy(opt="lut")

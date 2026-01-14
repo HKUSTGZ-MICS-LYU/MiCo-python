@@ -140,7 +140,7 @@ def benchmark_bitfusion_matmul(N:int, M:int, K:int):
             res.append((N, M, K, qa[i], qb[j], cycles))
     return res
 
-def benchmark_bitfusion_conv2d(H, W, C, K, KS):
+def benchmark_bitfusion_conv2d(HW, C, K, KS, S):
 
     # Check if bitfusion is installed
     if not os.path.exists(f'{PWD}/hw/bitfusion'):
@@ -151,11 +151,12 @@ def benchmark_bitfusion_conv2d(H, W, C, K, KS):
 
     config = {
         "model_name": "conv2d",
-        "h": H,
-        "w": W,
+        "h": HW,
+        "w": HW,
         "c": C,
         "k": K,
         "ks": KS,
+        "s": S
     }
     qa = [2, 4, 8]
     qb = [2, 4, 8]
@@ -166,7 +167,7 @@ def benchmark_bitfusion_conv2d(H, W, C, K, KS):
             config['wq'] = [qb[j]]
             cycles = run_bitfusion_sim(json_name, config)
             print(f"QAxQB: {qa[i]}x{qb[j]}, Cycles: {cycles}")
-            res.append((H, W, C, K, KS, qa[i], qb[j], cycles))
+            res.append((HW, HW, C, K, KS, S, qa[i], qb[j], cycles))
     return res
 
 def benchmark_mico_matmul(N: int, M: int, K: int, 

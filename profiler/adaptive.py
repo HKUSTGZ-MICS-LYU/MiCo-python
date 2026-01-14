@@ -378,7 +378,7 @@ class AdaptiveConv2DProfiler(AdaptiveProfiler):
     
     def _prepare_features(self, data: List[Tuple]) -> Tuple[np.ndarray, np.ndarray]:
         """
-        Prepare features for Conv2D: (MACS, H, W, C, K, KS, QA, QW)
+        Prepare features for Conv2D: (MACS, H, W, C, K, KS, S, QA, QW)
         """
         data_array = np.array(data)
         H = data_array[:, 0]
@@ -386,23 +386,24 @@ class AdaptiveConv2DProfiler(AdaptiveProfiler):
         C = data_array[:, 2]
         K = data_array[:, 3]
         KS = data_array[:, 4]
-        QA = data_array[:, 5]
-        QW = data_array[:, 6]
-        latency = data_array[:, 7]
+        S = data_array[:, 5]
+        QA = data_array[:, 6]
+        QW = data_array[:, 7]
+        latency = data_array[:, 8]
         
         # MACS for conv2d
-        H_out = (H - KS) + 1
-        W_out = (W - KS) + 1
+        H_out = (H - KS) / S + 1
+        W_out = (W - KS) / S + 1
         MACS = H_out * W_out * C * K * KS * KS
         
-        X = np.column_stack((MACS, H, W, C, K, KS, QA, QW))
+        X = np.column_stack((MACS, H, W, C, K, KS, S, QA, QW))
         y = latency
         
         return X, y
     
     def _extract_sample_params(self, data_row: Tuple) -> Tuple:
-        """Extract (H, C, K, KS) from data row - H is used as HW since H=W."""
-        return (data_row[0], data_row[2], data_row[3], data_row[4])
+        """Extract (H, C, K, KS, S) from data row - H is used as HW since H=W."""
+        return (data_row[0], data_row[2], data_row[3], data_row[4], data_row[5])
 
 
 class AdaptivePoolingProfiler(AdaptiveProfiler):
