@@ -12,7 +12,7 @@ Supported sampling strategies:
 - Latin Hypercube Sampling (LHS) for better coverage
 
 Usage:
-    from profile.sampler import MatMulSampler, Conv2DSampler
+    from profiler.sampler import MatMulSampler, Conv2DSampler
 
     sampler = MatMulSampler(
         ranges={'N': [16], 'M': (16, 4096), 'K': (16, 4096)},
