@@ -104,7 +104,8 @@ class TestAdaptiveConv2DProfiler(unittest.TestCase):
             'HW': (4, 64),
             'C': (3, 256),
             'K': (16, 512),
-            'KS': [1, 3, 5]
+            'KS': [1, 3, 5],
+            'S': [1, 2]
         }
     
     def test_initialization(self):
@@ -116,28 +117,28 @@ class TestAdaptiveConv2DProfiler(unittest.TestCase):
         """Test feature preparation for conv2d."""
         profiler = AdaptiveConv2DProfiler(ranges=self.default_ranges)
         
-        # Mock data: (H, W, C, K, KS, QA, QW, latency)
+        # Mock data: (H, W, C, K, KS, S, QA, QW, latency)
         data = [
-            (32, 32, 64, 128, 3, 8, 8, 5000),
-            (16, 16, 128, 256, 3, 4, 4, 3000),
+            (32, 32, 64, 128, 3, 1, 8, 8, 5000),
+            (16, 16, 128, 256, 3, 2, 4, 4, 3000),
         ]
         
         X, y = profiler._prepare_features(data)
         
         self.assertEqual(X.shape[0], 2)
-        self.assertEqual(X.shape[1], 8)  # MACS, H, W, C, K, KS, QA, QW
+        self.assertEqual(X.shape[1], 9)  # MACS, H, W, C, K, KS, S, QA, QW
         np.testing.assert_array_equal(y, [5000, 3000])
     
     def test_extract_sample_params(self):
         """Test extracting sample parameters from data row."""
         profiler = AdaptiveConv2DProfiler(ranges=self.default_ranges)
         
-        # (H, W, C, K, KS, QA, QW, latency)
-        data_row = (32, 32, 64, 128, 3, 8, 8, 5000)
+        # (H, W, C, K, KS, S, QA, QW, latency)
+        data_row = (32, 32, 64, 128, 3, 1, 8, 8, 5000)
         params = profiler._extract_sample_params(data_row)
         
-        # Should extract (HW, C, K, KS)
-        self.assertEqual(params, (32, 64, 128, 3))
+        # Should extract (HW, C, K, KS, S)
+        self.assertEqual(params, (32, 64, 128, 3, 1))
 
 
 class TestAdaptivePoolingProfiler(unittest.TestCase):

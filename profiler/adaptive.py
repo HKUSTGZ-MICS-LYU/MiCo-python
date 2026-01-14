@@ -267,6 +267,7 @@ class AdaptiveProfiler(ABC):
             new_samples = self.sampler.generate(
                 num_samples=samples_per_iteration,
                 error_samples=error_samples,
+                fine_grained_num=fine_grained_num,
                 show_progress=verbose
             )
             
@@ -357,7 +358,7 @@ class AdaptiveConv2DProfiler(AdaptiveProfiler):
     """
     Adaptive profiler for 2D convolution operations.
     
-    Benchmark data format: (H, W, C, K, KS, QA, QW, latency)
+    Benchmark data format: (H, W, C, K, KS, S, QA, QW, latency)
     """
     
     def __init__(

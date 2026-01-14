@@ -370,6 +370,7 @@ class ProfileSampler(ABC):
         self,
         num_samples: int,
         error_samples: Optional[List[Tuple]] = None,
+        fine_grained_num: int = 5,
         show_progress: bool = True
     ) -> List[Tuple]:
         """
@@ -378,6 +379,7 @@ class ProfileSampler(ABC):
         Args:
             num_samples: Number of samples to generate
             error_samples: Optional list of error samples for adaptive refinement
+            fine_grained_num: Number of fine-grained samples per error sample
             show_progress: Whether to show progress bar
             
         Returns:
@@ -396,7 +398,7 @@ class ProfileSampler(ABC):
             
         elif self.strategy == 'adaptive':
             samples = self._generate_adaptive_samples(
-                num_samples, error_samples
+                num_samples, error_samples, fine_grained_num=fine_grained_num
             )
             
         else:  # 'random' or default
@@ -508,6 +510,7 @@ class Conv2DSampler(ProfileSampler):
         C: Input channels
         K: Output channels (filters)
         KS: Kernel size
+        S: Stride
     """
     
     def __init__(
@@ -521,7 +524,8 @@ class Conv2DSampler(ProfileSampler):
             'HW': (4, 64),
             'C': (3, 1024),
             'K': (16, 2048),
-            'KS': [1, 3, 5, 7]
+            'KS': [1, 3, 5, 7],
+            'S': [1, 2]
         }
         ranges = ranges or default_ranges
         
