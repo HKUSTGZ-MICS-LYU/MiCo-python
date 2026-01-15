@@ -12,23 +12,6 @@ from sklearn.metrics import (
     mean_absolute_error
 )
 
-
-class WeightedEnsemble:
-    def __init__(self, weight_lin=0.5):
-        self.lin = LinearRegression()
-        self.xgb = XGBRegressor(random_state=42)
-        self.wlin = weight_lin
-        self.wxgb = 1.0 - weight_lin
-        assert self.wlin + self.wxgb == 1.0, "Weights must sum to 1.0"
-    def fit(self, X, y):
-        self.lin.fit(X, y)
-        self.xgb.fit(X, y)
-    def predict(self, X):
-        y_lin = self.lin.predict(X)
-        y_xgb = self.xgb.predict(X)
-        y = self.wlin * y_lin + self.wxgb * y_xgb
-        return y
-
 class LogXGBRegressor:
     def __init__(self, **kwargs):
         self.model = XGBRegressor(**kwargs)
@@ -46,38 +29,6 @@ class LogRandomForestRegressor:
     def predict(self, X):
         y_pred_log = self.model.predict(X)
         return np.expm1(y_pred_log)
-
-class ResidualEnsemble:
-    def __init__(self, **kwargs):
-        self.lin = XGBRegressor(booster='gblinear', **kwargs)
-        self.xgb = XGBRegressor(**kwargs)
-    def fit(self, X, y):
-        self.lin.fit(X, y)
-        # Get residuals
-        y_lin = self.lin.predict(X)
-        residuals = y - y_lin
-        self.xgb.fit(X, residuals)
-    def predict(self, X):
-        y_lin = self.lin.predict(X)
-        y_xgb = self.xgb.predict(X)
-        y = y_lin + y_xgb
-        return y
-    
-class LogResidualEnsemble:
-    def __init__(self, **kwargs):
-        self.lin = LogXGBRegressor(booster='gblinear', **kwargs)
-        self.xgb = XGBRegressor(**kwargs)
-    def fit(self, X, y):
-        self.lin.fit(X, y)
-        # Get residuals
-        y_lin = self.lin.predict(X)
-        residuals = y - y_lin
-        self.xgb.fit(X, residuals)
-    def predict(self, X):
-        y_lin = self.lin.predict(X)
-        y_xgb = self.xgb.predict(X)
-        y = y_lin + y_xgb
-        return y
 
 class MiCoProxy:
     def __init__(self, model, preprocess = 'raw'):
@@ -249,20 +200,20 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     return pred
 
 def get_bitfusion_matmul_proxy():
-    return get_proxy('benchmark_results/bitfusion_matmul_samples.csv', 'matmul')
+    return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
 
 def get_bitfusion_conv2d_proxy():
-    return get_proxy('benchmark_results/bitfusion_conv2d_resnet8.csv', 'conv2d')
+    return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
 
 def get_host_matmul_proxy(opt="opt"):
     return get_proxy(
-        f'benchmark_results/host_{opt}_bitlinear_test.csv',
+        f'benchmark_results/host_{opt}_matmul_zoo.csv',
         'matmul'
     )
 
 def get_host_conv2d_proxy(opt="opt"):
     return get_proxy(
-        f'benchmark_results/host_{opt}_bitconv2d_test.csv',
+        f'benchmark_results/host_{opt}_conv2d_zoo.csv',
         'conv2d'
     )
 
@@ -294,7 +245,7 @@ if __name__ == "__main__":
     # print("HOST PROXY TUNING")
     # print("="*80)
 
-    # # print("\n### Testing Host 'opt' proxy ###")
+    # print("\n### Testing Host 'opt' proxy ###")
     # host_matmul_proxy = get_host_matmul_proxy(opt="opt")
     # host_conv2d_proxy = get_host_conv2d_proxy(opt="opt")
 

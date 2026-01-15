@@ -150,11 +150,8 @@ def collect_features_from_zoo(model_names: Optional[List[str]] = None) -> Dict[s
             'vgg_cifar10',
             'resnet8_cifar10',
             'resnet18_cifar10',
-            'mobilenetv2_cifar10',
-            'squeezenet_cifar10',
-            'shufflenet_cifar10',
+            'mobilenetv2_cifar100',
             'lenet_mnist',
-            'har_mlp',
         ]
     
     for name in model_names:
@@ -237,29 +234,7 @@ def main():
         '--model', '-m', type=str, nargs='*', default=None,
         help='Specific model(s) to process (default: all supported models)'
     )
-    parser.add_argument(
-        '--list-models', action='store_true',
-        help='List available models and exit'
-    )
     args = parser.parse_args()
-    
-    if args.list_models:
-        print("Available models in zoo:")
-        print("  - cmsiscnn_cifar10")
-        print("  - vgg_cifar10")
-        print("  - resnet8_cifar10")
-        print("  - resnet18_cifar10")
-        print("  - mobilenetv2_cifar10")
-        print("  - squeezenet_cifar10")
-        print("  - shufflenet_cifar10")
-        print("  - lenet_mnist")
-        print("  - mlp_mnist")
-        print("  - har_mlp")
-        print("  - vit_cifar10")
-        print("  - kws_conv1d")
-        print("  - m5_kws")
-        print("  - dscnn_kws")
-        return
     
     print("Collecting layer features from model zoo...")
     features = collect_features_from_zoo(args.model)
