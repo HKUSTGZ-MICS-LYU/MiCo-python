@@ -33,33 +33,47 @@ class LogRandomForestRegressor:
 class MiCoProxy:
     def __init__(self, model, preprocess = 'raw'):
         self.model = model
-        self.preprocess_type = preprocess
-
-    def preprocess(self, X):
-        # Linear Features (MACS, M, K, QA, QW)
-        # Conv2D Features (MACS, H, W, C, K, Ks, S, QA, QW)
+        self.preprocess_dict = {
+            "raw": self._get_raw_features,
+            "bops": self._get_bops_features,
+            "bops+": self._get_bops_plus_features,
+            "cbops": self._get_cbops_features,
+            "cbops+": self._get_cbops_plus_features
+        }
+        self.preprocess = self.preprocess_dict[preprocess]
+        
+    def _get_raw_features(self, X):
+        return X
+    def _get_bops_features(self, X):
         MACS = X[:, 0]
         QA = X[:, -2]
         QW = X[:, -1]
-        if self.preprocess_type == 'raw':
-            X_processed = X
-        elif self.preprocess_type == 'bops+':
-            BOPS = MACS * QW * QA
-            X_processed = np.column_stack((BOPS, X))
-        elif self.preprocess_type == 'cbops':
-            Q_MAX = np.max(X[:, -2:], axis=1)
-            BMACS = MACS * Q_MAX
-            W_LOADS = MACS * QW
-            A_LOADS = MACS * QA
-            X_processed = np.column_stack((BMACS, W_LOADS, A_LOADS))
-        elif self.preprocess_type == 'cbops+':
-            Q_MAX = np.max(X[:, -2:], axis=1)
-            BMACS = MACS * Q_MAX
-            W_LOADS = MACS * QW
-            A_LOADS = MACS * QA
-            X_processed = np.column_stack((BMACS, W_LOADS, A_LOADS, X))
-        
-        return X_processed
+        BOPS = MACS * QW * QA
+        return np.column_stack((BOPS,))
+    def _get_cbops_features(self, X):
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        Q_MAX = np.max(X[:, -2:], axis=1)
+        BMACS = MACS * Q_MAX
+        W_LOADS = MACS * QW
+        A_LOADS = MACS * QA
+        return np.column_stack((BMACS, W_LOADS, A_LOADS))
+    def _get_cbops_plus_features(self, X):
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        Q_MAX = np.max(X[:, -2:], axis=1)
+        BMACS = MACS * Q_MAX
+        W_LOADS = MACS * QW
+        A_LOADS = MACS * QA
+        return np.column_stack((BMACS, W_LOADS, A_LOADS, X))
+    def _get_bops_plus_features(self, X):
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        BOPS = MACS * QW * QA
+        return np.column_stack((BOPS, X))
 
     def fit(self, X, y):
         X = self.preprocess(X)
@@ -112,6 +126,7 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     model_factories = {
         # 'RandomForest': lambda: RandomForestRegressor(random_state=42),
         'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+        # 'LinearRegression': lambda: LinearRegression(),
         # 'XGBRegressor': lambda: XGBRegressor(random_state=42),
         # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
