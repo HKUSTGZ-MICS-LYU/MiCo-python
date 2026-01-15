@@ -3,7 +3,7 @@ import numpy as np
 
 from matplotlib import pyplot as plt
 
-from sklearn.metrics import mean_absolute_percentage_error, r2_score
+from sklearn.metrics import mean_absolute_percentage_error, r2_score, root_mean_squared_error
 
 from MiCoEval import MiCoEval
 from MiCoProxy import get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy
@@ -63,12 +63,15 @@ if __name__ == "__main__":
     X = np.array(X)
     Y = np.array(Y)
 
-    plt.figure(figsize=(6,6))
-    plt.scatter(X, Y, alpha=0.5)
+    ratio_X = X / np.max(X)
+    ratio_Y = Y / np.max(Y)
 
-    plt.plot(X, X, color='red', label='Ideal Prediction')
-    plt.xlabel("Actual Latency (Cycles)")
-    plt.ylabel("Predicted Latency (Cycles)")
+    plt.figure(figsize=(6,6))
+    plt.scatter(ratio_X, ratio_Y, alpha=0.5)
+
+    plt.plot(ratio_X, ratio_X, color='red', label='Ideal Prediction')
+    plt.xlabel("Normalized Actual Latency")
+    plt.ylabel("Normalized Predicted Latency")
     plt.legend()
     plt.grid(True)
     plt.savefig(f"output/figs/{model_name}_{target}_pred.pdf")
@@ -76,13 +79,19 @@ if __name__ == "__main__":
     r2 = r2_score(X, Y)
     norm_r2 = r2_score(X / np.max(X), Y / np.max(Y))
     mape = mean_absolute_percentage_error(X, Y)
+    rmse = root_mean_squared_error(X, Y)
+
     print("R2:", r2)
     print("Ratio R2:", norm_r2)
     print("MAPE:", mape)
+    print("RMSE:", rmse)
 
     correlation_matrix = np.corrcoef(X, Y)
     correlation_xy = correlation_matrix[0,1]
-    print("Correlation Coefficient:", correlation_xy)
+    print("Correlation Coefficient (R):", correlation_xy)
+    correlation_matrix = np.corrcoef(X / np.max(X), Y / np.max(Y))
+    correlation_xy = correlation_matrix[0,1]
+    print("Normalized Correlation Coefficient (R):", correlation_xy)
 
     # Get Maximum Error
     errors = (Y - X) / X
