@@ -352,7 +352,7 @@ class BitConv2d(nn.Conv2d, BitQLayer):
             outw = (inw - self.kernel_size[0] + 2*self.padding[0]) / self.stride[0] + 1
             outh = (inh - self.kernel_size[1] + 2*self.padding[1]) / self.stride[1] + 1
             self.macs = (self.kernel_size[0]*self.kernel_size[1]) * inc * outh * outw * outc
-            self.layer_features = [inh, inw, inc, outc, self.kernel_size[0]]
+            self.layer_features = [inh, inw, inc, outc, self.kernel_size[0], self.stride[0]]
             # self.layer_features = (
             #     inc, inw, outc, outw, self.kernel_size[0])
             # self.layer_features = (self.kernel_size[0]*self.kernel_size[1]*inc, outh * outw, outc)

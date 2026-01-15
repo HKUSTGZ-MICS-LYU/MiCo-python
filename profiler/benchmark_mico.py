@@ -2,6 +2,10 @@ from SimUtils import benchmark_mico_matmul, benchmark_mico_conv2d, benchmark_mic
 
 from itertools import product
 from tqdm import tqdm
+
+# Import shared samplers for adaptive profiling
+from profiler.sampler import MatMulSampler, Conv2DSampler, PoolingSampler
+
 if __name__ == '__main__':
 
 
@@ -26,6 +30,16 @@ if __name__ == '__main__':
     #         for row in res:
     #             f.write(','.join(map(str, row)) + '\n')
     #     sweep.update()
+
+    # --- Example: Adaptive MatMul Benchmark using sampler ---
+    # sampler = MatMulSampler(
+    #     ranges={'N': [16, 32, 64], 'M': (32, 512), 'K': (32, 512)},
+    #     strategy='adaptive'
+    # )
+    # matmul_samples = sampler.generate(num_samples=50)
+    # for N, M, K in tqdm(matmul_samples, desc="Adaptive MatMul"):
+    #     res = benchmark_mico_matmul(N, M, K, f"sim_{mico_config}_mico.sh", test_name)
+    #     ...
 
     # Conv2D Benchmark
 
@@ -54,6 +68,15 @@ if __name__ == '__main__':
                 f.write(','.join(map(str, row)) + '\n')
         sweep.update()
 
+    # --- Example: Adaptive Conv2D Benchmark using sampler ---
+    # sampler = Conv2DSampler(
+    #     ranges={'HW': (8, 64), 'C': (1, 64), 'K': (4, 64), 'KS': [3, 5]},
+    #     strategy='adaptive'
+    # )
+    # conv2d_samples = sampler.generate(num_samples=50)
+    # for HW, C, K, KS in tqdm(conv2d_samples, desc="Adaptive Conv2D"):
+    #     res = benchmark_mico_conv2d(HW, HW, C, K, KS, ...)
+    #     ...
 
     # Cs = [1, 3, 8, 16]
     # HWs = [8, 16, 32]
@@ -81,3 +104,13 @@ if __name__ == '__main__':
     #             for row in res:
     #                 f.write(','.join(map(str, row)) + '\n')
     #         sweep.update()
+
+    # --- Example: Adaptive Pooling Benchmark using sampler ---
+    # sampler = PoolingSampler(
+    #     ranges={'C': (1, 64), 'HW': (8, 64), 'K': [2, 3, 4], 'S': [1, 2]},
+    #     strategy='adaptive'
+    # )
+    # pooling_samples = sampler.generate(num_samples=30)
+    # for C, HW, K, S in tqdm(pooling_samples, desc="Adaptive Pooling"):
+    #     res = benchmark_mico_pooling(C, HW, HW, K, S, ...)
+    #     ...

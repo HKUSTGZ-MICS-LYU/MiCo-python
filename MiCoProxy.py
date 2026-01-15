@@ -12,23 +12,6 @@ from sklearn.metrics import (
     mean_absolute_error
 )
 
-
-class WeightedEnsemble:
-    def __init__(self, weight_lin=0.5):
-        self.lin = LinearRegression()
-        self.xgb = XGBRegressor(random_state=42)
-        self.wlin = weight_lin
-        self.wxgb = 1.0 - weight_lin
-        assert self.wlin + self.wxgb == 1.0, "Weights must sum to 1.0"
-    def fit(self, X, y):
-        self.lin.fit(X, y)
-        self.xgb.fit(X, y)
-    def predict(self, X):
-        y_lin = self.lin.predict(X)
-        y_xgb = self.xgb.predict(X)
-        y = self.wlin * y_lin + self.wxgb * y_xgb
-        return y
-
 class LogXGBRegressor:
     def __init__(self, **kwargs):
         self.model = XGBRegressor(**kwargs)
@@ -38,37 +21,14 @@ class LogXGBRegressor:
         y_pred_log = self.model.predict(X)
         return np.expm1(y_pred_log)
 
-class ResidualEnsemble:
+class LogRandomForestRegressor:
     def __init__(self, **kwargs):
-        self.lin = XGBRegressor(booster='gblinear', **kwargs)
-        self.xgb = XGBRegressor(**kwargs)
+        self.model = RandomForestRegressor(**kwargs)
     def fit(self, X, y):
-        self.lin.fit(X, y)
-        # Get residuals
-        y_lin = self.lin.predict(X)
-        residuals = y - y_lin
-        self.xgb.fit(X, residuals)
+        self.model.fit(X, np.log1p(y))
     def predict(self, X):
-        y_lin = self.lin.predict(X)
-        y_xgb = self.xgb.predict(X)
-        y = y_lin + y_xgb
-        return y
-    
-class LogResidualEnsemble:
-    def __init__(self, **kwargs):
-        self.lin = LogXGBRegressor(booster='gblinear', **kwargs)
-        self.xgb = XGBRegressor(**kwargs)
-    def fit(self, X, y):
-        self.lin.fit(X, y)
-        # Get residuals
-        y_lin = self.lin.predict(X)
-        residuals = y - y_lin
-        self.xgb.fit(X, residuals)
-    def predict(self, X):
-        y_lin = self.lin.predict(X)
-        y_xgb = self.xgb.predict(X)
-        y = y_lin + y_xgb
-        return y
+        y_pred_log = self.model.predict(X)
+        return np.expm1(y_pred_log)
 
 class MiCoProxy:
     def __init__(self, model, preprocess = 'raw'):
@@ -76,8 +36,8 @@ class MiCoProxy:
         self.preprocess_type = preprocess
 
     def preprocess(self, X):
-        # Linear Features (MACS, QA, QW, M, K)
-        # Conv2D Features (MACS, QA, QW, H, W, C, K, Ks)
+        # Linear Features (MACS, M, K, QA, QW)
+        # Conv2D Features (MACS, H, W, C, K, Ks, S, QA, QW)
         MACS = X[:, 0]
         QA = X[:, -2]
         QW = X[:, -1]
@@ -133,29 +93,31 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
         # N is not used for features
         RAW = (MACS, M, K, QA, QW)
     elif kernel_type == 'conv2d':
-        H,W,C,K,Ks = data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4]
+        H,W,C,K,Ks,S = data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4], data[:, 5]
 
-        QA = data[:, 5]
-        QW = data[:, 6]
+        QA = data[:, 6]
+        QW = data[:, 7]
 
         latency = data[:, -1]
 
-        H_out = (H - Ks) + 1
-        W_out = (W - Ks) + 1
+        H_out = (H - Ks) / S + 1
+        W_out = (W - Ks) / S + 1
         MACS = H_out * W_out * C * K * Ks * Ks
-        RAW = (MACS, H, W, C, K, Ks, QA, QW)
+        RAW = (MACS, H, W, C, K, Ks, S, QA, QW)
     
     y = latency
     X = np.column_stack(RAW)
 
     # Model factories - functions that create new model instances
     model_factories = {
-        'RandomForest': lambda: RandomForestRegressor(random_state=42),
-        'XGBRegressor': lambda: XGBRegressor(random_state=42),
-        'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+        # 'RandomForest': lambda: RandomForestRegressor(random_state=42),
+        'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+        # 'XGBRegressor': lambda: XGBRegressor(random_state=42),
+        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
 
-    feature_sets = ['raw', 'bops+', 'cbops', 'cbops+']
+    # feature_sets = ['raw', 'bops+', 'cbops', 'cbops+']
+    feature_sets = ['cbops+']
 
     best_mape = float('inf')
     best_model_factory = None
@@ -238,15 +200,21 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     return pred
 
 def get_bitfusion_matmul_proxy():
-    return get_proxy('benchmark_results/bitfusion_matmul.csv', 'matmul')
+    return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
 
 def get_bitfusion_conv2d_proxy():
-    return get_proxy('benchmark_results/bitfusion_conv2d.csv', 'conv2d')
+    return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
 
 def get_host_matmul_proxy(opt="opt"):
     return get_proxy(
-        f'benchmark_results/host_{opt}_bitlinear_test.csv',
+        f'benchmark_results/host_{opt}_matmul_zoo.csv',
         'matmul'
+    )
+
+def get_host_conv2d_proxy(opt="opt"):
+    return get_proxy(
+        f'benchmark_results/host_{opt}_conv2d_zoo.csv',
+        'conv2d'
     )
 
 if __name__ == "__main__":
@@ -279,6 +247,7 @@ if __name__ == "__main__":
 
     # print("\n### Testing Host 'opt' proxy ###")
     # host_matmul_proxy = get_host_matmul_proxy(opt="opt")
+    # host_conv2d_proxy = get_host_conv2d_proxy(opt="opt")
 
     # print("\n### Testing Host 'lut' proxy ###")
     # host_matmul_proxy_lut = get_host_matmul_proxy(opt="lut")
