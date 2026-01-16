@@ -57,6 +57,14 @@ class HAQSearcher(QSearcher):
                 this_state.append([m.kernel_size[0]])  # kernel size
                 this_state.append([np.prod(m.weight.size())])  # weight size
                 this_state.append([m.in_w*m.in_h])  # input feature_map_size
+            elif isinstance(m, nn.Conv1d):
+                this_state.append([int(m.in_channels == m.groups)])  # layer type, 1 for conv_dw
+                this_state.append([m.in_channels])  # in channels
+                this_state.append([m.out_channels])  # out channels
+                this_state.append([m.stride[0]])  # stride
+                this_state.append([m.kernel_size[0]])  # kernel size
+                this_state.append([np.prod(m.weight.size())])  # weight size
+                this_state.append([m.in_l])  # input feature_map_size
             elif isinstance(m, nn.Linear):
                 this_state.append([0.])  # layer type, 0 for fc
                 this_state.append([m.in_features])  # in channels
