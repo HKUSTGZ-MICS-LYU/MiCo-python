@@ -822,7 +822,7 @@ pip install torch torchvision --index-url https://download.pytorch.org/whl/cu118
 **Problem**: Training too slow
 ```python
 # Use DataLoader num_workers
-train_loader, test_loader = mnist(batch_size=64, num_works=4)
+train_loader, test_loader = mnist(batch_size=64, num_workers=4)
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -960,8 +960,8 @@ from datasets import tinystories, ucihar, speechcommands
 
 train_loader, test_loader = mnist(
     batch_size=64, 
-    num_works=0,  # DataLoader workers
-    resize=28,    # Image size
+    num_workers=0,  # DataLoader workers
+    resize=28,      # Image size
     shuffle=True
 )
 ```
