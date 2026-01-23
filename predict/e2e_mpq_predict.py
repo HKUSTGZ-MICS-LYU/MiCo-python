@@ -26,6 +26,7 @@ if __name__ == "__main__":
     args.add_argument('model', type=str, help='Model name from model_zoo')
     args.add_argument('-n', '--num-samples', type=int, default=64, help='Number of random samples to evaluate')
     args.add_argument('--target', type=str, default='latency_bitfusion', help='Target metric to evaluate')
+    args.add_argument('--plot', type=str, default='norm', help='Plot Actual vs Predicted (norm/abs)')
     parsed_args = args.parse_args()
 
     model_name = parsed_args.model
@@ -83,11 +84,22 @@ if __name__ == "__main__":
     ratio_Y = Y / np.max(Y)
 
     plt.figure(figsize=(6,6))
-    plt.scatter(ratio_X, ratio_Y, alpha=0.5)
 
-    plt.plot(ratio_X, ratio_X, color='red', label='Ideal Prediction')
-    plt.xlabel("Normalized Actual Latency")
-    plt.ylabel("Normalized Predicted Latency")
+    if parsed_args.plot == 'abs':
+
+        plt.scatter(X, Y, alpha=0.5)
+        plt.plot(X, X, color='red', label='Ideal Prediction')
+        plt.xlabel("Actual Latency")
+        plt.ylabel("Predicted Latency")
+
+    elif parsed_args.plot == 'norm':
+
+        plt.scatter(ratio_X, ratio_Y, alpha=0.5)
+        plt.plot(ratio_X, ratio_X, color='red', label='Ideal Prediction')
+        plt.xlabel("Normalized Actual Latency")
+        plt.ylabel("Normalized Predicted Latency")
+
+    
     plt.legend()
     plt.grid(True)
     plt.savefig(f"output/figs/{model_name}_{target}_pred.pdf")

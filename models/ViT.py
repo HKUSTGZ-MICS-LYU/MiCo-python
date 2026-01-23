@@ -5,8 +5,26 @@ from torch import nn
 from torch.nn import functional as F
 from tqdm import tqdm
 
-from MiCoModel import MiCoModel
+from MiCoModel import MiCoModel, MiCoFunc
 
+
+class Im2Word(nn.Module):
+    def __init__(self, img_size:int=32, patch:int=8):
+        super(Im2Word, self).__init__()
+        self.patch = patch
+        self.patch_size = img_size//self.patch
+        self.MiCo_func = MiCoFunc(
+            "MiCo_im2word",
+            params=[patch]
+        )
+
+    def forward(self, x):
+        """
+        (b, c, h, w) -> (b, n, f)
+        """
+        out = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size).permute(0,2,3,4,5,1)
+        out = out.reshape(x.size(0), self.patch**2 ,-1)
+        return out
 
 '''
 Modified from https://github.com/omihub777/ViT-CIFAR
@@ -80,6 +98,8 @@ class ViT(MiCoModel):
         f = (img_size//self.patch)**2*3 # 48 # patch vec length
         num_tokens = (self.patch**2)+1 if self.is_cls_token else (self.patch**2)
 
+        self.im2word = Im2Word(img_size=img_size, patch=patch)
+
         self.emb = nn.Linear(f, hidden) # (b, n, f)
         self.cls_token = nn.Parameter(torch.randn(1, 1, hidden)) if is_cls_token else None
         self.pos_emb = nn.Parameter(torch.randn(1,num_tokens, hidden))
@@ -98,7 +118,7 @@ class ViT(MiCoModel):
         )
 
     def forward(self, x):
-        out = self._to_words(x)
+        out = self.im2word(x)  # (b, n, f)
         out = self.emb(out)
         if self.is_cls_token:
             out = torch.cat([self.cls_token.repeat(out.size(0),1,1), out],dim=1)
@@ -111,14 +131,6 @@ class ViT(MiCoModel):
         out = self.fc(out)
         return out
     
-
-    def _to_words(self, x):
-        """
-        (b, c, h, w) -> (b, n, f)
-        """
-        out = x.unfold(2, self.patch_size, self.patch_size).unfold(3, self.patch_size, self.patch_size).permute(0,2,3,4,5,1)
-        out = out.reshape(x.size(0), self.patch**2 ,-1)
-        return out
     
 def ViT1M_cifar10():
 
