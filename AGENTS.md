@@ -203,15 +203,18 @@ model.set_qscheme([[8]*model.n_layers, [8]*model.n_layers])  # [weight_bits, act
 - `ptq_acc`: Post-Training Quantization accuracy
 - `qat_acc`: Quantization-Aware Training accuracy
 - `bops`: Bit Operations count
-- `macs`: Multiply-Accumulate operations
-- `lat_mico`: Hardware latency on MiCo
-- `lat_bf`: Hardware latency on BitFusion
+- `size`: Model size (parameters)
+- `latency_mico`: Hardware latency on MiCo
+- `latency_bitfusion`: Hardware latency on BitFusion
+- `latency_proxy`: Predicted latency using proxy models
+- `latency_torchao`: TorchAO quantization latency
 
 **Key Methods**:
 ```python
 evaluator = MiCoEval(model, epochs, train_loader, test_loader, ckpt_path)
 acc = evaluator.eval_f([8,8,8,8,8,8,8,8])  # Evaluate with bitwidth config
 bops = evaluator.eval_bops([8,8,8,8,8,8,8,8])  # Calculate BOPs
+latency = evaluator.eval_latency([8,8,8,8,8,8,8,8], target='mico')  # Hardware latency
 ```
 
 ### 5. MiCoCodeGen (`MiCoCodeGen.py`)
@@ -246,9 +249,9 @@ codegen.convert("output", "model_name")  # Generate C code
 searcher = MiCoSearcher(evaluator, n_inits=10, qtypes=[4,5,6,7,8])
 best_x, best_y = searcher.search(
     n_iterations=40, 
-    objective='ptq_acc',    # Maximize accuracy
-    constraint='bops',      # Constraint type
-    constraint_value=0.5    # 50% of INT8 BOPs
+    objective='ptq_acc',        # Maximize accuracy
+    constraint='bops',          # Constraint type (bops, size, latency_*)
+    constraint_value=0.5        # 50% of INT8 BOPs
 )
 ```
 
@@ -270,9 +273,10 @@ best_x, best_y = searcher.search(
 
 **Usage**:
 ```python
-from MiCoProxy import get_mico_proxy
-proxy = get_mico_proxy(target="small")  # or "large"
-latency = proxy.predict(features)
+from MiCoProxy import get_mico_matmul_proxy, get_mico_conv2d_proxy
+matmul_proxy = get_mico_matmul_proxy(mico_type="small")  # or "large"
+conv2d_proxy = get_mico_conv2d_proxy(mico_type="small")
+evaluator.set_proxy(matmul_proxy, conv2d_proxy)
 ```
 
 ---
@@ -329,7 +333,7 @@ python examples/mpq_search.py lenet_mnist --init 16 -n 40 -c 0.5 -ctype bops -t 
 - `--init`: Initial random samples
 - `-n, --n-search`: Number of search iterations
 - `-c, --constraint-factor`: Constraint ratio (e.g., 0.5 = 50% of INT8)
-- `-ctype, --constraint`: Constraint type (bops, macs, lat_mico, lat_bf)
+- `-ctype, --constraint`: Constraint type (bops, size, latency_mico, latency_bitfusion, latency_proxy)
 - `-t, --trails`: Number of random seed trials
 - `-m, --mode`: Objective mode (ptq_acc, qat_acc)
 
@@ -385,24 +389,26 @@ make run-host
 
 ```python
 # Example: deploy/lenet_on_mico.py
-from MiCoProxy import get_mico_proxy
+from MiCoProxy import get_mico_matmul_proxy, get_mico_conv2d_proxy
 
-# Setup proxy model
-proxy = get_mico_proxy(target="small")
+# Setup proxy models
+matmul_proxy = get_mico_matmul_proxy(mico_type="small")
+conv2d_proxy = get_mico_conv2d_proxy(mico_type="small")
 
 # Create evaluator with hardware latency constraint
 evaluator = MiCoEval(
     model, epochs, train_loader, test_loader, ckpt_path,
     objective='ptq_acc',
-    constraint='lat_mico'  # Use hardware latency
+    constraint='latency_proxy'  # Use proxy-predicted latency
 )
 
 # Set proxy in evaluator
-evaluator.set_mico_proxy(proxy, misc_latency=0.0)
+evaluator.set_proxy(matmul_proxy, conv2d_proxy)
+evaluator.set_mico_target("small")
 
 # Search with hardware awareness
 searcher = MiCoSearcher(evaluator, n_inits=10, qtypes=[4,5,6,7,8])
-best_config, best_acc = searcher.search(40, 'ptq_acc', 'lat_mico', max_latency*0.5)
+best_config, best_acc = searcher.search(40, 'ptq_acc', 'latency_proxy', max_latency*0.5)
 ```
 
 ---
@@ -602,15 +608,16 @@ searcher = MiCoSearcher(
 **Predict hardware latency without simulation.**
 
 ```python
-from MiCoProxy import get_mico_proxy, get_bitfusion_proxy
+from MiCoProxy import get_mico_matmul_proxy, get_mico_conv2d_proxy
+from MiCoProxy import get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy
 
-# MiCo hardware proxy
-mico_proxy = get_mico_proxy(target="small")  # or "large"
-latency = mico_proxy.predict(layer_features)
+# MiCo hardware proxies
+mico_matmul_proxy = get_mico_matmul_proxy(mico_type="small")  # or "large", "high"
+mico_conv2d_proxy = get_mico_conv2d_proxy(mico_type="small")
 
-# BitFusion accelerator proxy
-bf_proxy = get_bitfusion_proxy()
-latency = bf_proxy.predict(layer_features)
+# BitFusion accelerator proxies
+bf_matmul_proxy = get_bitfusion_matmul_proxy()
+bf_conv2d_proxy = get_bitfusion_conv2d_proxy()
 ```
 
 ### 5. Chipyard Integration
@@ -904,11 +911,13 @@ class MiCoEval:
     
     def eval_f(self, qscheme: list) -> float  # Evaluate objective
     def eval_bops(self, qscheme: list) -> float  # Calculate BOPs
-    def eval_macs(self, qscheme: list) -> float  # Calculate MACs
-    def eval_lat(self, qscheme: list) -> float  # Hardware latency
+    def eval_size(self, qscheme: list) -> float  # Calculate model size
+    def eval_latency(self, qscheme: list, target: str) -> float  # Hardware latency
+    # target can be: 'mico', 'bitfusion', 'proxy', 'host', 'torchao'
     
-    def set_mico_proxy(self, proxy, misc_latency=0.0)
-    def set_bitfusion_proxy(self, proxy)
+    def set_proxy(self, matmul_proxy, conv2d_proxy)
+    def set_misc_proxy(self, misc_proxy)
+    def set_mico_target(self, mico_type: str)
 ```
 
 ### MiCoCodeGen API
