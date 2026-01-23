@@ -12,6 +12,14 @@ from sklearn.metrics import (
     mean_absolute_error
 )
 
+class DirectSum:
+    def __init__(self, **kwargs):
+        pass
+    def fit(self, X, y):
+        pass
+    def predict(self, X):
+        return np.sum(X, axis=1)
+
 class LogXGBRegressor:
     def __init__(self, **kwargs):
         self.model = XGBRegressor(**kwargs)
@@ -124,6 +132,7 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
 
     # Model factories - functions that create new model instances
     model_factories = {
+        # 'DirectSum': lambda: DirectSum(),
         # 'RandomForest': lambda: RandomForestRegressor(random_state=42),
         'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
         # 'LinearRegression': lambda: LinearRegression(),

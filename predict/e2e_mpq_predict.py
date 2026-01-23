@@ -4,6 +4,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, root_mean_squared_error
+from scipy.stats import pearsonr, spearmanr
 
 from MiCoEval import MiCoEval
 from MiCoProxy import (
@@ -107,6 +108,9 @@ if __name__ == "__main__":
     correlation_matrix = np.corrcoef(X / np.max(X), Y / np.max(Y))
     correlation_xy = correlation_matrix[0,1]
     print("Normalized Correlation Coefficient (R):", correlation_xy)
+
+    spears_corr, _ = spearmanr(X, Y)
+    print("Spearman's Rank Correlation Coefficient:", spears_corr)
 
     # Get Maximum Error
     errors = (Y - X) / X
