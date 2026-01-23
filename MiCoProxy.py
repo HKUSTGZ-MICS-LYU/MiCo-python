@@ -187,13 +187,13 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
 
 def get_mico_matmul_proxy(mico_type: str = 'small'):
     return get_proxy(
-        f'benchmark_results/mico_{mico_type}_bitlinear_test.csv',
+        f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
         'matmul'
     )
 
 def get_mico_conv2d_proxy(mico_type: str = 'small'):
     return get_proxy(
-        f'benchmark_results/mico_{mico_type}_bitconv2d_test.csv',
+        f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
         'conv2d'
     )
 
@@ -246,9 +246,9 @@ if __name__ == "__main__":
     # print("="*80)
     
     # # Test for 'small' mico type
-    # print("\n### Testing MiCo 'small' type ###")
-    # mico_small_matmul_proxy = get_mico_matmul_proxy(mico_type='small')
-    # mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
+    print("\n### Testing MiCo 'small' type ###")
+    mico_small_matmul_proxy = get_mico_matmul_proxy(mico_type='small')
+    mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
     
     # # # Test for 'high' mico type
     # print("\n### Testing MiCo 'high' type ###")

@@ -188,7 +188,7 @@ def benchmark_mico_matmul(N: int, M: int, K: int,
         f.write(f"#define K {K}\n")
 
     # Compile the benchmark
-    make_cmd = f'make recompile MAIN=tests/{mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
+    make_cmd = f'make recompile MAIN=tests/{mico_main} TARGET=vexii MARCH=rv32imafc OPT=simd LARGE_RAM=1'
     cmd = f'cd {PWD}/project' + ' && ' + make_cmd
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -214,14 +214,14 @@ def benchmark_mico_matmul(N: int, M: int, K: int,
     for line in output:
         line = str(line.decode())
         # Format: [info] MiCo QAxQB Time: xxxxxx
-        if line.startswith('[info] MiCo'):
+        if 'MiCo' in line and 'Time:' in line:
             qa = int(line[line.find('x')-1])
             qb = int(line[line.find('x')+1])
-            cycles = int(line.split(': ')[1])
+            cycles = int(line.split(': ')[1].split('\x1b')[0])
             res.append((N, M, K, qa, qb, cycles))
     return res
 
-def benchmark_mico_conv2d(H, W, C, K, KS,
+def benchmark_mico_conv2d(H, W, C, K, KS, S,
                    mico_script="sim_small_mico.sh",
                    mico_main="bitconv2d_test"):
     
@@ -240,9 +240,10 @@ def benchmark_mico_conv2d(H, W, C, K, KS,
         f.write(f"#define INW {W}\n")
         f.write(f"#define K {KS}\n")
         f.write(f"#define M {K}\n")
+        f.write(f"#define S {S}\n")
 
     # Compile the benchmark
-    make_cmd = f'make recompile MAIN=tests/{mico_main} TARGET=vexii MARCH=rv32imfc OPT=simd'
+    make_cmd = f'make recompile MAIN=tests/{mico_main} TARGET=vexii MARCH=rv32imafc OPT=simd LARGE_RAM=1'
     cmd = f'cd {PWD}/project' + ' && ' + make_cmd
     proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
     proc.wait()
@@ -268,11 +269,11 @@ def benchmark_mico_conv2d(H, W, C, K, KS,
     for line in output:
         line = str(line.decode())
         # Format: [info] MiCo QAxQB Time: xxxxxx
-        if line.startswith('[info] MiCo'):
+        if 'MiCo' in line and 'Time:' in line:
             qa = int(line[line.find('x')-1])
             qb = int(line[line.find('x')+1])
-            cycles = int(line.split(': ')[1])
-            res.append((H, W, C, K, KS, qa, qb, cycles))
+            cycles = int(line.split(': ')[1].split('\x1b')[0])
+            res.append((H, W, C, K, KS, S, qa, qb, cycles))
     return res
 
 def benchmark_mico_pooling(C, H, W, K, S,

@@ -6,7 +6,10 @@ from matplotlib import pyplot as plt
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, root_mean_squared_error
 
 from MiCoEval import MiCoEval
-from MiCoProxy import get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy
+from MiCoProxy import (
+    get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy,
+    get_mico_matmul_proxy, get_mico_conv2d_proxy, get_mico_misc_kernel_proxy
+)
 
 from models import model_zoo
 
@@ -34,13 +37,25 @@ if __name__ == "__main__":
                      model_name=model_name,
                      output_json=f"output/json/{model_name}_{target}_predict.json")
     
-    matmul_proxy = get_bitfusion_matmul_proxy()
-    conv2d_proxy = get_bitfusion_conv2d_proxy()
-    evaluator.set_proxy(matmul_proxy, conv2d_proxy)
+    if target == "latency_mico":
+        evaluator.set_mico_target('small')
+        matmul_proxy = get_mico_matmul_proxy(mico_type='small')
+        conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
+        evaluator.set_proxy(matmul_proxy, conv2d_proxy)
+        evaluator.set_misc_proxy(get_mico_misc_kernel_proxy)
+
+    elif target == "latency_bitfusion":
+        matmul_proxy = get_bitfusion_matmul_proxy()
+        conv2d_proxy = get_bitfusion_conv2d_proxy()
+        evaluator.set_proxy(matmul_proxy, conv2d_proxy)
 
     dim = evaluator.n_layers * 2
-    bitwidths = [2, 3, 4, 5, 6, 7, 8]
-    
+    bitwidths = []
+    if target == "latency_bitfusion":
+        bitwidths = [2, 3, 4, 5, 6, 7, 8]
+    elif target == "latency_mico":
+        bitwidths = [1, 2, 4, 8]
+
     evaluator.set_eval(target)
 
     X = []

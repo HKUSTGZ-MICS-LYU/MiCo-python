@@ -463,7 +463,7 @@ void model_forward(Model* model) {{
                 if initialized:
                     if qbit == 0:
                         self.model_init.append(f"model->{name}.data = (float *)(model_weight_data + {len(self.weight_content)});")    
-                        self.weight_content += tensor.detach().numpy().tobytes()
+                        self.weight_content += tensor.detach().cpu().numpy().tobytes()
                         # If align > 32, we need to align the weight data to the specified alignment
                         # Currently only consider 64-bit alignment
                         if len(self.weight_content) % (max(1, align_to // 8)) != 0:
