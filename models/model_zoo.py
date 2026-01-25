@@ -98,6 +98,63 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS, 
             preprocess="mfcc")
+    # HuggingFace pretrained models with WikiText dataset
+    elif name.startswith("hf_") or name in _get_hf_model_names():
+        from models import HuggingFaceModel, load_hf_model, HF_MODEL_REGISTRY
+        from datasets import wikitext2
+
+        # Parse model name (remove "hf_" prefix if present)
+        hf_name = name[3:] if name.startswith("hf_") else name
+        
+        if hf_name in HF_MODEL_REGISTRY:
+            model = load_hf_model(hf_name).to(device)
+        else:
+            # Try loading as a HuggingFace model identifier
+            model = HuggingFaceModel.from_pretrained(hf_name).to(device)
+        
+        # Load WikiText-2 with the model's tokenizer
+        train_loader, test_loader = wikitext2(
+            batch_size=batch_size,
+            max_seq_len=model.params.max_seq_len,
+            tokenizer=model.tokenizer,
+            num_workers=NUM_WORKERS,
+            shuffle=shuffle,
+        )
     else:
         raise ValueError(f"Model {name} not found in zoo.")
     return model, train_loader, test_loader
+
+
+def _get_hf_model_names():
+    """Get list of available HuggingFace model names."""
+    try:
+        from models import HF_MODEL_REGISTRY
+        return list(HF_MODEL_REGISTRY.keys())
+    except ImportError:
+        return []
+
+
+def list_zoo_models():
+    """List all available models in the zoo."""
+    base_models = [
+        "mlp_mnist",
+        "lenet_mnist",
+        "vit_cifar10",
+        "cmsiscnn_cifar10",
+        "vgg_cifar10",
+        "resnet8_cifar10",
+        "resnet18_cifar10",
+        "mobilenetv2_cifar10",
+        "squeezenet_cifar10",
+        "shufflenet_cifar10",
+        "tinyllama",
+        "har_mlp",
+        "kws_conv1d",
+        "m5_kws",
+        "dscnn_kws",
+    ]
+    
+    # Add HuggingFace models
+    hf_models = ["hf_" + name for name in _get_hf_model_names()]
+    
+    return base_models + hf_models

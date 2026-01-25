@@ -14,3 +14,8 @@ sentencepiece
 
 # for torch native quantization
 torchao
+
+# for HuggingFace models and datasets
+transformers
+datasets
+accelerate
