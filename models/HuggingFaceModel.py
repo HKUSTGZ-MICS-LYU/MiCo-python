@@ -5,13 +5,15 @@ This module provides wrappers for loading and using pretrained HuggingFace
 models (particularly decoder-only LLMs) within the MiCo mixed precision 
 quantization framework.
 
-Supported models include edge-focused LLMs around 1B size and below:
+Supported pre-defined models include edge-focused LLMs around 1B size and below:
+- TinyLlama-1.1B
 - Qwen2-0.5B
-- TinyLlama-1.1B  
-- Phi-2 (2.7B, borderline but useful for comparison)
 - SmolLM-135M/360M/1.7B
-- StableLM-3B-4E1T
-- Gemma-2B
+- GPT2/GPT2-Medium
+- OPT-125M/350M
+
+Additional models can be loaded by passing any HuggingFace model identifier
+to HuggingFaceModel.from_pretrained().
 """
 
 import math
@@ -207,15 +209,20 @@ class HuggingFaceModel(MiCoModel):
         # Test Loss Estimate
         losses = torch.zeros(eval_iters)
         test_correct = 0
+        actual_iters = 0
         
         for k in range(eval_iters):
             try:
                 X, Y = next(self.test_loader)
-            except StopIteration:
-                break
-            except TypeError:
-                # Handle generator-based loaders
-                X, Y = next(iter(self.test_loader))
+                actual_iters += 1
+            except (StopIteration, TypeError):
+                # Iterator exhausted or not an iterator, try to reset
+                try:
+                    self.test_loader = iter(self._test_loader_source)
+                    X, Y = next(self.test_loader)
+                    actual_iters += 1
+                except (StopIteration, TypeError, AttributeError):
+                    break
                 
             if not isinstance(X, torch.Tensor):
                 X = torch.tensor(X)
@@ -236,9 +243,9 @@ class HuggingFaceModel(MiCoModel):
             if mask.sum() > 0:
                 test_correct += (predict[mask] == correct[mask]).sum().item() / mask.sum().item()
                 
-        out["TrainLoss"] = losses.mean().item()  # Use test as proxy for train
-        out["TestLoss"] = losses.mean().item()
-        out["TestAcc"] = test_correct / eval_iters if eval_iters > 0 else 0
+        out["TrainLoss"] = losses[:actual_iters].mean().item() if actual_iters > 0 else 0
+        out["TestLoss"] = losses[:actual_iters].mean().item() if actual_iters > 0 else 0
+        out["TestAcc"] = test_correct / actual_iters if actual_iters > 0 else 0
         
         self.train()
         return out
@@ -260,6 +267,9 @@ class HuggingFaceModel(MiCoModel):
         Returns:
             Dictionary with TestLoss, TestAcc
         """
+        # Store loader source for potential reset
+        self._test_loader_source = test_loader
+        self._train_loader_source = test_loader if train_loader is None else train_loader
         self.test_loader = iter(test_loader)
         self.train_loader = iter(test_loader) if train_loader is None else iter(train_loader)
         return self.estimate_loss(eval_iters)

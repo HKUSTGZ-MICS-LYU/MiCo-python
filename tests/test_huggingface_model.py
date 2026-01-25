@@ -50,12 +50,17 @@ def test_model_zoo_hf_names():
 
 def test_huggingface_model_gpt2_load():
     """Test loading GPT-2 small model (fast, lightweight test)."""
-    pytest = __import__("pytest")
+    try:
+        import pytest
+    except ImportError:
+        pytest = None
     
     try:
         from transformers import AutoModelForCausalLM
     except ImportError:
-        pytest.skip("transformers not installed")
+        if pytest:
+            pytest.skip("transformers not installed")
+        return
     
     from models import GPT2_Small
     
@@ -80,12 +85,17 @@ def test_huggingface_model_gpt2_load():
 
 def test_huggingface_model_get_qlayers():
     """Test that HuggingFace model can identify quantizable layers."""
-    pytest = __import__("pytest")
+    try:
+        import pytest
+    except ImportError:
+        pytest = None
     
     try:
         from transformers import AutoModelForCausalLM
     except ImportError:
-        pytest.skip("transformers not installed")
+        if pytest:
+            pytest.skip("transformers not installed")
+        return
     
     from models import GPT2_Small
     
@@ -101,20 +111,25 @@ def test_huggingface_model_get_qlayers():
 
 def test_huggingface_model_generate():
     """Test text generation with HuggingFace model."""
-    pytest = __import__("pytest")
+    try:
+        import pytest
+    except ImportError:
+        pytest = None
     
     try:
         from transformers import AutoModelForCausalLM
     except ImportError:
-        pytest.skip("transformers not installed")
+        if pytest:
+            pytest.skip("transformers not installed")
+        return
     
     from models import GPT2_Small
     
     model = GPT2_Small(max_seq_len=64, torch_dtype=torch.float32)
     model.eval()
     
-    # Generate from a simple prompt
-    prompt_ids = torch.tensor([[50256]])  # BOS token for GPT-2
+    # Generate from a simple prompt (GPT-2 uses EOS token as start)
+    prompt_ids = torch.tensor([[50256]])  # EOS token for GPT-2
     
     with torch.no_grad():
         generated = model.generate(prompt_ids, max_new_tokens=10, temperature=0.0)
@@ -125,12 +140,17 @@ def test_huggingface_model_generate():
 
 def test_huggingface_model_size():
     """Test model size calculation."""
-    pytest = __import__("pytest")
+    try:
+        import pytest
+    except ImportError:
+        pytest = None
     
     try:
         from transformers import AutoModelForCausalLM
     except ImportError:
-        pytest.skip("transformers not installed")
+        if pytest:
+            pytest.skip("transformers not installed")
+        return
     
     from models import GPT2_Small
     
@@ -147,13 +167,18 @@ def test_huggingface_model_size():
 
 def test_wikitext2_shape():
     """Test WikiText-2 dataset returns correct shapes."""
-    pytest = __import__("pytest")
+    try:
+        import pytest
+    except ImportError:
+        pytest = None
     
     try:
         from datasets import load_dataset
         from transformers import AutoTokenizer
     except ImportError:
-        pytest.skip("datasets or transformers not installed")
+        if pytest:
+            pytest.skip("datasets or transformers not installed")
+        return
     
     from datasets import wikitext2
     
@@ -176,13 +201,18 @@ def test_wikitext2_shape():
 
 def test_huggingface_model_with_wikitext():
     """Test HuggingFace model evaluation on WikiText dataset."""
-    pytest = __import__("pytest")
+    try:
+        import pytest
+    except ImportError:
+        pytest = None
     
     try:
         from datasets import load_dataset
         from transformers import AutoModelForCausalLM
     except ImportError:
-        pytest.skip("datasets or transformers not installed")
+        if pytest:
+            pytest.skip("datasets or transformers not installed")
+        return
     
     from models import GPT2_Small
     from datasets import wikitext2
