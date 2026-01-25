@@ -89,8 +89,19 @@ class HuggingFaceModel(MiCoModel):
         self.test_loader = None
         self.last_loss = None
         
-        # Count quantizable layers
+        # Count quantizable layers (must look inside the wrapped model)
         self.n_layers = len(self.get_qlayers())
+    
+    def get_qlayers(self):
+        """
+        Override to get quantizable layers from the wrapped HuggingFace model.
+        
+        HuggingFace models have a nested structure, so we need to search
+        inside self.model rather than self.
+        """
+        from MiCoUtils import list_quantize_layers
+        # Get layers from the wrapped HuggingFace model
+        return list_quantize_layers(self.model)
         
     @classmethod
     def from_pretrained(
@@ -237,8 +248,8 @@ class HuggingFaceModel(MiCoModel):
             losses[k] = loss.item() if loss is not None else 0
             
             # Calculate accuracy (next token prediction)
-            predict = torch.max(logits[:, :-1, :].view(-1, logits.size(-1)), dim=1).indices
-            correct = Y[:, 1:].contiguous().view(-1)
+            predict = torch.max(logits[:, :-1, :].reshape(-1, logits.size(-1)), dim=1).indices
+            correct = Y[:, 1:].reshape(-1)
             mask = correct != -100  # Ignore padding
             if mask.sum() > 0:
                 test_correct += (predict[mask] == correct[mask]).sum().item() / mask.sum().item()

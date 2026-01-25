@@ -29,7 +29,7 @@ def test_huggingface_model_import():
 
 def test_wikitext_import():
     """Test that WikiText dataset functions can be imported."""
-    from datasets import wikitext, wikitext2, wikitext103, hf_text_dataset
+    from MiCoDatasets import wikitext, wikitext2, wikitext103, hf_text_dataset
     
     assert callable(wikitext)
     assert callable(wikitext2)
@@ -180,7 +180,7 @@ def test_wikitext2_shape():
             pytest.skip("datasets or transformers not installed")
         return
     
-    from datasets import wikitext2
+    from MiCoDatasets import wikitext2
     
     # Load with small batch and sequence length for testing
     train_loader, test_loader = wikitext2(
@@ -215,7 +215,7 @@ def test_huggingface_model_with_wikitext():
         return
     
     from models import GPT2_Small
-    from datasets import wikitext2
+    from MiCoDatasets import wikitext2
     
     # Load model
     model = GPT2_Small(max_seq_len=64, torch_dtype=torch.float32)

@@ -9,7 +9,7 @@ from MiCoUtils import (
     set_to_qforward,
     export_layer_weights
 )
-from datasets import cifar10
+from MiCoDatasets import cifar10
 
 from tqdm import tqdm
 

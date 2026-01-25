@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from MiCoEval import MiCoEval
 
 from models import MLP
-from datasets import mnist
+from MiCoDatasets import mnist
 
 from tqdm import tqdm
 

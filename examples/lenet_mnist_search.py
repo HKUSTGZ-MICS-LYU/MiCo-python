@@ -8,7 +8,7 @@ from MiCoEval import MiCoEval
 from MiCoProxy import get_mico_proxy, get_bitfusion_proxy
 
 from models import LeNet
-from datasets import mnist
+from MiCoDatasets import mnist
 
 from tqdm import tqdm
 

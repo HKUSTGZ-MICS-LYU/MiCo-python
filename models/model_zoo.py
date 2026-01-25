@@ -13,7 +13,7 @@ from models import (
     HARMLP,
 )
 
-from datasets import (
+from MiCoDatasets import (
     mnist,
     fashion_mnist,
     cifar10,
@@ -78,21 +78,21 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = uci_har(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif name == "kws_conv1d":
         from models import KWSConv1d
-        from datasets import speechcommands
+        from MiCoDatasets import speechcommands
 
         model = KWSConv1d(n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif name == "m5_kws":
         from models.M5 import M5
-        from datasets import speechcommands
+        from MiCoDatasets import speechcommands
 
         model = M5(n_input=1, n_output=35, stride=16, n_channel=32).to(device)
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
     elif name == "dscnn_kws":
         from models.DSCNN import DSCNN
-        from datasets import speechcommands
+        from MiCoDatasets import speechcommands
 
         model = DSCNN(n_classes=35, input_size=[64, 81]).to(device)
         train_loader, test_loader = speechcommands(
@@ -101,7 +101,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
     # HuggingFace pretrained models with WikiText dataset
     elif name.startswith("hf_") or name in _get_hf_model_names():
         from models import HuggingFaceModel, load_hf_model, HF_MODEL_REGISTRY
-        from datasets import wikitext2
+        from MiCoDatasets import wikitext2
 
         # Parse model name (remove "hf_" prefix if present)
         hf_name = name[3:] if name.startswith("hf_") else name

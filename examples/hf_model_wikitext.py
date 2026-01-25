@@ -27,7 +27,7 @@ from models import (
     OPT_125M,
     list_available_models,
 )
-from datasets import wikitext2
+from MiCoDatasets import wikitext2
 from MiCoUtils import list_quantize_layers
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

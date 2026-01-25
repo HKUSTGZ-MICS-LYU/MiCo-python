@@ -6,7 +6,7 @@ from models import TinyLLaMa1M
 from MiCoUtils import (
     get_model_macs,
 )
-from datasets import tinystories
+from MiCoDatasets import tinystories
 from MiCoSearch import MiCoSearch
 from searchers import MiCoBOSearcher, NLPSearcher, HAQSearcher
 

@@ -8,7 +8,7 @@ from MiCoEval import MiCoEval
 from MiCoProxy import get_mico_matmul_proxy, get_mico_conv2d_proxy, get_mico_misc_kernel_proxy
 
 from models import CmsisCNN
-from datasets import cifar10
+from MiCoDatasets import cifar10
 
 from tqdm import tqdm
 

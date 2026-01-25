@@ -10,7 +10,7 @@ from MiCoUtils import (
     set_to_qforward,
     export_layer_weights
 )
-from datasets import mnist
+from MiCoDatasets import mnist
 
 from tqdm import tqdm
 

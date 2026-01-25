@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from MiCoEval import MiCoEval
 
 from models import resnet_alt_8
-from datasets import cifar10
+from MiCoDatasets import cifar10
 
 from tqdm import tqdm
 
