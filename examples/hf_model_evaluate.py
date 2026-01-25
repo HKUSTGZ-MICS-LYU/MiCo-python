@@ -93,7 +93,8 @@ def evaluate_model(model_name: str = "gpt2", batch_size: int = 4, max_seq_len: i
     with torch.no_grad():
         generated_ids = model.generate(
             model_inputs.input_ids, 
-            max_new_tokens=128,
+            max_new_tokens=max_seq_len,
+            attention_mask = model_inputs["attention_mask"]
         )
     
     generated_ids = [
@@ -128,7 +129,7 @@ def evaluate_model(model_name: str = "gpt2", batch_size: int = 4, max_seq_len: i
     with torch.no_grad():
         generated_ids = model.generate(
             model_inputs.input_ids, 
-            max_new_tokens=128,
+            max_new_tokens=max_seq_len,
         )
     
     generated_ids = [
@@ -149,7 +150,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", 
         type=str, 
-        default="qwen2-0.5b",
+        default="qwen3-0.6b",
         help="Model name (gpt2, opt-125m, smollm-135m, etc.)"
     )
     parser.add_argument(
@@ -161,7 +162,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--max-seq-len",
         type=int,
-        default=128,
+        default=2048,
         help="Maximum sequence length"
     )
     parser.add_argument(

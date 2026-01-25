@@ -292,6 +292,7 @@ class HuggingFaceModel(MiCoModel):
         temperature: float = 1.0,
         top_k: Optional[int] = None,
         top_p: Optional[float] = None,
+        attention_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         """
         Generate text tokens autoregressively.
@@ -314,6 +315,7 @@ class HuggingFaceModel(MiCoModel):
             top_k=top_k,
             top_p=top_p,
             do_sample=temperature > 0,
+            attention_mask=attention_mask,
             pad_token_id=self.tokenizer.pad_token_id,
         )
         return generated
