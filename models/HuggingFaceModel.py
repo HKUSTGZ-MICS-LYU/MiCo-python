@@ -356,6 +356,18 @@ def Qwen2_0_5B(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
         dtype=dtype,
     )
 
+def Qwen3_0_6B(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
+    """
+    Load Qwen3 0.6B model.
+    
+    Qwen3-0.6B is an updated small model from Alibaba's Qwen series,
+    offering improved performance for its size.
+    """
+    return HuggingFaceModel.from_pretrained(
+        "Qwen/Qwen3-0.6B",
+        max_seq_len=max_seq_len,
+        dtype=dtype,
+    )
 
 def SmolLM_135M(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
@@ -457,6 +469,7 @@ def OPT_350M(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
 HF_MODEL_REGISTRY: Dict[str, callable] = {
     "tinyllama-1.1b": TinyLlama1B,
     "qwen2-0.5b": Qwen2_0_5B,
+    "qwen3-0.6b": Qwen3_0_6B,
     "smollm-135m": SmolLM_135M,
     "smollm-360m": SmolLM_360M,
     "smollm-1.7b": SmolLM_1_7B,
