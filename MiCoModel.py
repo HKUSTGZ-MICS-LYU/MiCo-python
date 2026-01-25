@@ -81,6 +81,8 @@ class MiCoModel(nn.Module):
         elif scheduler == "cifar100-step":
             scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 optimizer, milestones=[60, 120, 160, 200], gamma=0.2)
+        else:
+            raise ValueError(f"Scheduler {scheduler} not recognized.")
 
         last_loss = np.inf
         for epoch in range(n_epoch):

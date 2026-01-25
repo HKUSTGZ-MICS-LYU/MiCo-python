@@ -23,9 +23,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from models import (
     HuggingFaceModel,
-    GPT2_Small,
-    OPT_125M,
     list_available_models,
+    load_hf_model,
 )
 from MiCoDatasets import wikitext2
 from MiCoUtils import list_quantize_layers
@@ -46,20 +45,15 @@ def evaluate_model(model_name: str = "gpt2", batch_size: int = 4, max_seq_len: i
     print(f"Loading model: {model_name}")
     
     # Load model
-    if model_name == "gpt2":
-        model = GPT2_Small(max_seq_len=max_seq_len, torch_dtype=torch.float32)
-    elif model_name == "opt-125m":
-        model = OPT_125M(max_seq_len=max_seq_len, torch_dtype=torch.float32)
-    else:
-        model = HuggingFaceModel.from_pretrained(
-            model_name, 
-            max_seq_len=max_seq_len,
-            torch_dtype=torch.float32,
-        )
+    model = load_hf_model(
+        name=model_name,
+        max_seq_len=max_seq_len,
+        dtype=torch.float32,
+    )
     
     model = model.to(device)
     model.eval()
-    
+
     # Print model info
     print(f"Model: {model.params.model_name}")
     print(f"Parameters: {model.get_model_size() / 1e6:.2f}M")
@@ -70,54 +64,45 @@ def evaluate_model(model_name: str = "gpt2", batch_size: int = 4, max_seq_len: i
     qlayers = list_quantize_layers(model)
     print(f"Quantizable layers: {len(qlayers)}")
     print(f"Layer types: {set(type(l).__name__ for l in qlayers)}")
-    
-    # Load WikiText-2 with model's tokenizer
-    print("\nLoading WikiText-2 dataset...")
-    train_loader, test_loader = wikitext2(
-        batch_size=batch_size,
-        max_seq_len=max_seq_len,
-        tokenizer=model.tokenizer,
-        num_workers=0,
-    )
-    
-    # Evaluate
-    print("\nEvaluating model...")
-    start_time = time.time()
-    result = model.test(test_loader, eval_iters=50)
-    end_time = time.time()
-    
-    print(f"\nResults:")
-    print(f"  Test Loss: {result['TestLoss']:.4f}")
-    print(f"  Perplexity: {torch.exp(torch.tensor(result['TestLoss'])):.2f}")
-    print(f"  Test Accuracy: {result['TestAcc']*100:.2f}%")
-    print(f"  Evaluation time: {end_time - start_time:.2f}s")
+
+    print("Model Architecture:")
+    print(model)
     
     # Test generation
     print("\nTesting generation...")
-    prompt = "The quick brown fox"
-    input_ids = model.tokenizer.encode(prompt, return_tensors="pt").to(device)
-    
+    prompt = "What is mixed precision quantization?"
+    messages = [
+        {"role": "system", "content": "You are a helpful assistant."},
+        {"role": "user", "content": prompt}
+    ]
+    print(f"Prompt: '{prompt}'")
+    try:
+        text = model.tokenizer.apply_chat_template(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True
+        )
+    except ValueError:
+        # Fail back to default template
+        text = prompt
+    print(f"Input text: '{text}'")
+    model_inputs = model.tokenizer([text], return_tensors="pt").to(device)
+
+    torch.random.manual_seed(0)
+    torch.cuda.random.manual_seed(0)
     with torch.no_grad():
-        output_ids = model.generate(
-            input_ids, 
-            max_new_tokens=20,
-            temperature=0.7,
-            top_k=50,
+        generated_ids = model.generate(
+            model_inputs.input_ids, 
+            max_new_tokens=128,
         )
     
-    generated_text = model.tokenizer.decode(output_ids[0], skip_special_tokens=True)
-    print(f"Prompt: '{prompt}'")
-    print(f"Generated: '{generated_text}'")
-    
-    return model, result
+    generated_ids = [
+        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+    ]
 
+    response = model.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    print(f"Generated: '{response}'")
 
-def prepare_for_mpq_search(model):
-    """
-    Prepare the model for mixed precision quantization search.
-    
-    This shows how to set up the model for layer-wise precision search.
-    """
     print("\n" + "="*50)
     print("Preparing for MPQ Search")
     print("="*50)
@@ -133,12 +118,28 @@ def prepare_for_mpq_search(model):
     
     # Note: set_qscheme will replace the layers with quantized versions
     # This is typically done during search to evaluate different configurations
-    model.set_qscheme([weight_bits, activation_bits])
+    model.set_qscheme([weight_bits, activation_bits], group_size=32)
     
     print("Quantization scheme applied successfully!")
-    print(f"Model ready for MPQ evaluation.")
+    model_inputs = model.tokenizer([text], return_tensors="pt").to(device)
+
+    torch.random.manual_seed(0)
+    torch.cuda.random.manual_seed(0)
+    with torch.no_grad():
+        generated_ids = model.generate(
+            model_inputs.input_ids, 
+            max_new_tokens=128,
+        )
     
+    generated_ids = [
+        output_ids[len(input_ids):] for input_ids, output_ids in zip(model_inputs.input_ids, generated_ids)
+    ]
+
+    response = model.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)[0]
+    print(f"Generated: '{response}'")
+
     return model
+
 
 
 if __name__ == "__main__":
@@ -148,7 +149,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--model", 
         type=str, 
-        default="gpt2",
+        default="qwen2-0.5b",
         help="Model name (gpt2, opt-125m, smollm-135m, etc.)"
     )
     parser.add_argument(
@@ -179,15 +180,8 @@ if __name__ == "__main__":
         sys.exit(0)
     
     # Evaluate model
-    model, result = evaluate_model(
+    model = evaluate_model(
         model_name=args.model,
         batch_size=args.batch_size,
         max_seq_len=args.max_seq_len,
     )
-    
-    # Show how to prepare for MPQ search
-    prepare_for_mpq_search(model)
-    
-    print("\n" + "="*50)
-    print("Done! Model is ready for layer-wise precision search.")
-    print("="*50)

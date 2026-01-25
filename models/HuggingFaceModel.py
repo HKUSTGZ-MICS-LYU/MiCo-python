@@ -48,7 +48,7 @@ class HFModelArgs:
     model_name: str = "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T"
     max_seq_len: int = 512
     trust_remote_code: bool = True
-    torch_dtype: torch.dtype = torch.float32
+    dtype: torch.dtype = torch.float32
     low_cpu_mem_usage: bool = True
     device_map: Optional[str] = None  # None, "auto", "cpu", or specific device
 
@@ -91,17 +91,6 @@ class HuggingFaceModel(MiCoModel):
         
         # Count quantizable layers (must look inside the wrapped model)
         self.n_layers = len(self.get_qlayers())
-    
-    def get_qlayers(self):
-        """
-        Override to get quantizable layers from the wrapped HuggingFace model.
-        
-        HuggingFace models have a nested structure, so we need to search
-        inside self.model rather than self.
-        """
-        from MiCoUtils import list_quantize_layers
-        # Get layers from the wrapped HuggingFace model
-        return list_quantize_layers(self.model)
         
     @classmethod
     def from_pretrained(
@@ -109,7 +98,7 @@ class HuggingFaceModel(MiCoModel):
         model_name: str,
         max_seq_len: int = 512,
         trust_remote_code: bool = True,
-        torch_dtype: torch.dtype = torch.float32,
+        dtype: torch.dtype = torch.float32,
         low_cpu_mem_usage: bool = True,
         device_map: Optional[str] = None,
     ) -> "HuggingFaceModel":
@@ -120,7 +109,7 @@ class HuggingFaceModel(MiCoModel):
             model_name: HuggingFace model identifier (e.g., "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T")
             max_seq_len: Maximum sequence length for generation
             trust_remote_code: Whether to trust remote code for custom models
-            torch_dtype: Torch dtype for model weights
+            dtype: Torch dtype for model weights
             low_cpu_mem_usage: Use low CPU memory mode for loading
             device_map: Device map for model sharding (None, "auto", "cpu", etc.)
             
@@ -137,7 +126,7 @@ class HuggingFaceModel(MiCoModel):
             model_name=model_name,
             max_seq_len=max_seq_len,
             trust_remote_code=trust_remote_code,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             low_cpu_mem_usage=low_cpu_mem_usage,
             device_map=device_map,
         )
@@ -156,7 +145,7 @@ class HuggingFaceModel(MiCoModel):
         hf_model = AutoModelForCausalLM.from_pretrained(
             model_name,
             trust_remote_code=trust_remote_code,
-            torch_dtype=torch_dtype,
+            dtype=dtype,
             low_cpu_mem_usage=low_cpu_mem_usage,
             device_map=device_map,
         )
@@ -340,7 +329,7 @@ class HuggingFaceModel(MiCoModel):
 
 # Convenience functions for specific edge-focused models
 
-def TinyLlama1B(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def TinyLlama1B(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load TinyLlama 1.1B model.
     
@@ -350,11 +339,11 @@ def TinyLlama1B(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFac
     return HuggingFaceModel.from_pretrained(
         "TinyLlama/TinyLlama-1.1B-intermediate-step-1431k-3T",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def Qwen2_0_5B(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def Qwen2_0_5B(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load Qwen2 0.5B model.
     
@@ -364,11 +353,11 @@ def Qwen2_0_5B(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFace
     return HuggingFaceModel.from_pretrained(
         "Qwen/Qwen2-0.5B",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def SmolLM_135M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def SmolLM_135M(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load SmolLM 135M model.
     
@@ -378,11 +367,11 @@ def SmolLM_135M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFac
     return HuggingFaceModel.from_pretrained(
         "HuggingFaceTB/SmolLM-135M",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def SmolLM_360M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def SmolLM_360M(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load SmolLM 360M model.
     
@@ -392,11 +381,11 @@ def SmolLM_360M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFac
     return HuggingFaceModel.from_pretrained(
         "HuggingFaceTB/SmolLM-360M",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def SmolLM_1_7B(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def SmolLM_1_7B(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load SmolLM 1.7B model.
     
@@ -406,11 +395,11 @@ def SmolLM_1_7B(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFac
     return HuggingFaceModel.from_pretrained(
         "HuggingFaceTB/SmolLM-1.7B",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def GPT2_Small(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def GPT2_Small(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load GPT-2 Small (124M) model.
     
@@ -420,11 +409,11 @@ def GPT2_Small(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFace
     return HuggingFaceModel.from_pretrained(
         "gpt2",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def GPT2_Medium(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def GPT2_Medium(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load GPT-2 Medium (355M) model.
     
@@ -433,11 +422,11 @@ def GPT2_Medium(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFac
     return HuggingFaceModel.from_pretrained(
         "gpt2-medium",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def OPT_125M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def OPT_125M(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load OPT-125M model.
     
@@ -447,11 +436,11 @@ def OPT_125M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceMo
     return HuggingFaceModel.from_pretrained(
         "facebook/opt-125m",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
-def OPT_350M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceModel:
+def OPT_350M(max_seq_len: int = 512, dtype=torch.float32) -> HuggingFaceModel:
     """
     Load OPT-350M model.
     
@@ -460,7 +449,7 @@ def OPT_350M(max_seq_len: int = 512, torch_dtype=torch.float32) -> HuggingFaceMo
     return HuggingFaceModel.from_pretrained(
         "facebook/opt-350m",
         max_seq_len=max_seq_len,
-        torch_dtype=torch_dtype,
+        dtype=dtype,
     )
 
 
