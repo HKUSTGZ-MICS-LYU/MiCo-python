@@ -13,7 +13,7 @@ from MiCoUtils import (
     export_layer_weights
 )
 from TinyStories.tokenizer import Tokenizer
-from datasets import tinystories
+from MiCoDatasets import tinystories
 
 from tqdm import tqdm
 

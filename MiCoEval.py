@@ -349,7 +349,7 @@ class MiCoEval:
 # Test
 if __name__ == "__main__":
     from models import MLP, LeNet, VGG, resnet_alt_8
-    from datasets import mnist, cifar10
+    from MiCoDatasets import mnist, cifar10
 
     # model = LeNet(1)
     # train_loader, test_loader = mnist(shuffle=False)

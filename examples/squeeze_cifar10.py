@@ -10,7 +10,7 @@ from MiCoUtils import (
     export_layer_weights,
     fuse_model
 )
-from datasets import cifar10
+from MiCoDatasets import cifar10
 
 from tqdm import tqdm
 

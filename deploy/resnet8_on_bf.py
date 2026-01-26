@@ -8,7 +8,7 @@ from MiCoEval import MiCoEval
 from MiCoProxy import get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy
 
 from models import resnet_alt_8
-from datasets import cifar10
+from MiCoDatasets import cifar10
 
 from tqdm import tqdm
 

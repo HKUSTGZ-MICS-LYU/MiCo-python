@@ -7,7 +7,7 @@ from matplotlib import pyplot as plt
 from MiCoEval import MiCoEval
 
 from MiCoModel import from_torch
-from datasets import imagenet
+from MiCoDatasets import imagenet
 from torchvision.models import resnet18, ResNet18_Weights, mobilenet_v2, MobileNet_V2_Weights
 
 from tqdm import tqdm

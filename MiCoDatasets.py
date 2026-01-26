@@ -332,3 +332,317 @@ def speechcommands(batch_size=64, num_works=0,
 #         waveforms, labels = batch
 #         print(waveforms.shape, labels.shape)
 #         break
+
+
+# =============================================================================
+# HuggingFace Datasets for LLM Evaluation
+# =============================================================================
+
+def wikitext(
+    batch_size: int = 8,
+    max_seq_len: int = 512,
+    tokenizer=None,
+    variant: str = "wikitext-2-raw-v1",
+    num_workers: int = 0,
+    shuffle: bool = False,
+    root: str = "data",
+    **kwargs,
+):
+    """
+    Load WikiText dataset for language model perplexity evaluation.
+    
+    WikiText provides a standard benchmark for language model evaluation.
+    This function returns DataLoaders that yield (input_ids, labels) tuples
+    suitable for next-token prediction tasks.
+    
+    Args:
+        batch_size: Batch size for data loaders
+        max_seq_len: Maximum sequence length for tokenization
+        tokenizer: HuggingFace tokenizer (if None, uses GPT-2 tokenizer)
+        variant: WikiText variant ("wikitext-2-raw-v1", "wikitext-103-raw-v1")
+        num_workers: Number of workers for DataLoader
+        shuffle: Whether to shuffle data
+        root: Root directory for caching (not used, HF handles caching)
+        **kwargs: Additional arguments (for compatibility)
+        
+    Returns:
+        train_loader, test_loader: DataLoader objects
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "HuggingFace datasets is required for WikiText. "
+            "Install with: pip install datasets"
+        )
+    
+    # Handle deprecated num_works argument
+    num_works = kwargs.pop("num_works", None)
+    if kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
+    if num_works is not None:
+        warnings.warn(
+            "`num_works` is deprecated and will be removed in version 0.2; use `num_workers` instead.",
+            FutureWarning,
+        )
+        num_workers = num_works
+    
+    # Load tokenizer if not provided
+    if tokenizer is None:
+        try:
+            from transformers import AutoTokenizer
+        except ImportError:
+            raise ImportError(
+                "HuggingFace transformers is required for WikiText. "
+                "Install with: pip install transformers"
+            )
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    
+    # Load WikiText dataset
+    dataset = load_dataset("wikitext", variant)
+    
+    def tokenize_and_chunk(examples):
+        """Tokenize and chunk text into fixed-length sequences."""
+        # Concatenate all texts
+        texts = [text for text in examples["text"] if text.strip()]
+        if not texts:
+            return {"input_ids": [], "labels": []}
+        
+        # Tokenize
+        tokenized = tokenizer(
+            texts,
+            truncation=False,
+            padding=False,
+            return_attention_mask=False,
+        )
+        
+        # Concatenate all tokens
+        all_tokens = []
+        for tokens in tokenized["input_ids"]:
+            all_tokens.extend(tokens)
+        
+        # Chunk into fixed-length sequences
+        chunks = []
+        for i in range(0, len(all_tokens) - max_seq_len, max_seq_len):
+            chunk = all_tokens[i:i + max_seq_len + 1]  # +1 for labels
+            if len(chunk) == max_seq_len + 1:
+                chunks.append(chunk)
+        
+        if not chunks:
+            return {"input_ids": [], "labels": []}
+        
+        # Create input_ids and labels
+        input_ids = [chunk[:-1] for chunk in chunks]
+        labels = [chunk[1:] for chunk in chunks]
+        
+        return {"input_ids": input_ids, "labels": labels}
+    
+    # Process datasets
+    train_dataset = dataset["train"].map(
+        tokenize_and_chunk,
+        batched=True,
+        remove_columns=dataset["train"].column_names,
+        desc="Tokenizing train set",
+    )
+    
+    test_dataset = dataset["test"].map(
+        tokenize_and_chunk,
+        batched=True,
+        remove_columns=dataset["test"].column_names,
+        desc="Tokenizing test set",
+    )
+    
+    # Set format for PyTorch
+    train_dataset.set_format(type="torch", columns=["input_ids", "labels"])
+    test_dataset.set_format(type="torch", columns=["input_ids", "labels"])
+    
+    def collate_fn(batch):
+        """Collate function for DataLoader."""
+        input_ids = torch.stack([item["input_ids"] for item in batch])
+        labels = torch.stack([item["labels"] for item in batch])
+        return input_ids, labels
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+    )
+    
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+    )
+    
+    return train_loader, test_loader
+
+
+def wikitext2(batch_size: int = 8, max_seq_len: int = 512, tokenizer=None, **kwargs):
+    """
+    Load WikiText-2 dataset.
+    
+    WikiText-2 is a smaller version (~2M tokens) suitable for quick evaluation.
+    """
+    return wikitext(
+        batch_size=batch_size,
+        max_seq_len=max_seq_len,
+        tokenizer=tokenizer,
+        variant="wikitext-2-raw-v1",
+        **kwargs,
+    )
+
+
+def wikitext103(batch_size: int = 8, max_seq_len: int = 512, tokenizer=None, **kwargs):
+    """
+    Load WikiText-103 dataset.
+    
+    WikiText-103 is a larger version (~103M tokens) for more comprehensive evaluation.
+    """
+    return wikitext(
+        batch_size=batch_size,
+        max_seq_len=max_seq_len,
+        tokenizer=tokenizer,
+        variant="wikitext-103-raw-v1",
+        **kwargs,
+    )
+
+
+def hf_text_dataset(
+    dataset_name: str,
+    batch_size: int = 8,
+    max_seq_len: int = 512,
+    tokenizer=None,
+    text_column: str = "text",
+    split_train: str = "train",
+    split_test: str = "test",
+    num_workers: int = 0,
+    shuffle: bool = False,
+    subset: str = None,
+    **kwargs,
+):
+    """
+    Generic loader for HuggingFace text datasets.
+    
+    This function provides a flexible way to load any text dataset from
+    HuggingFace Hub for language model evaluation.
+    
+    Args:
+        dataset_name: HuggingFace dataset identifier (e.g., "wikitext", "c4", "openwebtext")
+        batch_size: Batch size for data loaders
+        max_seq_len: Maximum sequence length for tokenization
+        tokenizer: HuggingFace tokenizer (if None, uses GPT-2 tokenizer)
+        text_column: Name of the text column in the dataset
+        split_train: Name of the training split
+        split_test: Name of the test split
+        num_workers: Number of workers for DataLoader
+        shuffle: Whether to shuffle data
+        subset: Dataset subset/configuration (e.g., "wikitext-2-raw-v1")
+        **kwargs: Additional arguments passed to load_dataset
+        
+    Returns:
+        train_loader, test_loader: DataLoader objects
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "HuggingFace datasets is required. "
+            "Install with: pip install datasets"
+        )
+    
+    # Load tokenizer if not provided
+    if tokenizer is None:
+        try:
+            from transformers import AutoTokenizer
+        except ImportError:
+            raise ImportError(
+                "HuggingFace transformers is required. "
+                "Install with: pip install transformers"
+            )
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+    
+    # Load dataset
+    if subset:
+        dataset = load_dataset(dataset_name, subset, **kwargs)
+    else:
+        dataset = load_dataset(dataset_name, **kwargs)
+    
+    def tokenize_and_chunk(examples):
+        """Tokenize and chunk text into fixed-length sequences."""
+        texts = [text for text in examples[text_column] if text and text.strip()]
+        if not texts:
+            return {"input_ids": [], "labels": []}
+        
+        tokenized = tokenizer(
+            texts,
+            truncation=False,
+            padding=False,
+            return_attention_mask=False,
+        )
+        
+        all_tokens = []
+        for tokens in tokenized["input_ids"]:
+            all_tokens.extend(tokens)
+        
+        chunks = []
+        for i in range(0, len(all_tokens) - max_seq_len, max_seq_len):
+            chunk = all_tokens[i:i + max_seq_len + 1]
+            if len(chunk) == max_seq_len + 1:
+                chunks.append(chunk)
+        
+        if not chunks:
+            return {"input_ids": [], "labels": []}
+        
+        input_ids = [chunk[:-1] for chunk in chunks]
+        labels = [chunk[1:] for chunk in chunks]
+        
+        return {"input_ids": input_ids, "labels": labels}
+    
+    # Process datasets
+    train_dataset = dataset[split_train].map(
+        tokenize_and_chunk,
+        batched=True,
+        remove_columns=dataset[split_train].column_names,
+        desc=f"Tokenizing {split_train} set",
+    )
+    
+    test_dataset = dataset[split_test].map(
+        tokenize_and_chunk,
+        batched=True,
+        remove_columns=dataset[split_test].column_names,
+        desc=f"Tokenizing {split_test} set",
+    )
+    
+    train_dataset.set_format(type="torch", columns=["input_ids", "labels"])
+    test_dataset.set_format(type="torch", columns=["input_ids", "labels"])
+    
+    def collate_fn(batch):
+        input_ids = torch.stack([item["input_ids"] for item in batch])
+        labels = torch.stack([item["labels"] for item in batch])
+        return input_ids, labels
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+    )
+    
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+    )
+    
+    return train_loader, test_loader

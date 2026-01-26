@@ -7,7 +7,7 @@ from models import VGG
 from MiCoUtils import (
     get_model_macs,
 )
-from datasets import cifar10
+from MiCoDatasets import cifar10
 from MiCoSearch import MiCoSearch
 from searchers.legacy import NLPSearcher, HAQSearcher
 

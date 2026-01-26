@@ -6,7 +6,7 @@ from models.LLaMa import TinyLLaMa2c110M
 from MiCoUtils import (
     get_model_macs,
 )
-from datasets import tinystories
+from MiCoDatasets import tinystories
 
 from MiCoEval import MiCoEval
 from searchers import (
