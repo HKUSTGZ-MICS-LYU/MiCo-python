@@ -68,20 +68,11 @@ class MiCoProxy:
         A_LOADS = MACS * QA
         return np.column_stack((BMACS, W_LOADS, A_LOADS))
     def _get_cbops_plus_features(self, X):
-        MACS = X[:, 0]
-        QA = X[:, -2]
-        QW = X[:, -1]
-        Q_MAX = np.max(X[:, -2:], axis=1)
-        BMACS = MACS * Q_MAX
-        W_LOADS = MACS * QW
-        A_LOADS = MACS * QA
-        return np.column_stack((BMACS, W_LOADS, A_LOADS, X))
+        cbops = self._get_cbops_features(X)
+        return np.column_stack((cbops, X))
     def _get_bops_plus_features(self, X):
-        MACS = X[:, 0]
-        QA = X[:, -2]
-        QW = X[:, -1]
-        BOPS = MACS * QW * QA
-        return np.column_stack((BOPS, X))
+        bops = self._get_bops_features(X)
+        return np.column_stack((bops, X))
 
     def fit(self, X, y):
         X = self.preprocess(X)
@@ -192,6 +183,15 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     # Create a fresh instance of best model and train on all data
     best_model = MiCoProxy(best_model_factory(), preprocess=best_features_name)
     best_model.fit(X, y)
+
+    # Use Subset of Data for Final Evaluation
+    total = len(X)
+    subset_ratio = 0.75
+    subset_size = int(total * subset_ratio)
+    indices = np.random.choice(total, subset_size, replace=False)
+    X_subset = X[indices]
+    y_subset = y[indices]
+    best_model.fit(X_subset, y_subset)
     return best_model
 
 def get_mico_matmul_proxy(mico_type: str = 'small'):
