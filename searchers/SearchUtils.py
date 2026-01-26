@@ -106,30 +106,34 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
         keep_first_last = True
         keep_first = True
 
+    crossover_ratio = 0.25
+    mutation_ratio = 0.1
+    keep_ratio = 0.75
+
     while True:
         # Generate Next Generation
         while len(pop) < n_samples*2:
             pair = random.sample(pop, 2)
             sample = copy.deepcopy(pair[0])
             for i in range(dims):
-                if random.random() < 0.1:
+                if random.random() < crossover_ratio:
                     sample[i] = pair[1][i]
                     
             for i in range(dims):
-                if random.random() < 0.1:
+                if random.random() < mutation_ratio:
                     q = random.choice(qtypes)
                     sample[i] = q
 
             # Heuristic: Keep First and Last Layer at High Bitwidth
             if keep_first_last:
-                if random.random() < 0.5:
+                if random.random() < keep_ratio:
                     sample[0] = max(qtypes)
                     sample[n_layers] = max(qtypes)
-                if random.random() < 0.5:
+                if random.random() < keep_ratio:
                     sample[n_layers - 1] = max(qtypes)
                     sample[-1] = max(qtypes)
             elif keep_first:
-                if random.random() < 0.5:
+                if random.random() < keep_ratio:
                     sample[0] = max(qtypes)
                     sample[n_layers] = max(qtypes)
 
