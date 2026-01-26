@@ -102,6 +102,7 @@ Here are the main components/modules of MiCo.
 
 **Codegen**
 + `MiCoCodeGen`： C code generator for MiCo models.
++ `MiCoMLIRGen`: MLIR code generator for MiCo models (see [doc/MLIR_INTEGRATION.md](doc/MLIR_INTEGRATION.md)).
 + `MiCoGraphGen`: DNN Weaver Op graph generator for MiCo models.
 + `MiCoLLaMaGen`: C code generator for MiCo TinyLLaMa models.
 
@@ -124,6 +125,29 @@ Here are the main components/modules of MiCo.
 ## Chipyard Integration
 
 [doc/CHIPYARD_INTEGRATION.md](doc/CHIPYARD_INTEGRATION.md)
+
+## MLIR Integration
+
+MiCo supports generating MLIR (Multi-Level Intermediate Representation) code for mixed-precision quantized models. The MiCo MLIR dialect provides sub-byte integer types and quantized neural network operations.
+
+**To generate MLIR code:**
+```python
+from models import LeNet
+from MiCoMLIRGen import MiCoMLIRGen
+from MiCoUtils import fuse_model
+import torch
+
+model = LeNet(1)
+model.set_qscheme([[8, 6, 6, 4, 4], [8, 8, 8, 8, 8]])
+model = fuse_model(model)
+model.eval()
+
+mlir_gen = MiCoMLIRGen(model)
+mlir_gen.forward(torch.randn(1, 1, 28, 28))
+mlir_gen.convert("output", "lenet_mnist")
+```
+
+For detailed specification, see [doc/MLIR_INTEGRATION.md](doc/MLIR_INTEGRATION.md).
 
 ## Publication
 
