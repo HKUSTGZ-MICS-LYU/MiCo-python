@@ -257,7 +257,8 @@ module @{model_name} {{
         
         # Generate operation
         attrs = f"weight_bits = {module.qtype} : i32, act_bits = {module.act_q} : i32"
-        op = f"{result_ssa} = mico.bitlinear({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : ({self._format_tensor_type(out)}) -> {result_type}"
+        input_type = self._format_tensor_type(out) if hasattr(out, 'shape') else result_type
+        op = f"{result_ssa} = mico.bitlinear({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : {input_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_bitconv2d(self, n, module: BitConv2d, input_ssa: str,
@@ -281,7 +282,8 @@ module @{model_name} {{
         attrs = (f"weight_bits = {module.qtype} : i32, act_bits = {module.act_q} : i32, "
                 f"stride = {self._format_list(stride)}, padding = {self._format_list(padding)}, "
                 f"dilation = {self._format_list(dilation)}, groups = {module.groups} : i32")
-        op = f"{result_ssa} = mico.bitconv2d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : ({self._format_tensor_type(out)}) -> {result_type}"
+        input_type = self._format_tensor_type(out) if hasattr(out, 'shape') else result_type
+        op = f"{result_ssa} = mico.bitconv2d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : {input_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_bitconv1d(self, n, module: BitConv1d, input_ssa: str,
@@ -305,7 +307,8 @@ module @{model_name} {{
         attrs = (f"weight_bits = {module.qtype} : i32, act_bits = {module.act_q} : i32, "
                 f"stride = {self._format_list(stride)}, padding = {self._format_list(padding)}, "
                 f"dilation = {self._format_list(dilation)}, groups = {module.groups} : i32")
-        op = f"{result_ssa} = mico.bitconv1d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : ({self._format_tensor_type(out)}) -> {result_type}"
+        input_type = self._format_tensor_type(out) if hasattr(out, 'shape') else result_type
+        op = f"{result_ssa} = mico.bitconv1d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : {input_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_linear(self, n, module: nn.Linear, input_ssa: str,
@@ -318,7 +321,8 @@ module @{model_name} {{
         if module.bias is not None:
             self._add_weight_constant(bias_name, module.bias)
         
-        op = f"{result_ssa} = mico.linear({input_ssa}, @{weight_name}, @{bias_name}) : ({self._format_tensor_type(out)}) -> {result_type}"
+        input_type = self._format_tensor_type(out) if hasattr(out, 'shape') else result_type
+        op = f"{result_ssa} = mico.linear({input_ssa}, @{weight_name}, @{bias_name}) : {input_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_conv2d(self, n, module: nn.Conv2d, input_ssa: str,
@@ -337,7 +341,8 @@ module @{model_name} {{
         
         attrs = (f"stride = {self._format_list(stride)}, padding = {self._format_list(padding)}, "
                 f"dilation = {self._format_list(dilation)}, groups = {module.groups} : i32")
-        op = f"{result_ssa} = mico.conv2d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : ({self._format_tensor_type(out)}) -> {result_type}"
+        input_type = self._format_tensor_type(out) if hasattr(out, 'shape') else result_type
+        op = f"{result_ssa} = mico.conv2d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : {input_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_conv1d(self, n, module: nn.Conv1d, input_ssa: str,
@@ -356,7 +361,8 @@ module @{model_name} {{
         
         attrs = (f"stride = {self._format_list(stride)}, padding = {self._format_list(padding)}, "
                 f"dilation = {self._format_list(dilation)}, groups = {module.groups} : i32")
-        op = f"{result_ssa} = mico.conv1d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : ({self._format_tensor_type(out)}) -> {result_type}"
+        input_type = self._format_tensor_type(out) if hasattr(out, 'shape') else result_type
+        op = f"{result_ssa} = mico.conv1d({input_ssa}, @{weight_name}, @{bias_name}) {{{attrs}}} : {input_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_relu(self, n, module, input_ssa: str, result_ssa: str, result_type: str):
@@ -386,7 +392,7 @@ module @{model_name} {{
         padding = module.padding if isinstance(module.padding, (list, tuple)) else [module.padding, module.padding]
         
         attrs = f"kernel_size = {self._format_list(kernel_size)}, stride = {self._format_list(stride)}, padding = {self._format_list(padding)}"
-        op = f"{result_ssa} = mico.maxpool2d({input_ssa}) {{{attrs}}} : {result_type}"
+        op = f"{result_ssa} = mico.maxpool2d({input_ssa}) {{{attrs}}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_avgpool2d(self, n, module, input_ssa: str, result_ssa: str, result_type: str):
@@ -396,7 +402,7 @@ module @{model_name} {{
         padding = module.padding if isinstance(module.padding, (list, tuple)) else [module.padding, module.padding]
         
         attrs = f"kernel_size = {self._format_list(kernel_size)}, stride = {self._format_list(stride)}, padding = {self._format_list(padding)}"
-        op = f"{result_ssa} = mico.avgpool2d({input_ssa}) {{{attrs}}} : {result_type}"
+        op = f"{result_ssa} = mico.avgpool2d({input_ssa}) {{{attrs}}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_adaptive_avgpool2d(self, n, module, input_ssa: str, result_ssa: str, result_type: str):
@@ -404,13 +410,13 @@ module @{model_name} {{
         output_size = module.output_size if isinstance(module.output_size, (list, tuple)) else [module.output_size, module.output_size]
         
         attrs = f"output_size = {self._format_list(output_size)}"
-        op = f"{result_ssa} = mico.adaptive_avgpool2d({input_ssa}) {{{attrs}}} : {result_type}"
+        op = f"{result_ssa} = mico.adaptive_avgpool2d({input_ssa}) {{{attrs}}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_flatten(self, n, module, input_ssa: str, result_ssa: str, result_type: str):
         """Handle Flatten operation."""
         start_dim = module.start_dim if hasattr(module, 'start_dim') else 1
-        op = f"{result_ssa} = mico.flatten({input_ssa}) {{start_dim = {start_dim} : i32}} : {result_type}"
+        op = f"{result_ssa} = mico.flatten({input_ssa}) {{start_dim = {start_dim} : i32}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_batchnorm2d(self, n, module, input_ssa: str, result_ssa: str, result_type: str):
@@ -426,7 +432,7 @@ module @{model_name} {{
         self._add_weight_constant(var_name, module.running_var)
         
         attrs = f"eps = {module.eps} : f32"
-        op = f"{result_ssa} = mico.batchnorm2d({input_ssa}, @{weight_name}, @{bias_name}, @{mean_name}, @{var_name}) {{{attrs}}} : {result_type}"
+        op = f"{result_ssa} = mico.batchnorm2d({input_ssa}, @{weight_name}, @{bias_name}, @{mean_name}, @{var_name}) {{{attrs}}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def handle_call_function(self, n: torch.fx.node.Node, out: torch.Tensor):
@@ -480,7 +486,7 @@ module @{model_name} {{
         """Handle element-wise addition."""
         lhs_ssa = self._get_ssa(input_names[0])
         rhs_ssa = self._get_ssa(input_names[1]) if len(input_names) > 1 else lhs_ssa
-        op = f"{result_ssa} = mico.add({lhs_ssa}, {rhs_ssa}) : {result_type}"
+        op = f"{result_ssa} = mico.add({lhs_ssa}, {rhs_ssa}) : {result_type}, {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_maxpool2d_function(self, n, input_names, input_args, result_ssa, result_type):
@@ -498,7 +504,7 @@ module @{model_name} {{
             padding = [padding, padding]
         
         attrs = f"kernel_size = {self._format_list(kernel_size)}, stride = {self._format_list(stride)}, padding = {self._format_list(padding)}"
-        op = f"{result_ssa} = mico.maxpool2d({input_ssa}) {{{attrs}}} : {result_type}"
+        op = f"{result_ssa} = mico.maxpool2d({input_ssa}) {{{attrs}}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_avgpool2d_function(self, n, input_names, input_args, result_ssa, result_type):
@@ -516,7 +522,7 @@ module @{model_name} {{
             padding = [padding, padding]
         
         attrs = f"kernel_size = {self._format_list(kernel_size)}, stride = {self._format_list(stride)}, padding = {self._format_list(padding)}"
-        op = f"{result_ssa} = mico.avgpool2d({input_ssa}) {{{attrs}}} : {result_type}"
+        op = f"{result_ssa} = mico.avgpool2d({input_ssa}) {{{attrs}}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def _handle_adaptive_avgpool2d_function(self, n, input_names, input_args, result_ssa, result_type):
@@ -528,7 +534,7 @@ module @{model_name} {{
             output_size = [output_size, output_size]
         
         attrs = f"output_size = {self._format_list(output_size)}"
-        op = f"{result_ssa} = mico.adaptive_avgpool2d({input_ssa}) {{{attrs}}} : {result_type}"
+        op = f"{result_ssa} = mico.adaptive_avgpool2d({input_ssa}) {{{attrs}}} : {result_type} -> {result_type}"
         self._add_mlir_op(op)
     
     def handle_output(self, n: torch.fx.node.Node, out: torch.Tensor):
