@@ -3,7 +3,6 @@ from models import (
     LeNet,
     CmsisCNN,
     VGG,
-    TinyLLaMa1M,
     resnet_alt_8,
     resnet_alt_18,
     SqueezeNet,
@@ -61,8 +60,15 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             "shufflenet": shufflenet(n_classes),
         }
         model = model_dict[model_name].to(device)
-    elif name == "tinyllama":
-        model = TinyLLaMa1M().to(device)
+    elif "tinyllama" in name:
+        from models.LLaMa import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa11M, TinyLLaMa2c110M
+        model_dict = {
+            "tinyllama_1m": TinyLLaMa1M,
+            "tinyllama_3m": TinyLLaMa3M,
+            "tinyllama_11m": TinyLLaMa11M,
+            "tinyllama_110m": TinyLLaMa2c110M,
+        }
+        model = model_dict[name]().to(device)
         train_loader, test_loader = tinystories(
             max_seq_len=model.params.max_seq_len,
             vocab_size=model.params.vocab_size,

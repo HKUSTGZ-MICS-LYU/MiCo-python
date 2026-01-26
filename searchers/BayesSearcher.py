@@ -90,7 +90,7 @@ class BayesSearcher(QSearcher):
                     X = self.sample(self.NUM_SAMPLES)
                     X = self.select(X, constr_value)
                     timeout_count += 1
-                    if timeout_count > 10:
+                    if timeout_count > 50:
                         raise ValueError("Cannot find any feasible solution. Please consider relaxing the constraint.")
             else:
                 X = self.sample(self.NUM_SAMPLES)
