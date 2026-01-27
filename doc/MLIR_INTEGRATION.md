@@ -13,6 +13,10 @@ This document proposes the integration of MLIR (Multi-Level Intermediate Represe
 
 ## Architecture
 
+MiCo provides two MLIR generation paths:
+
+### Path 1: Standalone MiCoMLIRGen
+
 ```
 ┌─────────────────────┐
 │   PyTorch Model     │
@@ -38,6 +42,80 @@ This document proposes the integration of MLIR (Multi-Level Intermediate Represe
 │   or Hardware IR    │
 └─────────┴───────────┘
 ```
+
+### Path 2: Torch-MLIR Integration (MiCoTorchMLIRGen)
+
+```
+┌─────────────────────┐
+│   PyTorch Model     │
+│  (MiCo Framework)   │
+└─────────┬───────────┘
+          │ torch-mlir (first pass)
+          ▼
+┌─────────────────────┐
+│   Torch Dialect     │
+│  (Standard PyTorch  │
+│   operations)       │
+└─────────┬───────────┘
+          │ MiCo quantization overlay
+          ▼
+┌─────────────────────┐
+│    MiCo Dialect     │
+│  (Sub-byte types,   │
+│   Quant metadata)   │
+└─────────┬───────────┘
+          │ Lowering
+          ▼
+┌─────────────────────┐
+│  Linalg / StableHLO │
+│    + MiCo-Lib       │
+└─────────┴───────────┘
+```
+
+## Torch-MLIR Integration
+
+### Installation
+
+```bash
+pip install torch-mlir -f https://github.com/llvm/torch-mlir-release/releases
+```
+
+### Usage with Torch-MLIR Backend
+
+```python
+from models import LeNet
+from MiCoTorchMLIRGen import MiCoTorchMLIRGen
+from MiCoUtils import fuse_model
+import torch
+
+model = LeNet(1)
+model.set_qscheme([[8, 6, 6, 4, 4], [8, 8, 8, 8, 8]])
+model = fuse_model(model)
+model.eval()
+
+# Use torch-mlir backend with Torch dialect output
+mlir_gen = MiCoTorchMLIRGen(model, output_type="torch")
+mlir_gen.forward(torch.randn(1, 1, 28, 28))
+mlir_path = mlir_gen.convert("output", "lenet_mnist")
+
+# Check if torch-mlir was used
+print(f"Backend: {'torch-mlir' if mlir_gen.use_torch_mlir else 'standalone'}")
+```
+
+### Supported Output Types
+
+| Output Type | Description |
+|-------------|-------------|
+| `torch` | Torch dialect (default) - closest to PyTorch semantics |
+| `linalg` | Linalg on Tensors - good for custom lowering |
+| `stablehlo` | StableHLO - compatible with XLA ecosystem |
+
+### Benefits of Torch-MLIR Integration
+
+1. **Production-ready lowering**: Leverages torch-mlir's mature PyTorch → MLIR conversion
+2. **Ecosystem compatibility**: Integrates with IREE, Blade, and other MLIR-based compilers
+3. **Reduced maintenance**: Core operation lowering handled by torch-mlir
+4. **MiCo-specific extensions**: Sub-byte quantization metadata preserved via MiCo dialect overlay
 
 ## MiCo MLIR Dialect
 
