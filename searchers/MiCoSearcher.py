@@ -33,7 +33,8 @@ from searchers.Ensemble.Models import MPGPEnsemble, RFModel
 
 class MiCoSearcher(QSearcher):
 
-    NUM_SAMPLES = 1000
+    NUM_SAMPLES_NC = 1000 # Near-Constrained Sampling
+    NUM_SAMPLES_RAND = 5000 # Random Sampling
     constr_value : float = None
 
     def __init__(self, evaluator: MiCoEval, 
@@ -42,6 +43,7 @@ class MiCoSearcher(QSearcher):
                  regressor: str = "rf",
                  initial_method: str = "orth",
                  sample_method: str = "near-constr",
+                 feature_en: bool = True,
                  dim_trans: DimTransform = None) -> None:
         
         super().__init__(evaluator, n_inits, qtypes)
@@ -49,11 +51,17 @@ class MiCoSearcher(QSearcher):
         self.regressor = regressor
         self.initial_method = initial_method
         self.sample_method = sample_method
+        self.feature_en = feature_en
+
+        self.NUM_SAMPLES = {
+            "random": self.NUM_SAMPLES_RAND,
+            "near-constr": self.NUM_SAMPLES_NC
+        }[self.sample_method]
+
         self.regressor_dict = {
-            "rf": self.rf_opt,
-            "xgb": self.xgb_opt,
+            "rf": self.regress_opt,
+            "xgb": self.regress_opt,
             "bayes": self.bayes_opt,
-            "bayes_ensemble": self.bayes_ensemble_opt
         }
         assert regressor in self.regressor_dict, f"Regressor {regressor} not supported."
 
@@ -81,7 +89,6 @@ class MiCoSearcher(QSearcher):
 
     def sample(self, n_samples: int):
         if self.sample_method == "random":
-            n_samples = 5000 # Sample more for random sampling
             return random_sample(n_samples, self.qtypes, self.dims)
         elif self.sample_method == "near-constr":
             # Extract High Quality Sampled Schemes
@@ -101,7 +108,7 @@ class MiCoSearcher(QSearcher):
                                      initial_pop=initial_pop)
         else:
             raise ValueError(f"Sample method {self.sample_method} not supported.")
-    
+
     def initial(self, n_samples: int):
         if self.initial_method == "random":
             return random_sample_min_max(n_samples, self.qtypes, self.dims)
@@ -206,9 +213,25 @@ class MiCoSearcher(QSearcher):
             print(f"Constraint Value: {constr_x} ({constr_x/constr_value:.5f})")
         return final_x, final_y
 
+    def feature_expand(self, X):
+        # Compose Weight and Activation Bitwidths
+        X = np.array(X)
+        WQ = X[:, :self.n_layers]
+        AQ = X[:, self.n_layers:]
+        MACS = np.array(self.evaluator.layer_macs) / np.sum(self.evaluator.layer_macs)
+        # AVE_WQ = np.mean(WQ, axis=1, keepdims=True)
+        # AVE_AQ = np.mean(AQ, axis=1, keepdims=True)
+
+        # Expand to [WQ, AQ, WQ*MACS, AQ*MACS]
+        expanded_X = np.hstack([WQ, AQ, WQ * MACS, AQ * MACS])
+
+        return expanded_X
+
     def bayes_opt(self, X):
 
-        X_tensor = torch.tensor(self.sampled_X, dtype=torch.float)
+        train_X = self.feature_expand(self.sampled_X) if self.feature_en else self.sampled_X
+
+        X_tensor = torch.tensor(train_X, dtype=torch.float)
         Y_tensor = torch.tensor(self.sampled_y, dtype=torch.float).unsqueeze(-1)
 
         gpr = SingleTaskGP(X_tensor, Y_tensor, 
@@ -218,50 +241,50 @@ class MiCoSearcher(QSearcher):
         mll = ExactMarginalLogLikelihood(gpr.likelihood, gpr)
         fit_gpytorch_mll(mll)
 
+        X = self.feature_expand(X) if self.feature_en else X
         max_Y = max(Y_tensor)
         acq = LogExpectedImprovement(gpr, best_f=max_Y)
         acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
+
         # best = torch.argmax(acq_val)
         # best_x = X[best]
         # best_y = gpr.posterior(
         #         torch.tensor([best_x], dtype=torch.float)).mean.item()
             
         return acq_val.cpu().numpy()
-    
-    def bayes_ensemble_opt(self, X):
 
-        X_tensor = torch.tensor(self.sampled_X, dtype=torch.float)
-        Y_tensor = torch.tensor(self.sampled_y, dtype=torch.float).unsqueeze(-1)
-
-        model = MPGPEnsemble(X_tensor, Y_tensor)
-
-        max_Y = max(Y_tensor)
-        acq = LogExpectedImprovement(model, best_f=max_Y)
-        acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
-        # best = torch.argmax(acq_val)
-        # best_x = X[best]
-        # best_x_tensor = torch.tensor(best_x, dtype=torch.float).view(1, -1)
-        # best_y = model.posterior(best_x_tensor).mean.item()
-        return acq_val.cpu().numpy()
-    
-    def xgb_opt(self, X):
-        xgb = XGBRegressor()
-
-        xgb.fit(self.sampled_X, self.sampled_y)
-        y_pred = xgb.predict(X)
-        return y_pred
-    
-    def rf_opt(self, X):
-        
-        if self.dims > 10:
-            # Prevent overfitting for high-dimensional data
-            rf = RandomForestRegressor(
-                n_estimators=250, max_depth=15, max_features="sqrt"
-            )
+    def get_regressor(self):
+        if self.regressor == "xgb":
+            if self.dims > 10:
+                # Prevent overfitting for high-dimensional data
+                model = XGBRegressor(
+                    n_estimators=250, max_depth=15, colsample_bytree=0.5
+                )
+            else:
+                # Use constrained parameters for low-dimensional data to prevent overfitting
+                model = XGBRegressor()
+            return model
+        elif self.regressor == "rf":
+            if self.dims > 10:
+                # Prevent overfitting for high-dimensional data
+                model = RandomForestRegressor(
+                    n_estimators=250, max_depth=15, max_features="sqrt"
+                )
+            else:
+                # Use constrained parameters for low-dimensional data to prevent overfitting
+                model = RandomForestRegressor()
+            return model
         else:
-            # Use default parameters for low-dimensional data
-            rf = RandomForestRegressor()
+            raise ValueError(f"Regressor {self.regressor} not supported.")
 
-        rf.fit(self.sampled_X, self.sampled_y)
-        y_pred = rf.predict(X)
+    def regress_opt(self, X):
+
+        model = self.get_regressor()
+
+        train_X = self.feature_expand(self.sampled_X) if self.feature_en else self.sampled_X
+        pred_X = self.feature_expand(X) if self.feature_en else X
+
+        model.fit(train_X, self.sampled_y)
+        y_pred = model.predict(pred_X)
+
         return y_pred

@@ -69,12 +69,17 @@ def dist_to_roi(x, constr_func, constr_value, roi):
     constr = constr_func(x)
     lb = constr_value * (1-roi)
     ub = constr_value
-    if (constr <= ub) and (constr >= lb):
-        return 0.0
-    elif constr < lb:
-        return lb - constr
+    
+    # Strictly prioritize valid samples (<= ub)
+    if constr > ub:
+        # Penalty for invalid samples: huge value + distance
+        return 1e6 + (constr - ub)
+    
+    # For valid samples
+    if constr >= lb:
+        return 0.0 # Inside ROI
     else:
-        return constr - ub
+        return lb - constr # Valid but too efficient (too small), penalize slightly
 
 def near_constr_sample(n_samples: int, qtypes: list, dims: int,
                        constr_func=None, constr_value=None,
@@ -166,8 +171,10 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
 
         if gen > 100:
             print("Warning: Near Constraint Sample Timeout")
-            for i in range(n_samples):
-                if dist_to_roi(pop[i], constr_func, constr_value, roi) > 0:
+            # Only discard truly invalid samples (those with huge distance)
+            end_idx = len(pop)
+            for i in range(len(pop)):
+                if dist_to_roi(pop[i], constr_func, constr_value, roi) > 1e5:
                     end_idx = i
                     break
             pop = pop[:end_idx]

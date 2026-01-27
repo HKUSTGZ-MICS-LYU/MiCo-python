@@ -59,7 +59,7 @@ if __name__ == "__main__":
 
     for seed in range(TRAILS):
         
-        for method in ["mico", "mico+init", "mico+near"]:
+        for method in ["rf", "+feat", "+init", "+near"]:
             
             if method not in res_data:
                 res_data[method] = []
@@ -69,17 +69,22 @@ if __name__ == "__main__":
 
             print("Model Type:", method)
 
-            if method == "mico":
+            if method == "rf":
+                searcher = MiCoSearcher(
+                    evaluator, n_inits=N_INIT, qtypes=bitwidths, feature_en=False,
+                    initial_method="random", sample_method="random"
+                )
+            elif method == "+feat":
                 searcher = MiCoSearcher(
                     evaluator, n_inits=N_INIT, qtypes=bitwidths,
                     initial_method="random", sample_method="random"
                 )
-            elif method == "mico+init":
+            elif method == "+init":
                 searcher = MiCoSearcher(
                     evaluator, n_inits=N_INIT, qtypes=bitwidths,
                     initial_method="orth", sample_method="random"
                 )
-            elif method == "mico+near":
+            elif method == "+near":
                 searcher = MiCoSearcher(
                     evaluator, n_inits=N_INIT, qtypes=bitwidths,
                     initial_method="orth", sample_method="near-constr"
@@ -103,9 +108,9 @@ if __name__ == "__main__":
         plt.plot(avg_trace, label=method)
 
     plt.legend()
-    plt.savefig(f"output/figs/{model_name}_search_{CONSTR_RATIO}_{MODE}.pdf")
+    plt.savefig(f"output/figs/{model_name}_search_ab_{CONSTR_RATIO}_{MODE}.pdf")
 
-    with open(f"output/txt/{model_name}_search_{CONSTR_RATIO}_{MODE}.txt", "w") as f:
+    with open(f"output/txt/{model_name}_search_ab_{CONSTR_RATIO}_{MODE}.txt", "w") as f:
         for method in final_res.keys():
             f.write(f"{method}: {final_res[method]}\n")
 
