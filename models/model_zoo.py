@@ -28,7 +28,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 NUM_WORKERS = 8
 
-IMAGENET_ROOT = "data"
+IMAGENET_ROOT = "~/work/MiCo/nn/data/"
 
 def from_zoo(name: str, shuffle = False, batch_size: int = 32):
 
@@ -56,7 +56,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             "resnet8": resnet_alt_8(n_classes),
             "resnet18": resnet_alt_18(n_classes),
             "mobilenetv2": MobileNetV2(n_classes),
-            "squeezenet": SqueezeNet(n_classes),
+            "squeezenet": SqueezeNet(3, n_classes),
             "shufflenet": shufflenet(n_classes),
         }
         model = model_dict[model_name].to(device)
