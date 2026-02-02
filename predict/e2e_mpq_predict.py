@@ -39,10 +39,11 @@ if __name__ == "__main__":
                      model_name=model_name,
                      output_json=f"output/json/{model_name}_{target}_predict.json")
     
-    if target == "latency_mico":
-        evaluator.set_mico_target('small')
-        matmul_proxy = get_mico_matmul_proxy(mico_type='small')
-        conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
+    if target.startswith("latency_mico"):
+        mico_target = target.split("_")[-1]
+        evaluator.set_mico_target(mico_target)
+        matmul_proxy = get_mico_matmul_proxy(mico_type=mico_target)
+        conv2d_proxy = get_mico_conv2d_proxy(mico_type=mico_target)
         evaluator.set_proxy(matmul_proxy, conv2d_proxy)
         evaluator.set_misc_proxy(get_mico_misc_kernel_proxy)
 
@@ -55,10 +56,10 @@ if __name__ == "__main__":
     bitwidths = []
     if target == "latency_bitfusion":
         bitwidths = [2, 3, 4, 5, 6, 7, 8]
-    elif target == "latency_mico":
+        evaluator.set_eval("latency_bitfusion")
+    elif target.startswith("latency_mico"):
         bitwidths = [1, 2, 4, 8]
-
-    evaluator.set_eval(target)
+        evaluator.set_eval("latency_mico")
 
     X = []
     Y = []
@@ -79,6 +80,12 @@ if __name__ == "__main__":
 
     X = np.array(X)
     Y = np.array(Y)
+
+    # Use INT8 Baseline to correct the prediction bias
+    X_int8 = X[1]
+    Y_int8 = Y[1]
+    bias = X_int8 / Y_int8
+    Y = Y * bias
 
     ratio_X = X / np.max(X)
     ratio_Y = Y / np.max(Y)

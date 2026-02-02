@@ -251,7 +251,7 @@ class MiCoSearcher(QSearcher):
         # best_y = gpr.posterior(
         #         torch.tensor([best_x], dtype=torch.float)).mean.item()
             
-        return acq_val.cpu().numpy()
+        return acq_val.detach().cpu().numpy()
 
     def get_regressor(self):
         if self.regressor == "xgb":
