@@ -81,11 +81,21 @@ if __name__ == "__main__":
     X = np.array(X)
     Y = np.array(Y)
 
-    # Use INT8 Baseline to correct the prediction bias
-    X_int8 = X[1]
-    Y_int8 = Y[1]
-    bias = X_int8 / Y_int8
-    Y = Y * bias
+    # Use Baselines to correct the prediction bias
+    X_min = X[0]
+    Y_min = Y[0]
+
+    X_max = X[1]
+    Y_max = Y[1]
+
+    # One-shot Scaling
+    # bias = X_max / Y_max
+    # Y = Y * bias
+
+    # Two-shot Scaling
+    # slope = (X_max - X_min) / (Y_max - Y_min)
+    # intercept = X_min - slope * Y_min
+    # Y = slope * Y + intercept
 
     ratio_X = X / np.max(X)
     ratio_Y = Y / np.max(Y)
@@ -110,6 +120,10 @@ if __name__ == "__main__":
     plt.legend()
     plt.grid(True)
     plt.savefig(f"output/figs/{model_name}_{target}_pred.pdf")
+
+    # Ignore first two data
+    X = X[2:]
+    Y = Y[2:]
 
     r2 = r2_score(X, Y)
     norm_r2 = r2_score(X / np.max(X), Y / np.max(Y))

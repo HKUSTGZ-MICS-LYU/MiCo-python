@@ -82,7 +82,7 @@ class MiCoProxy:
         X = self.preprocess(X)
         return self.model.predict(X)
 
-def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
+def get_proxy(profile_dataset: str, kernel_type: str = 'matmul', train_ratio: float = 0.8):
     # Load Dataset
     with open(profile_dataset, 'r') as f:
         csv_data = csv.reader(f)
@@ -186,7 +186,7 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
 
     # Use Subset of Data for Final Evaluation
     total = len(X)
-    subset_ratio = 0.75
+    subset_ratio = train_ratio
     subset_size = int(total * subset_ratio)
     indices = np.random.choice(total, subset_size, replace=False)
     X_subset = X[indices]
