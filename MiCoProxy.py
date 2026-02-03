@@ -51,7 +51,16 @@ class MiCoProxy:
             "bops": self._get_bops_features,
             "bops+": self._get_bops_plus_features,
             "cbops": self._get_cbops_features,
-            "cbops+": self._get_cbops_plus_features
+            "cbops+": self._get_cbops_plus_features,
+            # New feature sets for experimentation
+            "logbops": self._get_logbops_features,
+            "logbops+": self._get_logbops_plus_features,
+            "cbops_minmax": self._get_cbops_minmax_features,
+            "cbops_minmax+": self._get_cbops_minmax_plus_features,
+            "cbops_poly": self._get_cbops_poly_features,
+            "cbops_poly+": self._get_cbops_poly_plus_features,
+            "cbops_full": self._get_cbops_full_features,
+            "cbops_full+": self._get_cbops_full_plus_features,
         }
         self.preprocess = self.preprocess_dict[preprocess]
         
@@ -78,6 +87,100 @@ class MiCoProxy:
     def _get_bops_plus_features(self, X):
         bops = self._get_bops_features(X)
         return np.column_stack((bops, X))
+    
+    def _get_logbops_features(self, X):
+        """Log-space BOPs features - useful when relationship is multiplicative."""
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        BOPS = MACS * QA * QW
+        # Log features capture multiplicative relationships
+        LOG_MACS = np.log1p(MACS)
+        LOG_BOPS = np.log1p(BOPS)
+        LOG_QA = np.log1p(QA)
+        LOG_QW = np.log1p(QW)
+        return np.column_stack((LOG_BOPS, LOG_MACS, LOG_QA, LOG_QW))
+
+    def _get_logbops_plus_features(self, X):
+        logbops = self._get_logbops_features(X)
+        return np.column_stack((logbops, X))
+    
+    def _get_cbops_minmax_features(self, X):
+        """Enhanced CBOPs with min/max quantization features."""
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        Q_MAX = np.maximum(QA, QW)
+        Q_MIN = np.minimum(QA, QW)
+        # Core CBOPs features
+        BMACS = MACS * Q_MAX
+        W_LOADS = MACS * QW
+        A_LOADS = MACS * QA
+        # Min quantization features (captures bottleneck behavior)
+        MACS_QMIN = MACS * Q_MIN
+        # BOPS for completeness
+        BOPS = MACS * QA * QW
+        return np.column_stack((BMACS, W_LOADS, A_LOADS, MACS_QMIN, BOPS))
+    
+    def _get_cbops_minmax_plus_features(self, X):
+        cbops_minmax = self._get_cbops_minmax_features(X)
+        return np.column_stack((cbops_minmax, X))
+    
+    def _get_cbops_poly_features(self, X):
+        """CBOPs with polynomial interaction features."""
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        Q_MAX = np.maximum(QA, QW)
+        Q_MIN = np.minimum(QA, QW)
+        # Core CBOPs
+        BMACS = MACS * Q_MAX
+        W_LOADS = MACS * QW
+        A_LOADS = MACS * QA
+        # Polynomial/interaction terms
+        BOPS = MACS * QA * QW
+        Q_SUM = QA + QW
+        Q_DIFF_ABS = np.abs(QA - QW)
+        # Quadratic quantization terms
+        QA_SQ = QA ** 2
+        QW_SQ = QW ** 2
+        # Log features for multiplicative relationships
+        LOG_MACS = np.log1p(MACS)
+        LOG_BOPS = np.log1p(BOPS)
+        return np.column_stack((BMACS, W_LOADS, A_LOADS, BOPS, 
+                                Q_SUM, Q_DIFF_ABS, QA_SQ, QW_SQ,
+                                LOG_MACS, LOG_BOPS))
+    
+    def _get_cbops_poly_plus_features(self, X):
+        cbops_poly = self._get_cbops_poly_features(X)
+        return np.column_stack((cbops_poly, X))
+    
+    def _get_cbops_full_features(self, X):
+        """Full CBOPs features combining minmax, polynomial, and log features."""
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        Q_MAX = np.maximum(QA, QW)
+        Q_MIN = np.minimum(QA, QW)
+        # Core CBOPs
+        BMACS = MACS * Q_MAX
+        W_LOADS = MACS * QW
+        A_LOADS = MACS * QA
+        MACS_QMIN = MACS * Q_MIN
+        # Full BOPS
+        BOPS = MACS * QA * QW
+        # Polynomial terms
+        Q_SUM = QA + QW
+        Q_DIFF_ABS = np.abs(QA - QW)
+        # Log features for multiplicative relationships
+        LOG_MACS = np.log1p(MACS)
+        LOG_BOPS = np.log1p(BOPS)
+        return np.column_stack((BMACS, W_LOADS, A_LOADS, MACS_QMIN, BOPS, 
+                                Q_SUM, Q_DIFF_ABS, LOG_MACS, LOG_BOPS))
+    
+    def _get_cbops_full_plus_features(self, X):
+        cbops_full = self._get_cbops_full_features(X)
+        return np.column_stack((cbops_full, X))
 
     def set_train_ratio(self, train_ratio: float):
         """Set training data ratio for experiments."""
@@ -104,7 +207,23 @@ class MiCoProxy:
         X = self.preprocess(X)
         return self.model.predict(X)
 
-def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
+def get_proxy(profile_dataset: str, kernel_type: str = 'matmul', 
+              verbose: bool = True, preferred_features: str = None):
+    """
+    Build a proxy model for the given profile dataset.
+    
+    Args:
+        profile_dataset: Path to the CSV file with profiling data
+        kernel_type: 'matmul' or 'conv2d'
+        verbose: If True, print cross-validation results
+        preferred_features: If specified, use this feature set without cross-validation
+                           Useful for faster loading when the best features are known.
+                           Options: 'cbops+', 'logbops+', 'cbops_minmax+', 'cbops_poly+', 
+                                    'cbops_full+', etc.
+    
+    Returns:
+        MiCoProxy: The best proxy model
+    """
     # Load Dataset
     with open(profile_dataset, 'r') as f:
         csv_data = csv.reader(f)
@@ -152,17 +271,28 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
         # 'XGBRegressor': lambda: XGBRegressor(random_state=42),
         # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
+    
+    # If preferred_features is specified, skip cross-validation
+    if preferred_features is not None:
+        if verbose:
+            print(f"\nUsing preferred features: {preferred_features}")
+        best_model = MiCoProxy(LogRandomForestRegressor(random_state=42), 
+                               preprocess=preferred_features, train_x=X, train_y=y)
+        best_model.fit()
+        return best_model
 
     # feature_sets = ['raw', 'bops+', 'cbops', 'cbops+']
-    feature_sets = ['cbops+']
+    feature_sets = ['cbops+', 'logbops', 'logbops+', 'cbops_minmax', 'cbops_minmax+', 
+                    'cbops_poly', 'cbops_poly+', 'cbops_full', 'cbops_full+']
 
     best_mape = float('inf')
     best_model_factory = None
     best_model_name = None
     best_features_name = None
 
-    print(f"\nMiCo {kernel_type} Proxy - Cross-Validation Results:")
-    print("=" * 80)
+    if verbose:
+        print(f"\nMiCo {kernel_type} Proxy - Cross-Validation Results:")
+        print("=" * 80)
 
     # Try all combinations
     for feature_name in feature_sets:
@@ -189,7 +319,8 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
             mean_r2 = np.mean(r2s)
             mean_mae = np.mean(maes)
             
-            print(f"  [{feature_name:8s}] {model_name:25s}: MAPE={mean_mape*100:6.2f}%, R2={mean_r2:7.4f}, MAE={mean_mae:.2f}")
+            if verbose:
+                print(f"  [{feature_name:14s}] {model_name:25s}: MAPE={mean_mape*100:6.2f}%, R2={mean_r2:7.4f}, MAE={mean_mae:.2f}")
             
             # Track best model factory
             if mean_mape < best_mape:
@@ -198,9 +329,10 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
                 best_model_name = model_name
                 best_features_name = feature_name
 
-    print("=" * 80)
-    print(f"Best Model: {best_model_name} with {best_features_name} features")
-    print(f"Best Cross-Validation MAPE: {best_mape*100:6.2f}%")
+    if verbose:
+        print("=" * 80)
+        print(f"Best Model: {best_model_name} with {best_features_name} features")
+        print(f"Best Cross-Validation MAPE: {best_mape*100:6.2f}%")
 
     # Create a fresh instance of best model with train_ratio config
     best_model = MiCoProxy(best_model_factory(), preprocess=best_features_name, 
@@ -257,23 +389,22 @@ def get_host_conv2d_proxy(opt="opt"):
 
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
-    # print("\n" + "="*80)
-    # print("BITFUSION PROXY TUNING")
-    # print("="*80)
-    # matmul_proxy = get_bitfusion_matmul_proxy()
-    # conv2d_proxy = get_bitfusion_conv2d_proxy()
+    print("\n" + "="*80)
+    print("BITFUSION PROXY TUNING")
+    print("="*80)
+    matmul_proxy = get_bitfusion_matmul_proxy()
+    conv2d_proxy = get_bitfusion_conv2d_proxy()
     
     # Test MiCo proxies with cross-validation
     print("\n" + "="*80)
-    print("MICO PROXY TUNING")
+    print("MICO SMALL PROXY TUNING")
     print("="*80)
     
-    # # Test for 'small' mico type
     print("\n### Testing MiCo 'small' type ###")
     mico_small_matmul_proxy = get_mico_matmul_proxy(mico_type='small')
     mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
     
-    # # # Test for 'high' mico type
+    # # Test for 'high' mico type
     # print("\n### Testing MiCo 'high' type ###")
     # mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
     # mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
@@ -290,6 +421,6 @@ if __name__ == "__main__":
     # print("\n### Testing Host 'lut' proxy ###")
     # host_matmul_proxy_lut = get_host_matmul_proxy(opt="lut")
 
-    # print("\n" + "="*80)
-    # print("ALL PROXY TUNING COMPLETED")
-    # print("="*80)
+    print("\n" + "="*80)
+    print("ALL PROXY TUNING COMPLETED")
+    print("="*80)
