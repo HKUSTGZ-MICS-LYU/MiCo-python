@@ -39,8 +39,13 @@ class LogRandomForestRegressor:
         return np.expm1(y_pred_log)
 
 class MiCoProxy:
-    def __init__(self, model, preprocess = 'raw'):
+    def __init__(self, model, preprocess = 'raw', train_ratio = 1.0, seed = 42, 
+                 train_x=None, train_y=None):
         self.model = model
+        self.seed = seed
+        self.train_ratio = train_ratio
+        self.train_x = train_x
+        self.train_y = train_y
         self.preprocess_dict = {
             "raw": self._get_raw_features,
             "bops": self._get_bops_features,
@@ -74,7 +79,24 @@ class MiCoProxy:
         bops = self._get_bops_features(X)
         return np.column_stack((bops, X))
 
-    def fit(self, X, y):
+    def set_train_ratio(self, train_ratio: float):
+        """Set training data ratio for experiments."""
+        self.train_ratio = train_ratio
+        
+    def fit(self, X=None, y=None, train_ratio=None):
+        # Apply train_ratio if less than 1.0
+        if X is None or y is None:
+            X = self.train_x
+            y = self.train_y
+        if train_ratio is not None:
+            self.train_ratio = train_ratio
+        if self.train_ratio < 1.0:
+            total = len(X)
+            subset_size = int(total * self.train_ratio)
+            np.random.seed(self.seed)
+            indices = np.random.choice(total, subset_size, replace=False)
+            X = X[indices]
+            y = y[indices]
         X = self.preprocess(X)
         self.model.fit(X, y)
 
@@ -82,7 +104,7 @@ class MiCoProxy:
         X = self.preprocess(X)
         return self.model.predict(X)
 
-def get_proxy(profile_dataset: str, kernel_type: str = 'matmul', train_ratio: float = 0.8):
+def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     # Load Dataset
     with open(profile_dataset, 'r') as f:
         csv_data = csv.reader(f)
@@ -180,18 +202,10 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul', train_ratio: fl
     print(f"Best Model: {best_model_name} with {best_features_name} features")
     print(f"Best Cross-Validation MAPE: {best_mape*100:6.2f}%")
 
-    # Create a fresh instance of best model and train on all data
-    best_model = MiCoProxy(best_model_factory(), preprocess=best_features_name)
-    best_model.fit(X, y)
-
-    # Use Subset of Data for Final Evaluation
-    total = len(X)
-    subset_ratio = train_ratio
-    subset_size = int(total * subset_ratio)
-    indices = np.random.choice(total, subset_size, replace=False)
-    X_subset = X[indices]
-    y_subset = y[indices]
-    best_model.fit(X_subset, y_subset)
+    # Create a fresh instance of best model with train_ratio config
+    best_model = MiCoProxy(best_model_factory(), preprocess=best_features_name, 
+                           train_x=X, train_y=y)
+    best_model.fit()
     return best_model
 
 def get_mico_matmul_proxy(mico_type: str = 'small'):
@@ -243,16 +257,16 @@ def get_host_conv2d_proxy(opt="opt"):
 
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
-    print("\n" + "="*80)
-    print("BITFUSION PROXY TUNING")
-    print("="*80)
-    matmul_proxy = get_bitfusion_matmul_proxy()
-    conv2d_proxy = get_bitfusion_conv2d_proxy()
-    
-    # # Test MiCo proxies with cross-validation
     # print("\n" + "="*80)
-    # print("MICO PROXY TUNING")
+    # print("BITFUSION PROXY TUNING")
     # print("="*80)
+    # matmul_proxy = get_bitfusion_matmul_proxy()
+    # conv2d_proxy = get_bitfusion_conv2d_proxy()
+    
+    # Test MiCo proxies with cross-validation
+    print("\n" + "="*80)
+    print("MICO PROXY TUNING")
+    print("="*80)
     
     # # Test for 'small' mico type
     print("\n### Testing MiCo 'small' type ###")
