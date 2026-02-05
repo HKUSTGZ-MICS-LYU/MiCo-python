@@ -437,5 +437,90 @@ class TestTorchMLPModelType(unittest.TestCase):
             self.assertGreater(results['mape_after'], 0)
 
 
+class TestCascadeTransferLearning(unittest.TestCase):
+    """Test the cascade/residual transfer learning approach."""
+    
+    def test_cascade_residual_rf(self):
+        """Test cascade transfer with RF correction in residual mode."""
+        proxy, results = get_transfer_proxy(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratio=0.1,
+            model_type='cascade',
+            cascade_mode='residual',
+            cascade_correction_type='rf',
+            verbose=False
+        )
+        
+        self.assertIsNotNone(proxy)
+        self.assertEqual(results['model_type'], 'cascade')
+        self.assertEqual(results['cascade_mode'], 'residual')
+        self.assertGreater(results['mape_after'], 0)
+        # Cascade should significantly improve MAPE
+        self.assertGreater(results['mape_improvement'], 0.5)  # >50% improvement
+    
+    def test_cascade_residual_mlp(self):
+        """Test cascade transfer with MLP correction."""
+        proxy, results = get_transfer_proxy(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratio=0.1,
+            model_type='cascade',
+            cascade_mode='residual',
+            cascade_correction_type='mlp',
+            verbose=False
+        )
+        
+        self.assertIsNotNone(proxy)
+        self.assertEqual(results['cascade_correction_type'], 'mlp')
+        self.assertGreater(results['mape_after'], 0)
+    
+    def test_cascade_residual_linear(self):
+        """Test cascade transfer with linear correction."""
+        proxy, results = get_transfer_proxy(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratio=0.1,
+            model_type='cascade',
+            cascade_mode='residual',
+            cascade_correction_type='linear',
+            verbose=False
+        )
+        
+        self.assertIsNotNone(proxy)
+        self.assertEqual(results['cascade_correction_type'], 'linear')
+        self.assertGreater(results['mape_after'], 0)
+    
+    def test_cascade_improves_over_base(self):
+        """Test that cascade significantly improves over base model."""
+        # Get base model result (random_forest)
+        _, base_results = get_transfer_proxy(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratio=0.1,
+            model_type='random_forest',
+            verbose=False
+        )
+        
+        # Get cascade result
+        _, cascade_results = get_transfer_proxy(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratio=0.1,
+            model_type='cascade',
+            cascade_mode='residual',
+            cascade_correction_type='rf',
+            verbose=False
+        )
+        
+        # Cascade should achieve lower MAPE
+        self.assertLess(cascade_results['mape_after'], base_results['mape_after'])
+
+
 if __name__ == "__main__":
     unittest.main()

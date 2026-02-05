@@ -335,6 +335,150 @@ class TorchMLPRegressor:
         return np.expm1(y_pred_log)
 
 
+class CascadeTransferRegressor:
+    """
+    Cascade/Residual Transfer Regressor for domain adaptation.
+    
+    This approach trains a secondary "correction" regressor that learns to adjust
+    the predictions of a base regressor trained on source domain data. The cascade
+    regressor takes both the original features AND the base regressor's predictions
+    as input, outputting a corrected prediction for the target domain.
+    
+    Architecture:
+        Input Features (X) --> Base Regressor --> Base Prediction (y_base)
+                    |                                    |
+                    +-----> [X, y_base] --> Correction Regressor --> Final Prediction
+    
+    The correction regressor can either:
+    - Output the final prediction directly ('direct' mode)
+    - Output a residual/correction to add to the base prediction ('residual' mode)
+    
+    Args:
+        base_regressor: Pre-trained regressor for the source domain
+        correction_type: Type of correction regressor ('mlp', 'rf', 'linear')
+        mode: 'direct' (output final prediction) or 'residual' (output correction)
+        hidden_dims: Hidden layer dimensions for MLP correction regressor
+        random_state: Random seed for reproducibility
+    
+    Example:
+        >>> # Train base regressor on source domain
+        >>> base_model = LogRandomForestRegressor(random_state=42)
+        >>> base_model.fit(X_source, y_source)
+        >>> 
+        >>> # Create cascade regressor and train correction on target domain
+        >>> cascade = CascadeTransferRegressor(base_model, mode='residual')
+        >>> cascade.fit(X_target, y_target)
+        >>> 
+        >>> # Predict on new data
+        >>> predictions = cascade.predict(X_new)
+    """
+    
+    def __init__(self, base_regressor, correction_type='mlp', mode='residual',
+                 hidden_dims=(64, 32), random_state=None):
+        self.base_regressor = base_regressor
+        self.correction_type = correction_type
+        self.mode = mode  # 'direct' or 'residual'
+        self.hidden_dims = hidden_dims
+        self.random_state = random_state
+        
+        self.correction_regressor = None
+        self.scaler = StandardScaler()
+        self._is_fitted = False
+    
+    def _create_correction_regressor(self, input_dim):
+        """Create the correction regressor based on type."""
+        if self.correction_type == 'mlp':
+            return MLPRegressor(
+                hidden_layer_sizes=self.hidden_dims,
+                max_iter=1000,
+                random_state=self.random_state,
+                early_stopping=False  # Disable for small datasets
+            )
+        elif self.correction_type == 'rf':
+            return RandomForestRegressor(
+                n_estimators=100,
+                random_state=self.random_state
+            )
+        elif self.correction_type == 'linear':
+            return Ridge(alpha=1.0)
+        else:
+            raise ValueError(f"Unknown correction_type: {self.correction_type}")
+    
+    def _get_augmented_features(self, X):
+        """Get augmented features: [original features, base prediction]."""
+        base_pred = self.base_regressor.predict(X)
+        # Add base prediction as additional feature
+        # Use log of prediction to match the scale of other features
+        base_pred_log = np.log1p(np.maximum(base_pred, 0)).reshape(-1, 1)
+        return np.hstack([X, base_pred_log])
+    
+    def fit(self, X, y):
+        """
+        Train the correction regressor on target domain data.
+        
+        The base regressor is assumed to be already trained on source domain.
+        This method trains a correction regressor that learns to adjust the
+        base predictions for the target domain.
+        
+        Args:
+            X: Target domain features
+            y: Target domain labels (latency values)
+        """
+        # Get augmented features (original + base prediction)
+        X_augmented = self._get_augmented_features(X)
+        
+        # Scale the augmented features
+        X_scaled = self.scaler.fit_transform(X_augmented)
+        
+        # Create correction regressor
+        self.correction_regressor = self._create_correction_regressor(X_scaled.shape[1])
+        
+        if self.mode == 'residual':
+            # Train to predict the residual (difference between true and base prediction)
+            base_pred = self.base_regressor.predict(X)
+            residual = np.log1p(y) - np.log1p(np.maximum(base_pred, 0))
+            self.correction_regressor.fit(X_scaled, residual)
+        else:  # direct mode
+            # Train to predict the final target directly
+            self.correction_regressor.fit(X_scaled, np.log1p(y))
+        
+        self._is_fitted = True
+    
+    def predict(self, X):
+        """
+        Predict using the cascade of base + correction regressor.
+        
+        Args:
+            X: Input features
+            
+        Returns:
+            Corrected predictions for the target domain
+        """
+        if not self._is_fitted:
+            raise ValueError("Correction regressor not fitted. Call fit() first.")
+        
+        # Get base prediction
+        base_pred = self.base_regressor.predict(X)
+        
+        # Get augmented features
+        X_augmented = self._get_augmented_features(X)
+        X_scaled = self.scaler.transform(X_augmented)
+        
+        # Get correction
+        correction = self.correction_regressor.predict(X_scaled)
+        
+        if self.mode == 'residual':
+            # Add correction to log of base prediction
+            log_pred = np.log1p(np.maximum(base_pred, 0)) + correction
+            return np.expm1(log_pred)
+        else:  # direct mode
+            return np.expm1(correction)
+    
+    def finetune(self, X, y):
+        """Alias for fit() to match interface."""
+        return self.fit(X, y)
+
+
 class MiCoProxy:
     def __init__(self, model, preprocess = 'raw', train_ratio = 1.0, seed = 42, 
                  train_x=None, train_y=None):
@@ -702,11 +846,117 @@ def load_proxy_data(profile_dataset: str, kernel_type: str = 'matmul'):
     return X, y
 
 
+def _get_cascade_transfer_proxy(X_source, y_source, X_target, y_target,
+                                  source_type, target_type, kernel_type,
+                                  finetune_ratio, preprocess, seed,
+                                  cascade_mode, cascade_correction_type, verbose):
+    """
+    Internal helper for cascade/residual transfer learning.
+    
+    This implements the cascade transfer approach where:
+    1. A base regressor is trained on source domain
+    2. A correction regressor learns to adjust predictions for target domain
+    """
+    # Create preprocessing proxy to get preprocessed features
+    base_model = LogRandomForestRegressor(random_state=seed)
+    base_proxy = MiCoProxy(base_model, preprocess=preprocess, seed=seed)
+    
+    if verbose:
+        print(f"\nStep 1: Training base regressor on {source_type}...")
+    
+    # Train base model on source domain
+    base_proxy.pretrain(X_source, y_source)
+    
+    # Evaluate base model on target domain (before correction)
+    y_pred_before = base_proxy.predict(X_target)
+    mape_before = mean_absolute_percentage_error(y_target, y_pred_before)
+    r2_before = r2_score(y_target, y_pred_before)
+    
+    if verbose:
+        print(f"Base model on target - MAPE: {mape_before*100:.2f}%, R2: {r2_before:.4f}")
+    
+    # Apply finetune_ratio to select subset of target data
+    np.random.seed(seed)
+    total = len(X_target)
+    subset_size = max(1, int(total * finetune_ratio))
+    indices = np.random.choice(total, subset_size, replace=False)
+    X_target_subset = X_target[indices]
+    y_target_subset = y_target[indices]
+    
+    if verbose:
+        print(f"\nStep 2: Training cascade correction regressor on {subset_size} target samples...")
+        print(f"Cascade mode: {cascade_mode}, Correction type: {cascade_correction_type}")
+    
+    # Preprocess features for cascade regressor
+    X_target_processed = base_proxy.preprocess(X_target_subset)
+    
+    # Create cascade regressor
+    cascade = CascadeTransferRegressor(
+        base_regressor=base_proxy.model,
+        correction_type=cascade_correction_type,
+        mode=cascade_mode,
+        hidden_dims=(64, 32),
+        random_state=seed
+    )
+    
+    # Train correction regressor on target subset
+    cascade.fit(X_target_processed, y_target_subset)
+    
+    # Evaluate on full target data
+    X_target_full_processed = base_proxy.preprocess(X_target)
+    y_pred_after = cascade.predict(X_target_full_processed)
+    mape_after = mean_absolute_percentage_error(y_target, y_pred_after)
+    r2_after = r2_score(y_target, y_pred_after)
+    mae_after = mean_absolute_error(y_target, y_pred_after)
+    
+    if verbose:
+        print(f"\nAfter cascade correction - MAPE: {mape_after*100:.2f}%, R2: {r2_after:.4f}")
+        improvement = (mape_before - mape_after) / mape_before * 100 if mape_before > 0 else 0
+        print(f"MAPE Improvement: {improvement:.1f}%")
+        print(f"{'='*80}")
+    
+    # Create a wrapper proxy that uses the cascade model
+    class CascadeProxyWrapper:
+        """Wrapper to make cascade model compatible with MiCoProxy interface."""
+        def __init__(self, cascade_model, preprocess_func):
+            self.cascade = cascade_model
+            self.preprocess = preprocess_func
+            self._model_type = 'cascade'
+        
+        def predict(self, X):
+            X_processed = self.preprocess(X)
+            return self.cascade.predict(X_processed)
+    
+    wrapper = CascadeProxyWrapper(cascade, base_proxy.preprocess)
+    
+    results = {
+        'source_type': source_type,
+        'target_type': target_type,
+        'kernel_type': kernel_type,
+        'model_type': 'cascade',
+        'cascade_mode': cascade_mode,
+        'cascade_correction_type': cascade_correction_type,
+        'finetune_ratio': finetune_ratio,
+        'strategy': 'cascade',
+        'target_samples_used': subset_size,
+        'mape_before': mape_before,
+        'r2_before': r2_before,
+        'mape_after': mape_after,
+        'r2_after': r2_after,
+        'mae_after': mae_after,
+        'mape_improvement': (mape_before - mape_after) / mape_before if mape_before > 0 else 0
+    }
+    
+    return wrapper, results
+
+
 def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'matmul',
                        finetune_ratio: float = 0.1, strategy: str = 'combined',
                        preprocess: str = 'cbops+', seed: int = 42,
                        model_type: str = 'random_forest',
                        freeze_strategy: str = 'freeze_extractor',
+                       cascade_mode: str = 'residual',
+                       cascade_correction_type: str = 'mlp',
                        verbose: bool = True):
     """
     Create a proxy model using transfer learning from source to target domain.
@@ -726,10 +976,18 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
             - 'random_forest': LogRandomForestRegressor (default)
             - 'mlp': LogMLPRegressor (sklearn MLP with warm_start)
             - 'torch_mlp': TorchMLPRegressor (PyTorch MLP with layer freezing)
+            - 'cascade': CascadeTransferRegressor (residual/correction learning)
         freeze_strategy: For torch_mlp, controls transfer learning approach:
             - 'freeze_extractor': Freeze feature layers, train only head (default)
             - 'discriminative_lr': Use lower LR for pretrained layers
             - 'none': No freezing, fine-tune all layers
+        cascade_mode: For cascade model, prediction mode:
+            - 'residual': Output correction to add to base prediction (default)
+            - 'direct': Output final prediction directly
+        cascade_correction_type: For cascade model, correction regressor type:
+            - 'mlp': MLP correction regressor (default)
+            - 'rf': Random Forest correction regressor
+            - 'linear': Linear/Ridge correction regressor
         verbose: Whether to print progress information
     
     Returns:
@@ -737,14 +995,14 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
                results contains evaluation metrics
     
     Example:
-        >>> # Transfer with PyTorch MLP and layer freezing
+        >>> # Transfer with cascade/residual learning
         >>> proxy, results = get_transfer_proxy(
         ...     source_type='mico_small',
         ...     target_type='mico_high', 
         ...     kernel_type='matmul',
         ...     finetune_ratio=0.1,
-        ...     model_type='torch_mlp',
-        ...     freeze_strategy='freeze_extractor'
+        ...     model_type='cascade',
+        ...     cascade_mode='residual'
         ... )
     """
     # Determine file paths based on source/target types
@@ -768,6 +1026,8 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
         print(f"Model type: {model_type}")
         if model_type == 'torch_mlp':
             print(f"Freeze strategy: {freeze_strategy}")
+        if model_type == 'cascade':
+            print(f"Cascade mode: {cascade_mode}, Correction type: {cascade_correction_type}")
         print(f"{'='*80}")
     
     # Load source and target data
@@ -777,6 +1037,15 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
     if verbose:
         print(f"Source data: {len(X_source)} samples from {source_path}")
         print(f"Target data: {len(X_target)} samples from {target_path}")
+    
+    # Handle cascade model type separately (different workflow)
+    if model_type == 'cascade':
+        return _get_cascade_transfer_proxy(
+            X_source, y_source, X_target, y_target,
+            source_type, target_type, kernel_type,
+            finetune_ratio, preprocess, seed,
+            cascade_mode, cascade_correction_type, verbose
+        )
     
     # Create model based on model_type
     if model_type == 'random_forest':
@@ -793,7 +1062,7 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
             verbose=verbose
         )
     else:
-        raise ValueError(f"Unknown model_type: {model_type}. Use 'random_forest', 'mlp', or 'torch_mlp'.")
+        raise ValueError(f"Unknown model_type: {model_type}. Use 'random_forest', 'mlp', 'torch_mlp', or 'cascade'.")
     
     proxy = MiCoProxy(model, preprocess=preprocess, seed=seed)
     proxy._source_domain = source_type

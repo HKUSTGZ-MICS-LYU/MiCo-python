@@ -47,36 +47,78 @@ Three fine-tuning strategies are available:
 
 ### 3. Model Types
 
-Three model types are available for transfer learning:
+Four model types are available for transfer learning:
 
-- **`random_forest`** (default): LogRandomForestRegressor - Tree-based ensemble. Generally performs better for this task due to small dataset sizes and well-engineered features.
-- **`mlp`**: LogMLPRegressor - sklearn MLP with warm_start for weight transfer. Good for simple transfer scenarios.
-- **`torch_mlp`**: TorchMLPRegressor - PyTorch MLP with advanced transfer learning techniques:
-  - **Layer freezing**: Freeze feature extractor layers, fine-tune only the head
-  - **Discriminative learning rates**: Use lower LR for pretrained layers
-  - **Gradual unfreezing**: Progressively unfreeze layers during training
+- **`random_forest`** (default): LogRandomForestRegressor - Tree-based ensemble. Stable baseline.
+- **`mlp`**: LogMLPRegressor - sklearn MLP with warm_start for weight transfer.
+- **`torch_mlp`**: TorchMLPRegressor - PyTorch MLP with layer freezing techniques.
+- **`cascade`** (BEST): CascadeTransferRegressor - **Residual/correction learning approach** that dramatically improves accuracy.
+
+### 4. Cascade Transfer Learning (Recommended)
+
+The cascade approach trains a secondary "correction" regressor that learns to adjust the base model's predictions for the target domain. This is the **most effective** method for transfer learning with limited target data.
+
+**Architecture:**
+```
+Input Features (X) --> Base Regressor --> Base Prediction (y_base)
+            |                                    |
+            +-----> [X, y_base] --> Correction Regressor --> Final Prediction
+```
+
+**Usage:**
+```python
+# Use cascade with residual mode (recommended)
+proxy, results = get_transfer_proxy(
+    source_type='mico_small',
+    target_type='mico_high',
+    kernel_type='matmul',
+    finetune_ratio=0.1,
+    model_type='cascade',
+    cascade_mode='residual',      # Output correction to add to base
+    cascade_correction_type='rf'  # RF correction regressor (best)
+)
+```
+
+**Cascade Parameters:**
+- `cascade_mode`: 
+  - `'residual'` (default): Correction regressor outputs adjustment to add to base prediction
+  - `'direct'`: Correction regressor outputs final prediction directly
+- `cascade_correction_type`:
+  - `'rf'`: Random Forest (best performance)
+  - `'mlp'`: MLP correction
+  - `'linear'`: Simple linear/Ridge correction
+
+**Results (mico_small → mico_high matmul):**
+
+| Data Ratio | Random Forest | sklearn MLP | Cascade RF | Cascade Linear |
+|------------|---------------|-------------|------------|----------------|
+| 5% | 45.2% MAPE | 56.5% MAPE | **9.5% MAPE** | 14.0% MAPE |
+| 10% | 43.5% MAPE | 40.7% MAPE | **7.8% MAPE** | 8.4% MAPE |
+| 20% | 39.9% MAPE | 39.1% MAPE | **6.7% MAPE** | 8.6% MAPE |
+| 50% | 31.9% MAPE | 38.9% MAPE | **3.7% MAPE** | 7.4% MAPE |
+
+**The cascade approach achieves 4-10x better accuracy than traditional methods!**
+
+### 5. PyTorch MLP with Layer Freezing
+
+For `model_type='torch_mlp'`, additional freeze strategies are available:
+
+- **`freeze_extractor`** (default): Freeze feature extraction layers, train only the head.
+- **`discriminative_lr`**: Use lower learning rate for pretrained layers.
+- **`none`**: No freezing, fine-tune all layers with lower learning rate.
 
 ```python
-# Use PyTorch MLP with layer freezing for transfer learning
 proxy, results = get_transfer_proxy(
     source_type='mico_small',
     target_type='mico_high',
     kernel_type='matmul',
     finetune_ratio=0.1,
     model_type='torch_mlp',
-    freeze_strategy='freeze_extractor'  # or 'discriminative_lr', 'none'
+    freeze_strategy='freeze_extractor'
 )
 ```
 
-### 4. Freeze Strategies (for torch_mlp)
-
-When using `model_type='torch_mlp'`, you can control how transfer learning is performed:
-
-- **`freeze_extractor`** (default): Freeze feature extraction layers, train only the head (final layers). Best for domain shift scenarios.
-- **`discriminative_lr`**: Use lower learning rate for pretrained layers, higher for head. Allows gradual adaptation.
-- **`none`**: No freezing, fine-tune all layers with lower learning rate.
-
-### 5. Utility Functions
+### 6. Utility Functions
 
 #### `get_transfer_proxy()`
 Create a proxy with transfer learning in one call:
