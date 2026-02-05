@@ -10,13 +10,16 @@ Evaluates: MatMul and Conv2D kernels
 """
 
 import sys
+import os
 import csv
 import numpy as np
 from sklearn.model_selection import KFold
 from sklearn.metrics import mean_absolute_percentage_error, r2_score, mean_absolute_error
 
+# Add parent directory to path for imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 # Import proxy functions
-sys.path.append('..')
 from MiCoProxy import (
     get_proxy, get_two_stage_proxy,
     get_mico_matmul_proxy, get_mico_conv2d_proxy,
