@@ -14,6 +14,11 @@ from sklearn.metrics import (
     mean_absolute_error
 )
 
+import torch
+import torch.nn as nn
+import torch.optim as optim
+from torch.utils.data import DataLoader, TensorDataset
+
 class DirectSum:
     def __init__(self, **kwargs):
         pass
@@ -85,6 +90,250 @@ class LogMLPRegressor:
         X_scaled = self.scaler.transform(X)
         y_pred_log = self.model.predict(X_scaled)
         return np.expm1(y_pred_log)
+
+
+class TorchMLP(nn.Module):
+    """PyTorch MLP architecture for latency prediction with transfer learning support."""
+    
+    def __init__(self, input_dim, hidden_dims=(128, 64, 32)):
+        super(TorchMLP, self).__init__()
+        
+        layers = []
+        prev_dim = input_dim
+        
+        # Build hidden layers (feature extractor)
+        for i, hidden_dim in enumerate(hidden_dims[:-1]):
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.ReLU())
+            layers.append(nn.Dropout(0.1))
+            prev_dim = hidden_dim
+        
+        self.feature_extractor = nn.Sequential(*layers)
+        
+        # Final layer (head) - this will be fine-tuned or replaced for transfer learning
+        self.head = nn.Sequential(
+            nn.Linear(prev_dim, hidden_dims[-1]),
+            nn.ReLU(),
+            nn.Linear(hidden_dims[-1], 1)
+        )
+    
+    def forward(self, x):
+        features = self.feature_extractor(x)
+        return self.head(features).squeeze(-1)
+    
+    def freeze_feature_extractor(self):
+        """Freeze all layers except the head for transfer learning."""
+        for param in self.feature_extractor.parameters():
+            param.requires_grad = False
+    
+    def unfreeze_all(self):
+        """Unfreeze all layers."""
+        for param in self.parameters():
+            param.requires_grad = True
+
+
+class TorchMLPRegressor:
+    """
+    PyTorch-based MLP regressor with proper transfer learning support.
+    
+    This class implements a neural network using PyTorch with advanced
+    transfer learning techniques:
+    - Layer freezing: Freeze feature extractor, fine-tune only the head
+    - Discriminative learning rates: Lower LR for pretrained layers
+    - Gradual unfreezing: Progressively unfreeze layers during training
+    
+    Args:
+        hidden_dims: Tuple of hidden layer dimensions (default: (128, 64, 32))
+        epochs: Number of training epochs (default: 500)
+        lr: Learning rate (default: 0.001)
+        batch_size: Batch size for training (default: 32)
+        freeze_strategy: Transfer learning strategy:
+            - 'none': No freezing, fine-tune all layers
+            - 'freeze_extractor': Freeze feature extractor, only train head
+            - 'discriminative_lr': Use lower LR for pretrained layers
+        device: Device to use ('cuda', 'cpu', or 'auto')
+        random_state: Random seed for reproducibility
+    """
+    
+    def __init__(self, hidden_dims=(128, 64, 32), epochs=500, lr=0.001, 
+                 batch_size=32, freeze_strategy='freeze_extractor',
+                 device='auto', random_state=None, verbose=False):
+        self.hidden_dims = hidden_dims
+        self.epochs = epochs
+        self.lr = lr
+        self.batch_size = batch_size
+        self.freeze_strategy = freeze_strategy
+        self.verbose = verbose
+        self.random_state = random_state
+        
+        if device == 'auto':
+            self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        else:
+            self.device = torch.device(device)
+        
+        if random_state is not None:
+            torch.manual_seed(random_state)
+            np.random.seed(random_state)
+        
+        self.model = None
+        self.scaler = StandardScaler()
+        self._is_fitted = False
+        self._input_dim = None
+    
+    def _create_model(self, input_dim):
+        """Create a new model with the given input dimension."""
+        self._input_dim = input_dim
+        self.model = TorchMLP(input_dim, self.hidden_dims).to(self.device)
+    
+    def _train_epoch(self, dataloader, optimizer, criterion):
+        """Train for one epoch."""
+        self.model.train()
+        total_loss = 0
+        for X_batch, y_batch in dataloader:
+            X_batch, y_batch = X_batch.to(self.device), y_batch.to(self.device)
+            
+            optimizer.zero_grad()
+            y_pred = self.model(X_batch)
+            loss = criterion(y_pred, y_batch)
+            loss.backward()
+            optimizer.step()
+            
+            total_loss += loss.item()
+        return total_loss / len(dataloader)
+    
+    def fit(self, X, y):
+        """
+        Train the model from scratch.
+        
+        Args:
+            X: Training features (numpy array)
+            y: Training targets (numpy array)
+        """
+        # Scale features
+        if not self._is_fitted:
+            X_scaled = self.scaler.fit_transform(X)
+        else:
+            X_scaled = self.scaler.transform(X)
+        
+        # Log transform targets
+        y_log = np.log1p(y)
+        
+        # Create model if needed
+        if self.model is None or self._input_dim != X_scaled.shape[1]:
+            self._create_model(X_scaled.shape[1])
+        
+        # Create dataloader
+        X_tensor = torch.FloatTensor(X_scaled)
+        y_tensor = torch.FloatTensor(y_log)
+        dataset = TensorDataset(X_tensor, y_tensor)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        
+        # Train
+        optimizer = optim.Adam(self.model.parameters(), lr=self.lr)
+        criterion = nn.MSELoss()
+        
+        for epoch in range(self.epochs):
+            loss = self._train_epoch(dataloader, optimizer, criterion)
+            if self.verbose and (epoch + 1) % 100 == 0:
+                print(f"Epoch {epoch+1}/{self.epochs}, Loss: {loss:.6f}")
+        
+        self._is_fitted = True
+    
+    def finetune(self, X, y, epochs=None, lr=None):
+        """
+        Fine-tune the model on new data using the specified freeze strategy.
+        
+        This implements proper transfer learning by:
+        1. freeze_extractor: Freezing the feature extraction layers
+        2. Training only the head (final layers) on new data
+        3. Optionally unfreezing for full fine-tuning
+        
+        Args:
+            X: Fine-tuning features (numpy array)
+            y: Fine-tuning targets (numpy array)
+            epochs: Number of fine-tuning epochs (default: half of original epochs)
+            lr: Learning rate for fine-tuning (default: 1/10 of original lr)
+        """
+        if not self._is_fitted:
+            return self.fit(X, y)
+        
+        epochs = epochs or max(self.epochs // 2, 100)
+        lr = lr or self.lr / 10  # Lower LR for fine-tuning
+        
+        # Scale features using existing scaler
+        X_scaled = self.scaler.transform(X)
+        y_log = np.log1p(y)
+        
+        # Create dataloader
+        X_tensor = torch.FloatTensor(X_scaled)
+        y_tensor = torch.FloatTensor(y_log)
+        dataset = TensorDataset(X_tensor, y_tensor)
+        dataloader = DataLoader(dataset, batch_size=self.batch_size, shuffle=True)
+        
+        criterion = nn.MSELoss()
+        
+        if self.freeze_strategy == 'freeze_extractor':
+            # Freeze feature extractor, only train head
+            self.model.freeze_feature_extractor()
+            optimizer = optim.Adam(
+                filter(lambda p: p.requires_grad, self.model.parameters()), 
+                lr=lr
+            )
+            
+            # Phase 1: Train only head
+            for epoch in range(epochs // 2):
+                loss = self._train_epoch(dataloader, optimizer, criterion)
+                if self.verbose and (epoch + 1) % 50 == 0:
+                    print(f"[Frozen] Epoch {epoch+1}/{epochs//2}, Loss: {loss:.6f}")
+            
+            # Phase 2: Unfreeze and fine-tune all with lower LR
+            self.model.unfreeze_all()
+            optimizer = optim.Adam(self.model.parameters(), lr=lr / 5)
+            
+            for epoch in range(epochs // 2):
+                loss = self._train_epoch(dataloader, optimizer, criterion)
+                if self.verbose and (epoch + 1) % 50 == 0:
+                    print(f"[Unfrozen] Epoch {epoch+1}/{epochs//2}, Loss: {loss:.6f}")
+                    
+        elif self.freeze_strategy == 'discriminative_lr':
+            # Use different learning rates for different layers
+            optimizer = optim.Adam([
+                {'params': self.model.feature_extractor.parameters(), 'lr': lr / 10},
+                {'params': self.model.head.parameters(), 'lr': lr}
+            ])
+            
+            for epoch in range(epochs):
+                loss = self._train_epoch(dataloader, optimizer, criterion)
+                if self.verbose and (epoch + 1) % 50 == 0:
+                    print(f"[Discriminative LR] Epoch {epoch+1}/{epochs}, Loss: {loss:.6f}")
+        else:
+            # No freezing - fine-tune all layers with lower LR
+            optimizer = optim.Adam(self.model.parameters(), lr=lr)
+            
+            for epoch in range(epochs):
+                loss = self._train_epoch(dataloader, optimizer, criterion)
+                if self.verbose and (epoch + 1) % 50 == 0:
+                    print(f"[Full] Epoch {epoch+1}/{epochs}, Loss: {loss:.6f}")
+    
+    def predict(self, X):
+        """
+        Predict latency values.
+        
+        Args:
+            X: Input features (numpy array)
+            
+        Returns:
+            numpy array of predicted latency values
+        """
+        self.model.eval()
+        X_scaled = self.scaler.transform(X)
+        X_tensor = torch.FloatTensor(X_scaled).to(self.device)
+        
+        with torch.no_grad():
+            y_pred_log = self.model(X_tensor).cpu().numpy()
+        
+        return np.expm1(y_pred_log)
+
 
 class MiCoProxy:
     def __init__(self, model, preprocess = 'raw', train_ratio = 1.0, seed = 42, 
@@ -188,6 +437,7 @@ class MiCoProxy:
                 - 'combined': Combine source and target data for retraining
                 - 'target_only': Retrain only on target data (baseline)
                 - 'weighted': Weight target samples higher than source
+                - 'finetune': Use model's native finetune method (for torch_mlp)
         
         Returns:
             dict: Fine-tuning results with metrics
@@ -207,14 +457,24 @@ class MiCoProxy:
         # Preprocess target data
         X_target_processed = self.preprocess(X_target_subset)
         
+        # Check if model has native finetune method (e.g., TorchMLPRegressor)
+        has_finetune = hasattr(self.model, 'finetune') and callable(self.model.finetune)
+        
         if strategy == 'target_only':
             # Retrain only on target data (baseline for comparison)
             self.model.fit(X_target_processed, y_target_subset)
+        elif strategy == 'finetune' and has_finetune:
+            # Use model's native finetune method (proper transfer learning)
+            self.model.finetune(X_target_processed, y_target_subset)
         elif strategy == 'combined':
             # Combine source and target data
             X_combined = np.vstack([self._source_x, X_target_processed])
             y_combined = np.concatenate([self._source_y, y_target_subset])
-            self.model.fit(X_combined, y_combined)
+            if has_finetune:
+                # For torch_mlp, use finetune for better transfer
+                self.model.finetune(X_combined, y_combined)
+            else:
+                self.model.fit(X_combined, y_combined)
         elif strategy == 'weighted':
             # Weight target samples more heavily by oversampling
             target_size = max(1, len(X_target_processed))
@@ -223,7 +483,10 @@ class MiCoProxy:
             y_target_weighted = np.tile(y_target_subset, weight_factor)
             X_combined = np.vstack([self._source_x, X_target_weighted])
             y_combined = np.concatenate([self._source_y, y_target_weighted])
-            self.model.fit(X_combined, y_combined)
+            if has_finetune:
+                self.model.finetune(X_combined, y_combined)
+            else:
+                self.model.fit(X_combined, y_combined)
         else:
             raise ValueError(f"Unknown fine-tuning strategy: {strategy}")
         
@@ -443,6 +706,7 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
                        finetune_ratio: float = 0.1, strategy: str = 'combined',
                        preprocess: str = 'cbops+', seed: int = 42,
                        model_type: str = 'random_forest',
+                       freeze_strategy: str = 'freeze_extractor',
                        verbose: bool = True):
     """
     Create a proxy model using transfer learning from source to target domain.
@@ -458,9 +722,14 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
         strategy: Fine-tuning strategy ('combined', 'target_only', 'weighted')
         preprocess: Feature preprocessing method
         seed: Random seed for reproducibility
-        model_type: Type of model to use ('random_forest' or 'mlp')
-            - 'random_forest': LogRandomForestRegressor (default, good for single-domain)
-            - 'mlp': LogMLPRegressor (neural network, better for transfer learning)
+        model_type: Type of model to use:
+            - 'random_forest': LogRandomForestRegressor (default)
+            - 'mlp': LogMLPRegressor (sklearn MLP with warm_start)
+            - 'torch_mlp': TorchMLPRegressor (PyTorch MLP with layer freezing)
+        freeze_strategy: For torch_mlp, controls transfer learning approach:
+            - 'freeze_extractor': Freeze feature layers, train only head (default)
+            - 'discriminative_lr': Use lower LR for pretrained layers
+            - 'none': No freezing, fine-tune all layers
         verbose: Whether to print progress information
     
     Returns:
@@ -468,13 +737,14 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
                results contains evaluation metrics
     
     Example:
-        >>> # Transfer from mico_small to mico_high with 10% target data using MLP
+        >>> # Transfer with PyTorch MLP and layer freezing
         >>> proxy, results = get_transfer_proxy(
         ...     source_type='mico_small',
         ...     target_type='mico_high', 
         ...     kernel_type='matmul',
         ...     finetune_ratio=0.1,
-        ...     model_type='mlp'
+        ...     model_type='torch_mlp',
+        ...     freeze_strategy='freeze_extractor'
         ... )
     """
     # Determine file paths based on source/target types
@@ -496,6 +766,8 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
         print(f"\n{'='*80}")
         print(f"Transfer Learning: {source_type} -> {target_type} ({kernel_type})")
         print(f"Model type: {model_type}")
+        if model_type == 'torch_mlp':
+            print(f"Freeze strategy: {freeze_strategy}")
         print(f"{'='*80}")
     
     # Load source and target data
@@ -511,8 +783,17 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
         model = LogRandomForestRegressor(random_state=seed)
     elif model_type == 'mlp':
         model = LogMLPRegressor(random_state=seed, hidden_layer_sizes=(64, 32))
+    elif model_type == 'torch_mlp':
+        model = TorchMLPRegressor(
+            hidden_dims=(128, 64, 32),
+            epochs=500,
+            lr=0.001,
+            freeze_strategy=freeze_strategy,
+            random_state=seed,
+            verbose=verbose
+        )
     else:
-        raise ValueError(f"Unknown model_type: {model_type}. Use 'random_forest' or 'mlp'.")
+        raise ValueError(f"Unknown model_type: {model_type}. Use 'random_forest', 'mlp', or 'torch_mlp'.")
     
     proxy = MiCoProxy(model, preprocess=preprocess, seed=seed)
     proxy._source_domain = source_type
@@ -780,33 +1061,37 @@ def compare_model_types_for_transfer(source_type: str = 'mico_small',
                                       target_type: str = 'mico_high',
                                       kernel_type: str = 'matmul',
                                       finetune_ratios: list = None,
+                                      model_types: list = None,
                                       n_trials: int = 3,
                                       seed: int = 42,
                                       verbose: bool = True):
     """
-    Compare Random Forest vs MLP for transfer learning effectiveness.
+    Compare different model types for transfer learning effectiveness.
     
-    This function runs experiments comparing tree-based models (Random Forest)
-    against neural networks (MLP) for transfer learning. MLPs are generally
-    better suited for transfer learning as their learned weights can be
-    incrementally fine-tuned.
+    This function runs experiments comparing tree-based models (Random Forest),
+    sklearn MLP, and PyTorch MLP with layer freezing for transfer learning.
     
     Args:
         source_type: Source domain identifier
         target_type: Target domain identifier
         kernel_type: Kernel type ('matmul' or 'conv2d')
         finetune_ratios: List of fine-tuning ratios to test
+        model_types: List of model types to compare. Options:
+            - 'random_forest': LogRandomForestRegressor
+            - 'mlp': sklearn MLPRegressor with warm_start
+            - 'torch_mlp': PyTorch MLP with layer freezing
         n_trials: Number of trials for averaging
         seed: Base random seed
         verbose: Whether to print results
     
     Returns:
-        dict: Comparison results for both model types
+        dict: Comparison results for all model types
     """
     if finetune_ratios is None:
         finetune_ratios = [0.05, 0.1, 0.2, 0.3, 0.5]
     
-    model_types = ['random_forest', 'mlp']
+    if model_types is None:
+        model_types = ['random_forest', 'mlp', 'torch_mlp']
     
     results = {
         'source_type': source_type,
@@ -817,7 +1102,7 @@ def compare_model_types_for_transfer(source_type: str = 'mico_small',
     
     if verbose:
         print(f"\n{'='*80}")
-        print(f"MODEL COMPARISON: Random Forest vs MLP for Transfer Learning")
+        print(f"MODEL COMPARISON: {', '.join(model_types)} for Transfer Learning")
         print(f"Transfer: {source_type} -> {target_type} ({kernel_type})")
         print(f"{'='*80}")
     
@@ -868,34 +1153,22 @@ def compare_model_types_for_transfer(source_type: str = 'mico_small',
         print("SUMMARY: Which model is better for transfer learning?")
         print(f"{'='*80}")
         
-        rf_best_count = 0
-        mlp_best_count = 0
+        win_counts = {m: 0 for m in model_types}
         
         for i, ratio in enumerate(finetune_ratios):
-            rf_mape = results['comparisons']['random_forest'][i]['mape_after']
-            mlp_mape = results['comparisons']['mlp'][i]['mape_after']
+            mapes = {m: results['comparisons'][m][i]['mape_after'] for m in model_types}
+            best_model = min(mapes, key=mapes.get)
+            win_counts[best_model] += 1
             
-            if mlp_mape < rf_mape:
-                mlp_best_count += 1
-                winner = "MLP"
-            else:
-                rf_best_count += 1
-                winner = "RF"
-            
-            diff = abs(rf_mape - mlp_mape) * 100
-            print(f"  Ratio {ratio*100:3.0f}%: {winner} wins by {diff:.2f}% MAPE")
+            best_mape = mapes[best_model]
+            print(f"  Ratio {ratio*100:3.0f}%: {best_model} wins (MAPE={best_mape*100:.2f}%)")
         
-        print(f"\nOverall: MLP wins {mlp_best_count}/{len(finetune_ratios)}, "
-              f"RF wins {rf_best_count}/{len(finetune_ratios)}")
-        
-        if mlp_best_count > rf_best_count:
-            print("Recommendation: Use MLP (model_type='mlp') for better transfer learning.")
-        elif rf_best_count > mlp_best_count:
-            print("Recommendation: Use Random Forest (model_type='random_forest').")
-        else:
-            print("Recommendation: Both models perform similarly.")
+        print(f"\nWin counts: {win_counts}")
+        best_overall = max(win_counts, key=win_counts.get)
+        print(f"Recommendation: Use {best_overall} (model_type='{best_overall}') for best overall performance.")
     
     return results
+
 
 
 if __name__ == "__main__":

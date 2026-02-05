@@ -394,8 +394,47 @@ class TestCompareModelTypes(unittest.TestCase):
         self.assertIn('comparisons', results)
         self.assertIn('random_forest', results['comparisons'])
         self.assertIn('mlp', results['comparisons'])
+        self.assertIn('torch_mlp', results['comparisons'])
         self.assertEqual(len(results['comparisons']['random_forest']), 1)
         self.assertEqual(len(results['comparisons']['mlp']), 1)
+        self.assertEqual(len(results['comparisons']['torch_mlp']), 1)
+
+
+class TestTorchMLPModelType(unittest.TestCase):
+    """Test the PyTorch MLP model type for transfer learning."""
+    
+    def test_torch_mlp_transfer(self):
+        """Test transfer learning with PyTorch MLP model."""
+        proxy, results = get_transfer_proxy(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratio=0.1,
+            model_type='torch_mlp',
+            verbose=False
+        )
+        
+        self.assertIsNotNone(proxy)
+        self.assertEqual(results['model_type'], 'torch_mlp')
+        self.assertGreater(results['mape_after'], 0)
+    
+    def test_torch_mlp_freeze_strategies(self):
+        """Test different freeze strategies for PyTorch MLP."""
+        strategies = ['freeze_extractor', 'discriminative_lr', 'none']
+        
+        for strategy in strategies:
+            proxy, results = get_transfer_proxy(
+                source_type='mico_small',
+                target_type='mico_high',
+                kernel_type='matmul',
+                finetune_ratio=0.2,
+                model_type='torch_mlp',
+                freeze_strategy=strategy,
+                verbose=False
+            )
+            
+            self.assertIsNotNone(proxy)
+            self.assertGreater(results['mape_after'], 0)
 
 
 if __name__ == "__main__":

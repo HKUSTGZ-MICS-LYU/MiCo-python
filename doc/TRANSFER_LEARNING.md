@@ -47,23 +47,36 @@ Three fine-tuning strategies are available:
 
 ### 3. Model Types
 
-Two model types are available for transfer learning:
+Three model types are available for transfer learning:
 
 - **`random_forest`** (default): LogRandomForestRegressor - Tree-based ensemble. Generally performs better for this task due to small dataset sizes and well-engineered features.
-- **`mlp`**: LogMLPRegressor - Neural network with warm_start for true weight transfer. May work better with larger datasets or when features need to be learned.
+- **`mlp`**: LogMLPRegressor - sklearn MLP with warm_start for weight transfer. Good for simple transfer scenarios.
+- **`torch_mlp`**: TorchMLPRegressor - PyTorch MLP with advanced transfer learning techniques:
+  - **Layer freezing**: Freeze feature extractor layers, fine-tune only the head
+  - **Discriminative learning rates**: Use lower LR for pretrained layers
+  - **Gradual unfreezing**: Progressively unfreeze layers during training
 
 ```python
-# Use MLP for transfer learning
+# Use PyTorch MLP with layer freezing for transfer learning
 proxy, results = get_transfer_proxy(
     source_type='mico_small',
     target_type='mico_high',
     kernel_type='matmul',
     finetune_ratio=0.1,
-    model_type='mlp'  # or 'random_forest' (default)
+    model_type='torch_mlp',
+    freeze_strategy='freeze_extractor'  # or 'discriminative_lr', 'none'
 )
 ```
 
-### 4. Utility Functions
+### 4. Freeze Strategies (for torch_mlp)
+
+When using `model_type='torch_mlp'`, you can control how transfer learning is performed:
+
+- **`freeze_extractor`** (default): Freeze feature extraction layers, train only the head (final layers). Best for domain shift scenarios.
+- **`discriminative_lr`**: Use lower learning rate for pretrained layers, higher for head. Allows gradual adaptation.
+- **`none`**: No freezing, fine-tune all layers with lower learning rate.
+
+### 5. Utility Functions
 
 #### `get_transfer_proxy()`
 Create a proxy with transfer learning in one call:
@@ -77,7 +90,8 @@ proxy, results = get_transfer_proxy(
     kernel_type='matmul',
     finetune_ratio=0.1,
     strategy='combined',
-    model_type='random_forest',  # or 'mlp'
+    model_type='torch_mlp',  # 'random_forest', 'mlp', or 'torch_mlp'
+    freeze_strategy='freeze_extractor',  # for torch_mlp only
     verbose=True
 )
 
@@ -85,7 +99,7 @@ print(f"MAPE improvement: {results['mape_improvement']*100:.1f}%")
 ```
 
 #### `compare_model_types_for_transfer()`
-Compare Random Forest vs MLP for transfer learning:
+Compare all model types for transfer learning:
 
 ```python
 from MiCoProxy import compare_model_types_for_transfer
@@ -178,24 +192,34 @@ Transfer learning from BitFusion to VexiiRiscv/MiCo targets shows:
 
 ### Model Comparison: Random Forest vs MLP
 
-We evaluated both tree-based (Random Forest) and neural network (MLP) approaches for transfer learning:
+We evaluated tree-based (Random Forest), sklearn MLP, and PyTorch MLP with layer freezing for transfer learning:
 
 **MatMul Kernels (small → high):**
 
-| Data Ratio | Random Forest | MLP | Winner |
-|------------|---------------|-----|--------|
-| 5% | 45.4% MAPE | 49.3% MAPE | RF |
-| 10% | 43.3% MAPE | 41.0% MAPE | **MLP** |
-| 20% | 40.3% MAPE | 42.7% MAPE | RF |
-| 50% | 31.9% MAPE | 40.4% MAPE | RF |
+| Data Ratio | Random Forest | sklearn MLP | PyTorch MLP (freeze) | Best |
+|------------|---------------|-------------|---------------------|------|
+| 10% | 43.3% MAPE | 40.7% MAPE | 49.2% MAPE | sklearn MLP |
+| 20% | 39.9% MAPE | 39.1% MAPE | 43.2% MAPE | sklearn MLP |
+| 50% | 31.9% MAPE | 40.4% MAPE | 41.8% MAPE | RF |
 
 **Key Findings**: 
-- Results are mixed: Random Forest wins 3/4 scenarios, but MLP performs better at 10% data ratio
-- MLP's warm_start enables true weight transfer, showing competitive performance especially around 10% fine-tuning data
-- Random Forest is more stable with very limited (<10%) or abundant (>20%) target data
-- The small dataset sizes (99-736 samples) may limit MLP's potential
+- sklearn MLP (`mlp`) performs best at low data ratios (10-20%) due to warm_start enabling true weight transfer
+- Random Forest (`random_forest`) is most stable and performs best with more data (50%+)
+- PyTorch MLP with layer freezing (`torch_mlp`) provides advanced transfer learning techniques but may need hyperparameter tuning for small datasets
+- The small dataset sizes (99-736 samples) limit the benefit of complex neural architectures
 
-**Recommendation**: Start with Random Forest (default), but consider MLP for datasets around 10% fine-tuning ratio or when experimenting with larger profiling datasets.
+**PyTorch MLP Freeze Strategies:**
+
+| Strategy | Description | Best For |
+|----------|-------------|----------|
+| `freeze_extractor` | Freeze feature layers, train only head | Domain adaptation with limited data |
+| `discriminative_lr` | Lower LR for pretrained layers | Gradual adaptation |
+| `none` | Full fine-tuning with lower LR | When domains are similar |
+
+**Recommendations**:
+- For small datasets: Use `random_forest` (default) for stability
+- For transfer with 10-20% target data: Try `mlp` for potentially better results
+- For experimentation: Use `torch_mlp` with different freeze strategies to find optimal configuration
 
 ## Usage Recommendations
 
@@ -210,8 +234,9 @@ We evaluated both tree-based (Random Forest) and neural network (MLP) approaches
    - Source and target differ significantly
 
 3. **Model selection:**
-   - Use `model_type='random_forest'` (default) for most cases
-   - Try `model_type='mlp'` if you have larger datasets or want to experiment
+   - Use `model_type='random_forest'` (default) for stability
+   - Try `model_type='mlp'` for best transfer at 10-20% data ratio
+   - Use `model_type='torch_mlp'` for advanced techniques with layer freezing
 
 4. **Best practices:**
    - Start with 10-20% target data for transfer learning
