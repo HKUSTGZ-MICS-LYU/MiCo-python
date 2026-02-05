@@ -116,7 +116,12 @@ def run_baseline_comparison(kernel_type='matmul', verbose=True):
 
 def plot_transfer_learning_results(ratios, results, kernel_type, output_dir='output/figs'):
     """Plot transfer learning results comparing with baseline."""
-    os.makedirs(output_dir, exist_ok=True)
+    try:
+        os.makedirs(output_dir, exist_ok=True)
+    except OSError as e:
+        print(f"Warning: Could not create output directory {output_dir}: {e}")
+        output_dir = '/tmp/mico_figs'
+        os.makedirs(output_dir, exist_ok=True)
     
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     

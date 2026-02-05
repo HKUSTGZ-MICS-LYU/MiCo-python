@@ -169,7 +169,8 @@ class MiCoProxy:
             self.model.fit(X_combined, y_combined)
         elif strategy == 'weighted':
             # Weight target samples more heavily by oversampling
-            weight_factor = max(1, len(self._source_x) // max(1, len(X_target_processed)))
+            target_size = max(1, len(X_target_processed))
+            weight_factor = max(1, len(self._source_x) // target_size)
             X_target_weighted = np.tile(X_target_processed, (weight_factor, 1))
             y_target_weighted = np.tile(y_target_subset, weight_factor)
             X_combined = np.vstack([self._source_x, X_target_weighted])

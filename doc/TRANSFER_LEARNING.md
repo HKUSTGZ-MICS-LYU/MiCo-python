@@ -118,7 +118,7 @@ Transfer learning between `mico_small` and `mico_high` for matmul kernels shows:
 |-------------------|----------------------|--------------|---------|
 | 5%                | 45.2% MAPE           | 645% MAPE    | **93% better** |
 | 10%               | 43.5% MAPE           | 72.6% MAPE   | 40% better |
-| 20%               | 39.9% MAPE           | 19.1% MAPE   | Transfer outperformed |
+| 20%               | 39.9% MAPE           | 19.1% MAPE   | Scratch better |
 | 100%              | 21.2% MAPE           | 3.2% MAPE    | Full data works best |
 
 **Key Finding**: With very limited target data (5-10%), transfer learning dramatically outperforms training from scratch.
