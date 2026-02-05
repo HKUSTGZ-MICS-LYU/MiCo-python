@@ -45,7 +45,25 @@ Three fine-tuning strategies are available:
 - **`target_only`**: Retrains only on target data. Useful as a baseline comparison.
 - **`weighted`**: Weights target samples higher by oversampling. Useful when target domain differs significantly.
 
-### 3. Utility Functions
+### 3. Model Types
+
+Two model types are available for transfer learning:
+
+- **`random_forest`** (default): LogRandomForestRegressor - Tree-based ensemble. Generally performs better for this task due to small dataset sizes and well-engineered features.
+- **`mlp`**: LogMLPRegressor - Neural network with warm_start for true weight transfer. May work better with larger datasets or when features need to be learned.
+
+```python
+# Use MLP for transfer learning
+proxy, results = get_transfer_proxy(
+    source_type='mico_small',
+    target_type='mico_high',
+    kernel_type='matmul',
+    finetune_ratio=0.1,
+    model_type='mlp'  # or 'random_forest' (default)
+)
+```
+
+### 4. Utility Functions
 
 #### `get_transfer_proxy()`
 Create a proxy with transfer learning in one call:
@@ -59,10 +77,27 @@ proxy, results = get_transfer_proxy(
     kernel_type='matmul',
     finetune_ratio=0.1,
     strategy='combined',
+    model_type='random_forest',  # or 'mlp'
     verbose=True
 )
 
 print(f"MAPE improvement: {results['mape_improvement']*100:.1f}%")
+```
+
+#### `compare_model_types_for_transfer()`
+Compare Random Forest vs MLP for transfer learning:
+
+```python
+from MiCoProxy import compare_model_types_for_transfer
+
+results = compare_model_types_for_transfer(
+    source_type='mico_small',
+    target_type='mico_high',
+    kernel_type='matmul',
+    finetune_ratios=[0.05, 0.1, 0.2, 0.5],
+    n_trials=3
+)
+# Returns comparison metrics for both model types
 ```
 
 #### `compare_transfer_directions()`
@@ -141,6 +176,27 @@ Transfer learning from BitFusion to VexiiRiscv/MiCo targets shows:
 - More target data leads to better adaptation
 - Cross-architecture transfer is feasible but requires more target data
 
+### Model Comparison: Random Forest vs MLP
+
+We evaluated both tree-based (Random Forest) and neural network (MLP) approaches for transfer learning:
+
+**MatMul Kernels (small → high):**
+
+| Data Ratio | Random Forest | MLP | Winner |
+|------------|---------------|-----|--------|
+| 5% | 45.4% MAPE | 49.3% MAPE | RF |
+| 10% | 43.3% MAPE | 41.0% MAPE | **MLP** |
+| 20% | 40.3% MAPE | 42.7% MAPE | RF |
+| 50% | 31.9% MAPE | 40.4% MAPE | RF |
+
+**Key Findings**: 
+- Results are mixed: Random Forest wins 3/4 scenarios, but MLP performs better at 10% data ratio
+- MLP's warm_start enables true weight transfer, showing competitive performance especially around 10% fine-tuning data
+- Random Forest is more stable with very limited (<10%) or abundant (>20%) target data
+- The small dataset sizes (99-736 samples) may limit MLP's potential
+
+**Recommendation**: Start with Random Forest (default), but consider MLP for datasets around 10% fine-tuning ratio or when experimenting with larger profiling datasets.
+
 ## Usage Recommendations
 
 1. **Use transfer learning when:**
@@ -153,7 +209,11 @@ Transfer learning from BitFusion to VexiiRiscv/MiCo targets shows:
    - Maximum accuracy is required
    - Source and target differ significantly
 
-3. **Best practices:**
+3. **Model selection:**
+   - Use `model_type='random_forest'` (default) for most cases
+   - Try `model_type='mlp'` if you have larger datasets or want to experiment
+
+4. **Best practices:**
    - Start with 10-20% target data for transfer learning
    - Use `combined` strategy as default
    - Validate on held-out target data when possible

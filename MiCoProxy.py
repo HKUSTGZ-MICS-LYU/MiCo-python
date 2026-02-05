@@ -3,6 +3,8 @@ import numpy as np
 
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.neural_network import MLPRegressor
+from sklearn.preprocessing import StandardScaler
 from xgboost import XGBRegressor
 
 from sklearn.model_selection import train_test_split, KFold
@@ -36,6 +38,52 @@ class LogRandomForestRegressor:
         self.model.fit(X, np.log1p(y))
     def predict(self, X):
         y_pred_log = self.model.predict(X)
+        return np.expm1(y_pred_log)
+
+class LogMLPRegressor:
+    """
+    MLP-based regressor with log transformation for latency prediction.
+    
+    This class wraps sklearn's MLPRegressor with feature scaling and log
+    transformation of target values. MLPs support true transfer learning
+    via warm_start, allowing the model to continue training from pretrained
+    weights when fine-tuning on new data.
+    """
+    def __init__(self, hidden_layer_sizes=(128, 64), max_iter=2000, 
+                 learning_rate_init=0.001, early_stopping=False, 
+                 validation_fraction=0.1, warm_start=True, random_state=None, **kwargs):
+        self.model = MLPRegressor(
+            hidden_layer_sizes=hidden_layer_sizes,
+            max_iter=max_iter,
+            learning_rate_init=learning_rate_init,
+            early_stopping=early_stopping,
+            validation_fraction=validation_fraction,
+            warm_start=warm_start,  # Enable true transfer learning
+            random_state=random_state,
+            **kwargs
+        )
+        self.scaler = StandardScaler()
+        self._is_fitted = False
+    
+    def fit(self, X, y):
+        # Scale features for better MLP training
+        if not self._is_fitted:
+            # First fit: learn the scaler
+            X_scaled = self.scaler.fit_transform(X)
+        else:
+            # Subsequent fits (fine-tuning): use existing scaler
+            X_scaled = self.scaler.transform(X)
+        self.model.fit(X_scaled, np.log1p(y))
+        self._is_fitted = True
+    
+    def finetune(self, X, y):
+        """Continue training on new data (leverages warm_start)."""
+        # With warm_start=True, calling fit() continues from previous weights
+        return self.fit(X, y)
+    
+    def predict(self, X):
+        X_scaled = self.scaler.transform(X)
+        y_pred_log = self.model.predict(X_scaled)
         return np.expm1(y_pred_log)
 
 class MiCoProxy:
@@ -394,6 +442,7 @@ def load_proxy_data(profile_dataset: str, kernel_type: str = 'matmul'):
 def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'matmul',
                        finetune_ratio: float = 0.1, strategy: str = 'combined',
                        preprocess: str = 'cbops+', seed: int = 42,
+                       model_type: str = 'random_forest',
                        verbose: bool = True):
     """
     Create a proxy model using transfer learning from source to target domain.
@@ -409,6 +458,9 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
         strategy: Fine-tuning strategy ('combined', 'target_only', 'weighted')
         preprocess: Feature preprocessing method
         seed: Random seed for reproducibility
+        model_type: Type of model to use ('random_forest' or 'mlp')
+            - 'random_forest': LogRandomForestRegressor (default, good for single-domain)
+            - 'mlp': LogMLPRegressor (neural network, better for transfer learning)
         verbose: Whether to print progress information
     
     Returns:
@@ -416,12 +468,13 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
                results contains evaluation metrics
     
     Example:
-        >>> # Transfer from mico_small to mico_high with 10% target data
+        >>> # Transfer from mico_small to mico_high with 10% target data using MLP
         >>> proxy, results = get_transfer_proxy(
         ...     source_type='mico_small',
         ...     target_type='mico_high', 
         ...     kernel_type='matmul',
-        ...     finetune_ratio=0.1
+        ...     finetune_ratio=0.1,
+        ...     model_type='mlp'
         ... )
     """
     # Determine file paths based on source/target types
@@ -442,6 +495,7 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
     if verbose:
         print(f"\n{'='*80}")
         print(f"Transfer Learning: {source_type} -> {target_type} ({kernel_type})")
+        print(f"Model type: {model_type}")
         print(f"{'='*80}")
     
     # Load source and target data
@@ -452,10 +506,17 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
         print(f"Source data: {len(X_source)} samples from {source_path}")
         print(f"Target data: {len(X_target)} samples from {target_path}")
     
-    # Create and pretrain proxy on source domain
-    model = LogRandomForestRegressor(random_state=seed)
+    # Create model based on model_type
+    if model_type == 'random_forest':
+        model = LogRandomForestRegressor(random_state=seed)
+    elif model_type == 'mlp':
+        model = LogMLPRegressor(random_state=seed, hidden_layer_sizes=(64, 32))
+    else:
+        raise ValueError(f"Unknown model_type: {model_type}. Use 'random_forest' or 'mlp'.")
+    
     proxy = MiCoProxy(model, preprocess=preprocess, seed=seed)
     proxy._source_domain = source_type
+    proxy._model_type = model_type
     
     if verbose:
         print(f"\nPretraining on {source_type}...")
@@ -490,6 +551,7 @@ def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'm
         'source_type': source_type,
         'target_type': target_type,
         'kernel_type': kernel_type,
+        'model_type': model_type,
         'finetune_ratio': finetune_ratio,
         'strategy': strategy,
         'target_samples_used': finetune_results['target_samples_used'],
@@ -710,6 +772,128 @@ def explore_cross_target_transfer(source_type: str = 'bitfusion',
                       f"(improvement: {transfer_result['mape_improvement']*100:.1f}%)")
         
         results['targets'][target] = target_results
+    
+    return results
+
+
+def compare_model_types_for_transfer(source_type: str = 'mico_small',
+                                      target_type: str = 'mico_high',
+                                      kernel_type: str = 'matmul',
+                                      finetune_ratios: list = None,
+                                      n_trials: int = 3,
+                                      seed: int = 42,
+                                      verbose: bool = True):
+    """
+    Compare Random Forest vs MLP for transfer learning effectiveness.
+    
+    This function runs experiments comparing tree-based models (Random Forest)
+    against neural networks (MLP) for transfer learning. MLPs are generally
+    better suited for transfer learning as their learned weights can be
+    incrementally fine-tuned.
+    
+    Args:
+        source_type: Source domain identifier
+        target_type: Target domain identifier
+        kernel_type: Kernel type ('matmul' or 'conv2d')
+        finetune_ratios: List of fine-tuning ratios to test
+        n_trials: Number of trials for averaging
+        seed: Base random seed
+        verbose: Whether to print results
+    
+    Returns:
+        dict: Comparison results for both model types
+    """
+    if finetune_ratios is None:
+        finetune_ratios = [0.05, 0.1, 0.2, 0.3, 0.5]
+    
+    model_types = ['random_forest', 'mlp']
+    
+    results = {
+        'source_type': source_type,
+        'target_type': target_type,
+        'kernel_type': kernel_type,
+        'comparisons': {model_type: [] for model_type in model_types}
+    }
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print(f"MODEL COMPARISON: Random Forest vs MLP for Transfer Learning")
+        print(f"Transfer: {source_type} -> {target_type} ({kernel_type})")
+        print(f"{'='*80}")
+    
+    for ratio in finetune_ratios:
+        if verbose:
+            print(f"\nFine-tune ratio: {ratio*100:.0f}%")
+        
+        for model_type in model_types:
+            trial_mapes_before = []
+            trial_mapes_after = []
+            trial_improvements = []
+            
+            for trial in range(n_trials):
+                trial_seed = seed + trial
+                _, result = get_transfer_proxy(
+                    source_type=source_type,
+                    target_type=target_type,
+                    kernel_type=kernel_type,
+                    finetune_ratio=ratio,
+                    model_type=model_type,
+                    seed=trial_seed,
+                    verbose=False
+                )
+                trial_mapes_before.append(result['mape_before'])
+                trial_mapes_after.append(result['mape_after'])
+                trial_improvements.append(result['mape_improvement'])
+            
+            mean_mape_before = np.mean(trial_mapes_before)
+            mean_mape_after = np.mean(trial_mapes_after)
+            std_mape_after = np.std(trial_mapes_after)
+            mean_improvement = np.mean(trial_improvements)
+            
+            results['comparisons'][model_type].append({
+                'ratio': ratio,
+                'mape_before': mean_mape_before,
+                'mape_after': mean_mape_after,
+                'std_mape_after': std_mape_after,
+                'improvement': mean_improvement
+            })
+            
+            if verbose:
+                print(f"  {model_type:15s}: MAPE={mean_mape_after*100:6.2f}% ± {std_mape_after*100:4.2f}% "
+                      f"(improvement: {mean_improvement*100:5.1f}%)")
+    
+    # Summary
+    if verbose:
+        print(f"\n{'='*80}")
+        print("SUMMARY: Which model is better for transfer learning?")
+        print(f"{'='*80}")
+        
+        rf_best_count = 0
+        mlp_best_count = 0
+        
+        for i, ratio in enumerate(finetune_ratios):
+            rf_mape = results['comparisons']['random_forest'][i]['mape_after']
+            mlp_mape = results['comparisons']['mlp'][i]['mape_after']
+            
+            if mlp_mape < rf_mape:
+                mlp_best_count += 1
+                winner = "MLP"
+            else:
+                rf_best_count += 1
+                winner = "RF"
+            
+            diff = abs(rf_mape - mlp_mape) * 100
+            print(f"  Ratio {ratio*100:3.0f}%: {winner} wins by {diff:.2f}% MAPE")
+        
+        print(f"\nOverall: MLP wins {mlp_best_count}/{len(finetune_ratios)}, "
+              f"RF wins {rf_best_count}/{len(finetune_ratios)}")
+        
+        if mlp_best_count > rf_best_count:
+            print("Recommendation: Use MLP (model_type='mlp') for better transfer learning.")
+        elif rf_best_count > mlp_best_count:
+            print("Recommendation: Use Random Forest (model_type='random_forest').")
+        else:
+            print("Recommendation: Both models perform similarly.")
     
     return results
 

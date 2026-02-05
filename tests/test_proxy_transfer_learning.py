@@ -344,5 +344,59 @@ class TestExploreCrossTargetTransfer(unittest.TestCase):
         self.assertIn('mico_small', results['targets'])
 
 
+class TestMLPModelType(unittest.TestCase):
+    """Test the MLP model type for transfer learning."""
+    
+    def test_mlp_transfer(self):
+        """Test transfer learning with MLP model."""
+        proxy, results = get_transfer_proxy(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratio=0.1,
+            model_type='mlp',
+            verbose=False
+        )
+        
+        self.assertIsNotNone(proxy)
+        self.assertEqual(results['model_type'], 'mlp')
+        self.assertGreater(results['mape_after'], 0)
+    
+    def test_invalid_model_type(self):
+        """Test that invalid model type raises error."""
+        with self.assertRaises(ValueError):
+            get_transfer_proxy(
+                source_type='mico_small',
+                target_type='mico_high',
+                kernel_type='matmul',
+                finetune_ratio=0.1,
+                model_type='invalid_model',
+                verbose=False
+            )
+
+
+class TestCompareModelTypes(unittest.TestCase):
+    """Test the compare_model_types_for_transfer function."""
+    
+    def test_model_comparison(self):
+        """Test comparing RF vs MLP for transfer learning."""
+        from MiCoProxy import compare_model_types_for_transfer
+        
+        results = compare_model_types_for_transfer(
+            source_type='mico_small',
+            target_type='mico_high',
+            kernel_type='matmul',
+            finetune_ratios=[0.1],
+            n_trials=1,
+            verbose=False
+        )
+        
+        self.assertIn('comparisons', results)
+        self.assertIn('random_forest', results['comparisons'])
+        self.assertIn('mlp', results['comparisons'])
+        self.assertEqual(len(results['comparisons']['random_forest']), 1)
+        self.assertEqual(len(results['comparisons']['mlp']), 1)
+
+
 if __name__ == "__main__":
     unittest.main()
