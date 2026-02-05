@@ -46,6 +46,7 @@ class MiCoProxy:
         self.train_ratio = train_ratio
         self.train_x = train_x
         self.train_y = train_y
+        self.preprocess_name = preprocess
         self.preprocess_dict = {
             "raw": self._get_raw_features,
             "bops": self._get_bops_features,
@@ -54,6 +55,9 @@ class MiCoProxy:
             "cbops+": self._get_cbops_plus_features
         }
         self.preprocess = self.preprocess_dict[preprocess]
+        # Transfer learning state
+        self._is_pretrained = False
+        self._source_domain = None
         
     def _get_raw_features(self, X):
         return X
@@ -103,6 +107,86 @@ class MiCoProxy:
     def predict(self, X):
         X = self.preprocess(X)
         return self.model.predict(X)
+    
+    def pretrain(self, X_source, y_source):
+        """
+        Pretrain the model on source domain data for transfer learning.
+        
+        This method trains the base model on source domain data, which can
+        later be fine-tuned on target domain data using the finetune() method.
+        
+        Args:
+            X_source: Source domain features (e.g., mico_small data)
+            y_source: Source domain labels (latency values)
+        """
+        X_source = self.preprocess(X_source)
+        self.model.fit(X_source, y_source)
+        self._is_pretrained = True
+        self._source_x = X_source
+        self._source_y = y_source
+    
+    def finetune(self, X_target, y_target, finetune_ratio=1.0, strategy='combined'):
+        """
+        Fine-tune a pretrained model on target domain data.
+        
+        This enables transfer learning by leveraging knowledge from the source
+        domain while adapting to the target domain with limited data.
+        
+        Args:
+            X_target: Target domain features (e.g., mico_high data)
+            y_target: Target domain labels (latency values)
+            finetune_ratio: Ratio of target data to use (0.0 to 1.0)
+            strategy: Fine-tuning strategy:
+                - 'combined': Combine source and target data for retraining
+                - 'target_only': Retrain only on target data (baseline)
+                - 'weighted': Weight target samples higher than source
+        
+        Returns:
+            dict: Fine-tuning results with metrics
+        """
+        if not self._is_pretrained and strategy != 'target_only':
+            raise ValueError("Model must be pretrained before fine-tuning. "
+                           "Call pretrain() first or use strategy='target_only'.")
+        
+        # Apply finetune_ratio to select subset of target data
+        np.random.seed(self.seed)
+        total = len(X_target)
+        subset_size = max(1, int(total * finetune_ratio))
+        indices = np.random.choice(total, subset_size, replace=False)
+        X_target_subset = X_target[indices]
+        y_target_subset = y_target[indices]
+        
+        # Preprocess target data
+        X_target_processed = self.preprocess(X_target_subset)
+        
+        if strategy == 'target_only':
+            # Retrain only on target data (baseline for comparison)
+            self.model.fit(X_target_processed, y_target_subset)
+        elif strategy == 'combined':
+            # Combine source and target data
+            X_combined = np.vstack([self._source_x, X_target_processed])
+            y_combined = np.concatenate([self._source_y, y_target_subset])
+            self.model.fit(X_combined, y_combined)
+        elif strategy == 'weighted':
+            # Weight target samples more heavily by oversampling
+            weight_factor = max(1, len(self._source_x) // max(1, len(X_target_processed)))
+            X_target_weighted = np.tile(X_target_processed, (weight_factor, 1))
+            y_target_weighted = np.tile(y_target_subset, weight_factor)
+            X_combined = np.vstack([self._source_x, X_target_weighted])
+            y_combined = np.concatenate([self._source_y, y_target_weighted])
+            self.model.fit(X_combined, y_combined)
+        else:
+            raise ValueError(f"Unknown fine-tuning strategy: {strategy}")
+        
+        return {
+            'finetune_ratio': finetune_ratio,
+            'target_samples_used': subset_size,
+            'strategy': strategy
+        }
+    
+    def is_pretrained(self):
+        """Check if model has been pretrained for transfer learning."""
+        return self._is_pretrained
 
 def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     # Load Dataset
@@ -254,6 +338,380 @@ def get_host_conv2d_proxy(opt="opt"):
         f'benchmark_results/host_{opt}_conv2d_zoo.csv',
         'conv2d'
     )
+
+# ============================================================================
+# Transfer Learning Functions for MiCoProxy
+# ============================================================================
+
+def load_proxy_data(profile_dataset: str, kernel_type: str = 'matmul'):
+    """
+    Load and preprocess proxy training data from a CSV file.
+    
+    Args:
+        profile_dataset: Path to the CSV file containing profiling data
+        kernel_type: Type of kernel ('matmul' or 'conv2d')
+    
+    Returns:
+        tuple: (X, y) where X is feature matrix and y is latency values
+    """
+    with open(profile_dataset, 'r') as f:
+        csv_data = csv.reader(f)
+        data = []
+        next(csv_data)  # skip header
+        for row in csv_data:
+            data.append(list(map(int, row)))
+    data = np.array(data)
+    
+    if kernel_type == 'matmul':
+        N = data[:, 0]
+        M = data[:, 1]
+        K = data[:, 2]
+        QA = data[:, 3]
+        QW = data[:, 4]
+        latency = data[:, -1]
+        MACS = N * M * K
+        if 'bitfusion' in profile_dataset:
+            MACS = MACS / 16
+        RAW = (MACS, M, K, QA, QW)
+    elif kernel_type == 'conv2d':
+        H, W, C, K, Ks, S = data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4], data[:, 5]
+        QA = data[:, 6]
+        QW = data[:, 7]
+        latency = data[:, -1]
+        H_out = (H - Ks) / S + 1
+        W_out = (W - Ks) / S + 1
+        MACS = H_out * W_out * C * K * Ks * Ks
+        RAW = (MACS, H, W, C, K, Ks, S, QA, QW)
+    else:
+        raise ValueError(f"Unknown kernel_type: {kernel_type}")
+    
+    y = latency
+    X = np.column_stack(RAW)
+    return X, y
+
+
+def get_transfer_proxy(source_type: str, target_type: str, kernel_type: str = 'matmul',
+                       finetune_ratio: float = 0.1, strategy: str = 'combined',
+                       preprocess: str = 'cbops+', seed: int = 42,
+                       verbose: bool = True):
+    """
+    Create a proxy model using transfer learning from source to target domain.
+    
+    This function enables training a proxy on one hardware target (e.g., mico_small)
+    and fine-tuning it on another target (e.g., mico_high) with limited data.
+    
+    Args:
+        source_type: Source domain identifier (e.g., 'mico_small', 'mico_high', 'bitfusion')
+        target_type: Target domain identifier (e.g., 'mico_small', 'mico_high')
+        kernel_type: Type of kernel ('matmul' or 'conv2d')
+        finetune_ratio: Ratio of target data to use for fine-tuning (0.0 to 1.0)
+        strategy: Fine-tuning strategy ('combined', 'target_only', 'weighted')
+        preprocess: Feature preprocessing method
+        seed: Random seed for reproducibility
+        verbose: Whether to print progress information
+    
+    Returns:
+        tuple: (proxy, results) where proxy is the fine-tuned model and 
+               results contains evaluation metrics
+    
+    Example:
+        >>> # Transfer from mico_small to mico_high with 10% target data
+        >>> proxy, results = get_transfer_proxy(
+        ...     source_type='mico_small',
+        ...     target_type='mico_high', 
+        ...     kernel_type='matmul',
+        ...     finetune_ratio=0.1
+        ... )
+    """
+    # Determine file paths based on source/target types
+    def get_filepath(domain_type, kernel):
+        if domain_type == 'bitfusion':
+            return f'benchmark_results/bitfusion_{kernel}_zoo.csv'
+        elif domain_type.startswith('mico_'):
+            return f'benchmark_results/{domain_type}_{kernel}_zoo.csv'
+        elif domain_type.startswith('host_'):
+            return f'benchmark_results/{domain_type}_{kernel}_zoo.csv'
+        else:
+            # Assume it's a mico type (small, high, etc.)
+            return f'benchmark_results/mico_{domain_type}_{kernel}_zoo.csv'
+    
+    source_path = get_filepath(source_type, kernel_type)
+    target_path = get_filepath(target_type, kernel_type)
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print(f"Transfer Learning: {source_type} -> {target_type} ({kernel_type})")
+        print(f"{'='*80}")
+    
+    # Load source and target data
+    X_source, y_source = load_proxy_data(source_path, kernel_type)
+    X_target, y_target = load_proxy_data(target_path, kernel_type)
+    
+    if verbose:
+        print(f"Source data: {len(X_source)} samples from {source_path}")
+        print(f"Target data: {len(X_target)} samples from {target_path}")
+    
+    # Create and pretrain proxy on source domain
+    model = LogRandomForestRegressor(random_state=seed)
+    proxy = MiCoProxy(model, preprocess=preprocess, seed=seed)
+    proxy._source_domain = source_type
+    
+    if verbose:
+        print(f"\nPretraining on {source_type}...")
+    proxy.pretrain(X_source, y_source)
+    
+    # Evaluate pretrained model on target domain (before fine-tuning)
+    y_pred_before = proxy.predict(X_target)
+    mape_before = mean_absolute_percentage_error(y_target, y_pred_before)
+    r2_before = r2_score(y_target, y_pred_before)
+    
+    if verbose:
+        print(f"Before fine-tuning - MAPE: {mape_before*100:.2f}%, R2: {r2_before:.4f}")
+    
+    # Fine-tune on target domain
+    if verbose:
+        print(f"\nFine-tuning on {target_type} with {finetune_ratio*100:.1f}% data...")
+    finetune_results = proxy.finetune(X_target, y_target, finetune_ratio, strategy)
+    
+    # Evaluate after fine-tuning
+    y_pred_after = proxy.predict(X_target)
+    mape_after = mean_absolute_percentage_error(y_target, y_pred_after)
+    r2_after = r2_score(y_target, y_pred_after)
+    mae_after = mean_absolute_error(y_target, y_pred_after)
+    
+    if verbose:
+        print(f"After fine-tuning  - MAPE: {mape_after*100:.2f}%, R2: {r2_after:.4f}")
+        improvement = (mape_before - mape_after) / mape_before * 100 if mape_before > 0 else 0
+        print(f"MAPE Improvement: {improvement:.1f}%")
+        print(f"{'='*80}")
+    
+    results = {
+        'source_type': source_type,
+        'target_type': target_type,
+        'kernel_type': kernel_type,
+        'finetune_ratio': finetune_ratio,
+        'strategy': strategy,
+        'target_samples_used': finetune_results['target_samples_used'],
+        'mape_before': mape_before,
+        'r2_before': r2_before,
+        'mape_after': mape_after,
+        'r2_after': r2_after,
+        'mae_after': mae_after,
+        'mape_improvement': (mape_before - mape_after) / mape_before if mape_before > 0 else 0
+    }
+    
+    return proxy, results
+
+
+def evaluate_transfer_learning(source_type: str, target_type: str, 
+                               kernel_type: str = 'matmul',
+                               ratios: list = None,
+                               strategies: list = None,
+                               n_trials: int = 5,
+                               seed: int = 42,
+                               verbose: bool = True):
+    """
+    Systematically evaluate transfer learning across different data ratios and strategies.
+    
+    This function runs experiments to understand:
+    1. How much target data is needed for accurate prediction
+    2. Which fine-tuning strategy works best
+    3. The effectiveness of transfer learning vs training from scratch
+    
+    Args:
+        source_type: Source domain identifier
+        target_type: Target domain identifier
+        kernel_type: Type of kernel ('matmul' or 'conv2d')
+        ratios: List of fine-tuning ratios to test (default: [0.05, 0.1, 0.2, 0.3, 0.5, 1.0])
+        strategies: List of strategies to test (default: ['combined', 'target_only', 'weighted'])
+        n_trials: Number of trials with different random seeds
+        seed: Base random seed
+        verbose: Whether to print progress
+    
+    Returns:
+        dict: Results containing metrics for each ratio/strategy combination
+    """
+    if ratios is None:
+        ratios = [0.05, 0.1, 0.2, 0.3, 0.5, 1.0]
+    if strategies is None:
+        strategies = ['combined', 'target_only', 'weighted']
+    
+    results = {
+        'source_type': source_type,
+        'target_type': target_type,
+        'kernel_type': kernel_type,
+        'experiments': []
+    }
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print(f"Transfer Learning Evaluation: {source_type} -> {target_type} ({kernel_type})")
+        print(f"Ratios: {ratios}")
+        print(f"Strategies: {strategies}")
+        print(f"Trials per combination: {n_trials}")
+        print(f"{'='*80}")
+    
+    for strategy in strategies:
+        for ratio in ratios:
+            trial_mapes = []
+            trial_r2s = []
+            
+            for trial in range(n_trials):
+                trial_seed = seed + trial
+                _, trial_results = get_transfer_proxy(
+                    source_type=source_type,
+                    target_type=target_type,
+                    kernel_type=kernel_type,
+                    finetune_ratio=ratio,
+                    strategy=strategy,
+                    seed=trial_seed,
+                    verbose=False
+                )
+                trial_mapes.append(trial_results['mape_after'])
+                trial_r2s.append(trial_results['r2_after'])
+            
+            exp_result = {
+                'strategy': strategy,
+                'ratio': ratio,
+                'mean_mape': np.mean(trial_mapes),
+                'std_mape': np.std(trial_mapes),
+                'mean_r2': np.mean(trial_r2s),
+                'std_r2': np.std(trial_r2s)
+            }
+            results['experiments'].append(exp_result)
+            
+            if verbose:
+                print(f"  [{strategy:12s}] ratio={ratio:.2f}: "
+                      f"MAPE={exp_result['mean_mape']*100:6.2f}% ± {exp_result['std_mape']*100:4.2f}%, "
+                      f"R2={exp_result['mean_r2']:.4f}")
+    
+    return results
+
+
+def compare_transfer_directions(kernel_type: str = 'matmul',
+                                finetune_ratio: float = 0.1,
+                                seed: int = 42,
+                                verbose: bool = True):
+    """
+    Compare transfer learning in both directions between mico_small and mico_high.
+    
+    This function investigates whether transfer learning is symmetric or if
+    one direction is more effective than the other.
+    
+    Args:
+        kernel_type: Type of kernel ('matmul' or 'conv2d')
+        finetune_ratio: Ratio of target data to use
+        seed: Random seed
+        verbose: Whether to print results
+    
+    Returns:
+        dict: Comparison results for both directions
+    """
+    results = {
+        'kernel_type': kernel_type,
+        'finetune_ratio': finetune_ratio,
+        'directions': {}
+    }
+    
+    # small -> high
+    _, small_to_high = get_transfer_proxy(
+        source_type='mico_small',
+        target_type='mico_high',
+        kernel_type=kernel_type,
+        finetune_ratio=finetune_ratio,
+        seed=seed,
+        verbose=verbose
+    )
+    results['directions']['small_to_high'] = small_to_high
+    
+    # high -> small
+    _, high_to_small = get_transfer_proxy(
+        source_type='mico_high',
+        target_type='mico_small',
+        kernel_type=kernel_type,
+        finetune_ratio=finetune_ratio,
+        seed=seed,
+        verbose=verbose
+    )
+    results['directions']['high_to_small'] = high_to_small
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print("TRANSFER DIRECTION COMPARISON")
+        print(f"{'='*80}")
+        print(f"small->high: MAPE={small_to_high['mape_after']*100:.2f}%, Improvement={small_to_high['mape_improvement']*100:.1f}%")
+        print(f"high->small: MAPE={high_to_small['mape_after']*100:.2f}%, Improvement={high_to_small['mape_improvement']*100:.1f}%")
+    
+    return results
+
+
+def explore_cross_target_transfer(source_type: str = 'bitfusion',
+                                  target_types: list = None,
+                                  kernel_type: str = 'matmul',
+                                  finetune_ratios: list = None,
+                                  seed: int = 42,
+                                  verbose: bool = True):
+    """
+    Explore transfer learning from one hardware target to another.
+    
+    This is useful for investigating whether knowledge from one accelerator
+    (e.g., BitFusion) can be transferred to another (e.g., VexiiRiscv/MiCo).
+    
+    Args:
+        source_type: Source hardware type
+        target_types: List of target types to evaluate
+        kernel_type: Kernel type
+        finetune_ratios: Ratios to test
+        seed: Random seed
+        verbose: Whether to print results
+    
+    Returns:
+        dict: Cross-target transfer results
+    """
+    if target_types is None:
+        target_types = ['mico_small', 'mico_high']
+    if finetune_ratios is None:
+        finetune_ratios = [0.05, 0.1, 0.2, 0.5]
+    
+    results = {
+        'source_type': source_type,
+        'kernel_type': kernel_type,
+        'targets': {}
+    }
+    
+    if verbose:
+        print(f"\n{'='*80}")
+        print(f"Cross-Target Transfer: {source_type} -> Multiple Targets ({kernel_type})")
+        print(f"{'='*80}")
+    
+    for target in target_types:
+        target_results = []
+        
+        for ratio in finetune_ratios:
+            _, transfer_result = get_transfer_proxy(
+                source_type=source_type,
+                target_type=target,
+                kernel_type=kernel_type,
+                finetune_ratio=ratio,
+                seed=seed,
+                verbose=False
+            )
+            target_results.append({
+                'ratio': ratio,
+                'mape_before': transfer_result['mape_before'],
+                'mape_after': transfer_result['mape_after'],
+                'improvement': transfer_result['mape_improvement']
+            })
+            
+            if verbose:
+                print(f"  {source_type} -> {target} (ratio={ratio:.2f}): "
+                      f"MAPE={transfer_result['mape_after']*100:.2f}% "
+                      f"(improvement: {transfer_result['mape_improvement']*100:.1f}%)")
+        
+        results['targets'][target] = target_results
+    
+    return results
+
 
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
