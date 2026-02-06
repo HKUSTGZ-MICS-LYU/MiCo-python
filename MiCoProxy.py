@@ -161,15 +161,7 @@ class TwoStageProxy(MiCoProxy):
         if train_ratio is not None:
             self.train_ratio = train_ratio
         
-        # Apply train_ratio using parent's logic
-        if self.train_ratio < 1.0:
-            total = len(X)
-            subset_size = int(total * self.train_ratio)
-            np.random.seed(self.seed)
-            indices = np.random.choice(total, subset_size, replace=False)
-            X = X[indices]
-            y = y[indices]
-        
+
         # Separate INT8 and non-INT8 data
         # Last two columns are QA and QW
         int8_mask = (X[:, -2] == 8) & (X[:, -1] == 8)
@@ -179,6 +171,17 @@ class TwoStageProxy(MiCoProxy):
         
         X_other = X[~int8_mask]
         y_other = y[~int8_mask]
+        def split_train_ratio(X, y, train_ratio):
+            if train_ratio < 1.0:
+                total = len(X)
+                subset_size = int(total * train_ratio)
+                np.random.seed(self.seed)
+                indices = np.random.choice(total, subset_size, replace=False)
+                return X[indices], y[indices]
+            return X, y
+        
+        X_int8, y_int8 = split_train_ratio(X_int8, y_int8, self.train_ratio)
+        X_other, y_other = split_train_ratio(X_other, y_other, self.train_ratio)
         
         # Stage 1: Train base model on INT8 data
         X_base = self.base_preprocess(X_int8)
@@ -520,10 +523,10 @@ def get_host_conv2d_proxy(opt="opt", two_stage=True):
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
     # print("\n" + "="*80)
-    # print("BITFUSION PROXY TUNING")
-    # print("="*80)
-    # matmul_proxy = get_bitfusion_matmul_proxy()
-    # conv2d_proxy = get_bitfusion_conv2d_proxy()
+    print("BITFUSION PROXY TUNING")
+    print("="*80)
+    matmul_proxy = get_bitfusion_matmul_proxy()
+    conv2d_proxy = get_bitfusion_conv2d_proxy()
     
     # Test MiCo proxies with cross-validation
     print("\n" + "="*80)
@@ -536,9 +539,9 @@ if __name__ == "__main__":
     mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
     
     # # # Test for 'high' mico type
-    # print("\n### Testing MiCo 'high' type ###")
-    # mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
-    # mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
+    print("\n### Testing MiCo 'high' type ###")
+    mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
+    mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
     
     # # Test Host MatMul proxy with cross-validation
     # print("\n" + "="*80)
