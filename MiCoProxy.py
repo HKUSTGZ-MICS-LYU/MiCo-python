@@ -363,17 +363,17 @@ def get_two_stage_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     # Model factories for base and speedup models
     base_model_factories = {
         'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
-        'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
     
     speedup_model_factories = {
         'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
-        'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
     
     # Feature sets for base (without precision) and speedup (with precision)
-    base_feature_sets = ['raw', 'macs_only']
-    speedup_feature_sets = ['cbops', 'cbops+']
+    base_feature_sets = ['raw'] # raw, macs_only
+    speedup_feature_sets = ['raw', 'cbops+'] # raw, bops, bops+, cbops, cbops+
     
     best_mape = float('inf')
     best_base_factory = None
@@ -446,13 +446,23 @@ def get_two_stage_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     return best_model
 
 
-def get_mico_matmul_proxy(mico_type: str = 'small'):
+def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=True):
+    if two_stage:
+        return get_two_stage_proxy(
+            f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
+            'matmul'
+        )
     return get_proxy(
         f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
         'matmul'
     )
 
-def get_mico_conv2d_proxy(mico_type: str = 'small'):
+def get_mico_conv2d_proxy(mico_type: str = 'small', two_stage=True):
+    if two_stage:
+      return get_two_stage_proxy(
+        f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
+        'conv2d'
+      )  
     return get_proxy(
         f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
         'conv2d'
@@ -475,51 +485,37 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     pred = reg.predict(kernel_args)
     return pred
 
-def get_bitfusion_matmul_proxy():
+def get_bitfusion_matmul_proxy(two_stage=True):
+    if two_stage:
+        return get_two_stage_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
     return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
 
-def get_bitfusion_conv2d_proxy():
+def get_bitfusion_conv2d_proxy(two_staget=True):
+    if two_staget:
+        return get_two_stage_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
     return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
 
-def get_host_matmul_proxy(opt="opt"):
+def get_host_matmul_proxy(opt="opt", two_stage=True):
+    if two_stage:
+        return get_two_stage_proxy(
+            f'benchmark_results/host_{opt}_matmul_zoo.csv',
+            'matmul'
+        )
     return get_proxy(
         f'benchmark_results/host_{opt}_matmul_zoo.csv',
         'matmul'
     )
 
-def get_host_conv2d_proxy(opt="opt"):
+def get_host_conv2d_proxy(opt="opt", two_stage=True):
+    if two_stage:
+        return get_two_stage_proxy(
+            f'benchmark_results/host_{opt}_conv2d_zoo.csv',
+            'conv2d'
+        )
     return get_proxy(
         f'benchmark_results/host_{opt}_conv2d_zoo.csv',
         'conv2d'
     )
-
-
-# Two-stage proxy getter functions
-def get_mico_matmul_two_stage_proxy(mico_type: str = 'small'):
-    """Get two-stage proxy for MiCo MatMul kernel."""
-    return get_two_stage_proxy(
-        f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
-        'matmul'
-    )
-
-
-def get_mico_conv2d_two_stage_proxy(mico_type: str = 'small'):
-    """Get two-stage proxy for MiCo Conv2D kernel."""
-    return get_two_stage_proxy(
-        f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
-        'conv2d'
-    )
-
-
-def get_bitfusion_matmul_two_stage_proxy():
-    """Get two-stage proxy for BitFusion MatMul kernel."""
-    return get_two_stage_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
-
-
-def get_bitfusion_conv2d_two_stage_proxy():
-    """Get two-stage proxy for BitFusion Conv2D kernel."""
-    return get_two_stage_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
-
 
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
