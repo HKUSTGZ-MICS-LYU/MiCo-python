@@ -104,6 +104,119 @@ class MiCoProxy:
         X = self.preprocess(X)
         return self.model.predict(X)
 
+
+class TwoStageProxy(MiCoProxy):
+    """
+    Two-stage proxy predictor that separates base latency (INT8) from speedup prediction.
+    
+    Inherits feature extraction methods and train_ratio handling from MiCoProxy.
+    
+    Stage 1: Base Latency Predictor - trained on INT8 data without QA, QW, CBOPs features
+    Stage 2: Speedup Predictor - trained on non-INT8 data with precision features
+    
+    Final prediction = base_latency * speedup
+    """
+    def __init__(self, base_model, speedup_model, base_preprocess='raw', 
+                 speedup_preprocess='cbops+', train_ratio=1.0, seed=42,
+                 train_x=None, train_y=None):
+        # Initialize parent class with dummy model (not used directly)
+        super().__init__(model=None, preprocess='raw', train_ratio=train_ratio, 
+                        seed=seed, train_x=train_x, train_y=train_y)
+        
+        self.base_model = base_model
+        self.speedup_model = speedup_model
+        
+        # Base predictor uses features without precision info
+        self.base_preprocess_dict = {
+            "raw": self._get_base_features,
+            "macs_only": self._get_macs_only_features,
+        }
+        self.base_preprocess = self.base_preprocess_dict.get(base_preprocess, self._get_base_features)
+        
+        # Speedup predictor uses precision-aware features (reuse parent methods)
+        self.speedup_preprocess = self.preprocess_dict[speedup_preprocess]
+    
+    def _get_base_features(self, X):
+        """Extract features without QA, QW for base latency prediction."""
+        # X columns: MACS, M, K, ..., QA, QW
+        # Return all except last 2 columns (QA, QW)
+        return X[:, :-2]
+    
+    def _get_macs_only_features(self, X):
+        """Use only MACS for base prediction."""
+        return X[:, [0]]  # MACS is first column
+    
+    def fit(self, X=None, y=None, train_ratio=None):
+        """
+        Fit both base and speedup models.
+        
+        Stage 1: Train base model on INT8 data (QA=8, QW=8)
+        Stage 2: Train speedup model on non-INT8 data
+        """
+        # Use parent's logic for handling X, y, and train_ratio
+        if X is None or y is None:
+            X = self.train_x
+            y = self.train_y
+        
+        if train_ratio is not None:
+            self.train_ratio = train_ratio
+        
+
+        # Separate INT8 and non-INT8 data
+        # Last two columns are QA and QW
+        int8_mask = (X[:, -2] == 8) & (X[:, -1] == 8)
+        
+        X_int8 = X[int8_mask]
+        y_int8 = y[int8_mask]
+        
+        X_other = X[~int8_mask]
+        y_other = y[~int8_mask]
+        def split_train_ratio(X, y, train_ratio):
+            if train_ratio < 1.0:
+                total = len(X)
+                subset_size = int(total * train_ratio)
+                np.random.seed(self.seed)
+                indices = np.random.choice(total, subset_size, replace=False)
+                return X[indices], y[indices]
+            return X, y
+        
+        X_int8, y_int8 = split_train_ratio(X_int8, y_int8, self.train_ratio)
+        X_other, y_other = split_train_ratio(X_other, y_other, self.train_ratio)
+        
+        # Stage 1: Train base model on INT8 data
+        X_base = self.base_preprocess(X_int8)
+        self.base_model.fit(X_base, y_int8)
+        
+        # Stage 2: Train speedup model on non-INT8 data
+        # Compute speedup as ratio: y_other / base_prediction(X_other)
+        X_base_other = self.base_preprocess(X_other)
+        base_pred_other = self.base_model.predict(X_base_other)
+        
+        # Compute speedup (actually slowdown since lower precision is often faster)
+        # To avoid division by zero, add small epsilon
+        speedup = y_other / (base_pred_other + 1e-6)
+        
+        X_speedup = self.speedup_preprocess(X_other)
+        self.speedup_model.fit(X_speedup, speedup)
+    
+    def predict(self, X):
+        """
+        Predict latency using two-stage approach.
+        
+        Returns: base_latency * speedup_factor
+        """
+        # Get base latency prediction
+        X_base = self.base_preprocess(X)
+        base_latency = self.base_model.predict(X_base)
+        
+        # Get speedup prediction
+        X_speedup = self.speedup_preprocess(X)
+        speedup = self.speedup_model.predict(X_speedup)
+        
+        # Final prediction
+        return base_latency * speedup
+
+
 def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     # Load Dataset
     with open(profile_dataset, 'r') as f:
@@ -208,13 +321,151 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     best_model.fit()
     return best_model
 
-def get_mico_matmul_proxy(mico_type: str = 'small'):
+
+def get_two_stage_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
+    """
+    Create and train a two-stage proxy predictor with cross-validation.
+    
+    Stage 1: Base latency predictor trained on INT8 data
+    Stage 2: Speedup predictor trained on non-INT8 data
+    """
+    # Load Dataset
+    with open(profile_dataset, 'r') as f:
+        csv_data = csv.reader(f)
+        data = []
+        next(csv_data)  # skip header
+        for row in csv_data:
+            data.append(list(map(int, row)))
+    data = np.array(data)
+    
+    if kernel_type == 'matmul':
+        N = data[:, 0]
+        M = data[:, 1]
+        K = data[:, 2]
+        QA = data[:, 3]
+        QW = data[:, 4]
+        latency = data[:, -1]
+        MACS = N * M * K
+        if 'bitfusion' in profile_dataset:
+            MACS = MACS / 16  # N is always 16 in Bitfusion matmul profiles
+        # N is not used for features
+        RAW = (MACS, M, K, QA, QW)
+    elif kernel_type == 'conv2d':
+        H, W, C, K, Ks, S = data[:, 0], data[:, 1], data[:, 2], data[:, 3], data[:, 4], data[:, 5]
+        QA = data[:, 6]
+        QW = data[:, 7]
+        latency = data[:, -1]
+        H_out = (H - Ks) / S + 1
+        W_out = (W - Ks) / S + 1
+        MACS = H_out * W_out * C * K * Ks * Ks
+        RAW = (MACS, H, W, C, K, Ks, S, QA, QW)
+    
+    y = latency
+    X = np.column_stack(RAW)
+    
+    # Model factories for base and speedup models
+    base_model_factories = {
+        'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+    }
+    
+    speedup_model_factories = {
+        'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+    }
+    
+    # Feature sets for base (without precision) and speedup (with precision)
+    base_feature_sets = ['raw'] # raw, macs_only
+    speedup_feature_sets = ['raw', 'cbops+'] # raw, bops, bops+, cbops, cbops+
+    
+    best_mape = float('inf')
+    best_base_factory = None
+    best_speedup_factory = None
+    best_base_name = None
+    best_speedup_name = None
+    best_base_features = None
+    best_speedup_features = None
+    
+    print(f"\nTwo-Stage MiCo {kernel_type} Proxy - Cross-Validation Results:")
+    print("=" * 80)
+    
+    # Try all combinations
+    for base_features in base_feature_sets:
+        for speedup_features in speedup_feature_sets:
+            for base_name, base_factory in base_model_factories.items():
+                for speedup_name, speedup_factory in speedup_model_factories.items():
+                    kf = KFold(n_splits=5, shuffle=True, random_state=42)
+                    mapes = []
+                    r2s = []
+                    maes = []
+                    
+                    for train_index, test_index in kf.split(X):
+                        X_train, X_test = X[train_index], X[test_index]
+                        y_train, y_test = y[train_index], y[test_index]
+                        
+                        # Create two-stage proxy
+                        model = TwoStageProxy(
+                            base_factory(), speedup_factory(),
+                            base_preprocess=base_features,
+                            speedup_preprocess=speedup_features
+                        )
+                        model.fit(X_train, y_train)
+                        y_pred = model.predict(X_test)
+                        
+                        mapes.append(mean_absolute_percentage_error(y_test, y_pred))
+                        r2s.append(r2_score(y_test, y_pred))
+                        maes.append(mean_absolute_error(y_test, y_pred))
+                    
+                    mean_mape = np.mean(mapes)
+                    mean_r2 = np.mean(r2s)
+                    mean_mae = np.mean(maes)
+                    
+                    config = f"[{base_features:10s}+{speedup_features:7s}] {base_name:20s} + {speedup_name:20s}"
+                    print(f"  {config}: MAPE={mean_mape*100:6.2f}%, R2={mean_r2:7.4f}, MAE={mean_mae:.2f}")
+                    
+                    # Track best configuration
+                    if mean_mape < best_mape:
+                        best_mape = mean_mape
+                        best_base_factory = base_factory
+                        best_speedup_factory = speedup_factory
+                        best_base_name = base_name
+                        best_speedup_name = speedup_name
+                        best_base_features = base_features
+                        best_speedup_features = speedup_features
+    
+    print("=" * 80)
+    print(f"Best Two-Stage Model: {best_base_name} + {best_speedup_name}")
+    print(f"Base features: {best_base_features}, Speedup features: {best_speedup_features}")
+    print(f"Best Cross-Validation MAPE: {best_mape*100:6.2f}%")
+    
+    # Create and train final model with best configuration
+    best_model = TwoStageProxy(
+        best_base_factory(), best_speedup_factory(),
+        base_preprocess=best_base_features,
+        speedup_preprocess=best_speedup_features,
+        train_x=X, train_y=y
+    )
+    best_model.fit()
+    return best_model
+
+
+def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=False):
+    if two_stage:
+        return get_two_stage_proxy(
+            f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
+            'matmul'
+        )
     return get_proxy(
         f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
         'matmul'
     )
 
-def get_mico_conv2d_proxy(mico_type: str = 'small'):
+def get_mico_conv2d_proxy(mico_type: str = 'small', two_stage=False):
+    if two_stage:
+      return get_two_stage_proxy(
+        f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
+        'conv2d'
+      )  
     return get_proxy(
         f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
         'conv2d'
@@ -237,19 +488,33 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     pred = reg.predict(kernel_args)
     return pred
 
-def get_bitfusion_matmul_proxy():
+def get_bitfusion_matmul_proxy(two_stage=False):
+    if two_stage:
+        return get_two_stage_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
     return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
 
-def get_bitfusion_conv2d_proxy():
+def get_bitfusion_conv2d_proxy(two_staget=True):
+    if two_staget:
+        return get_two_stage_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
     return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
 
-def get_host_matmul_proxy(opt="opt"):
+def get_host_matmul_proxy(opt="opt", two_stage=False):
+    if two_stage:
+        return get_two_stage_proxy(
+            f'benchmark_results/host_{opt}_matmul_zoo.csv',
+            'matmul'
+        )
     return get_proxy(
         f'benchmark_results/host_{opt}_matmul_zoo.csv',
         'matmul'
     )
 
-def get_host_conv2d_proxy(opt="opt"):
+def get_host_conv2d_proxy(opt="opt", two_stage=False):
+    if two_stage:
+        return get_two_stage_proxy(
+            f'benchmark_results/host_{opt}_conv2d_zoo.csv',
+            'conv2d'
+        )
     return get_proxy(
         f'benchmark_results/host_{opt}_conv2d_zoo.csv',
         'conv2d'
@@ -258,10 +523,10 @@ def get_host_conv2d_proxy(opt="opt"):
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
     # print("\n" + "="*80)
-    # print("BITFUSION PROXY TUNING")
-    # print("="*80)
-    # matmul_proxy = get_bitfusion_matmul_proxy()
-    # conv2d_proxy = get_bitfusion_conv2d_proxy()
+    print("BITFUSION PROXY TUNING")
+    print("="*80)
+    matmul_proxy = get_bitfusion_matmul_proxy()
+    conv2d_proxy = get_bitfusion_conv2d_proxy()
     
     # Test MiCo proxies with cross-validation
     print("\n" + "="*80)
@@ -274,9 +539,9 @@ if __name__ == "__main__":
     mico_small_conv2d_proxy = get_mico_conv2d_proxy(mico_type='small')
     
     # # # Test for 'high' mico type
-    # print("\n### Testing MiCo 'high' type ###")
-    # mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
-    # mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
+    print("\n### Testing MiCo 'high' type ###")
+    mico_high_matmul_proxy = get_mico_matmul_proxy(mico_type='high')
+    mico_high_conv2d_proxy = get_mico_conv2d_proxy(mico_type='high')
     
     # # Test Host MatMul proxy with cross-validation
     # print("\n" + "="*80)
