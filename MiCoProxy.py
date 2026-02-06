@@ -449,7 +449,7 @@ def get_two_stage_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     return best_model
 
 
-def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=True):
+def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=False):
     if two_stage:
         return get_two_stage_proxy(
             f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
@@ -460,7 +460,7 @@ def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=True):
         'matmul'
     )
 
-def get_mico_conv2d_proxy(mico_type: str = 'small', two_stage=True):
+def get_mico_conv2d_proxy(mico_type: str = 'small', two_stage=False):
     if two_stage:
       return get_two_stage_proxy(
         f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
@@ -488,7 +488,7 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     pred = reg.predict(kernel_args)
     return pred
 
-def get_bitfusion_matmul_proxy(two_stage=True):
+def get_bitfusion_matmul_proxy(two_stage=False):
     if two_stage:
         return get_two_stage_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
     return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
@@ -498,7 +498,7 @@ def get_bitfusion_conv2d_proxy(two_staget=True):
         return get_two_stage_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
     return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
 
-def get_host_matmul_proxy(opt="opt", two_stage=True):
+def get_host_matmul_proxy(opt="opt", two_stage=False):
     if two_stage:
         return get_two_stage_proxy(
             f'benchmark_results/host_{opt}_matmul_zoo.csv',
@@ -509,7 +509,7 @@ def get_host_matmul_proxy(opt="opt", two_stage=True):
         'matmul'
     )
 
-def get_host_conv2d_proxy(opt="opt", two_stage=True):
+def get_host_conv2d_proxy(opt="opt", two_stage=False):
     if two_stage:
         return get_two_stage_proxy(
             f'benchmark_results/host_{opt}_conv2d_zoo.csv',
