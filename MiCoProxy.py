@@ -267,7 +267,7 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     }
 
     # feature_sets = ['raw', 'bops+', 'cbops', 'cbops+']
-    feature_sets = ['cbops+']
+    feature_sets = ['raw']
 
     best_mape = float('inf')
     best_model_factory = None
@@ -365,18 +365,20 @@ def get_two_stage_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     
     # Model factories for base and speedup models
     base_model_factories = {
-        'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
-        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+        # 'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+        'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
     }
     
     speedup_model_factories = {
-        'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
-        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
+        # 'RandomForest': lambda: RandomForestRegressor(random_state=42),
+        'XGBRegressor': lambda: XGBRegressor(random_state=42),
+        # 'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+        # 'LogXGBsRegressor': lambda: LogXGBRegressor(random_state=42)
     }
     
     # Feature sets for base (without precision) and speedup (with precision)
     base_feature_sets = ['raw'] # raw, macs_only
-    speedup_feature_sets = ['raw', 'cbops+'] # raw, bops, bops+, cbops, cbops+
+    speedup_feature_sets = ['raw'] # raw, bops, bops+, cbops, cbops+
     
     best_mape = float('inf')
     best_base_factory = None
@@ -493,8 +495,8 @@ def get_bitfusion_matmul_proxy(two_stage=False):
         return get_two_stage_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
     return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
 
-def get_bitfusion_conv2d_proxy(two_staget=True):
-    if two_staget:
+def get_bitfusion_conv2d_proxy(two_stage=False):
+    if two_stage:
         return get_two_stage_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
     return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
 
