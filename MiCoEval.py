@@ -115,7 +115,8 @@ class MiCoEval:
             with open(self.output_json, 'w') as f:
                 json.dump(self.data_trace, f, indent=4)
         else:
-            print("[MiCoEval] Found result in cache.")
+            pass
+            # print("[MiCoEval] Found result in cache.")
         return res
 
     def set_eval(self, objective: str):

@@ -12,6 +12,22 @@ from sklearn.metrics import (
     mean_absolute_error
 )
 
+class LutProxy:
+    # For Validation Only - Not a real proxy predictor
+    def __init__(self, **kwargs):
+        self.lut = {}
+    def nearest_neighbor(self, x):
+        # print(f"Warning: Extrapolating for unseen input {x} using nearest neighbor in LUT.")
+        # Find the closest key in the LUT to x
+        closest_key = min(self.lut.keys(), key=lambda k: np.linalg.norm(np.array(k) - np.array(x)))
+        return self.lut[closest_key]
+    def fit(self, X, y):
+        for x, latency in zip(X, y):
+            self.lut[tuple(x)] = latency
+    def predict(self, X):
+        X = np.array(X, dtype=int)
+        return np.array([self.lut.get(tuple(x), self.nearest_neighbor(x)) for x in X])
+
 class DirectSum:
     def __init__(self, **kwargs):
         pass
@@ -258,6 +274,7 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
 
     # Model factories - functions that create new model instances
     model_factories = {
+        # 'LutProxy': lambda: LutProxy(),
         # 'DirectSum': lambda: DirectSum(),
         # 'RandomForest': lambda: RandomForestRegressor(random_state=42),
         'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),

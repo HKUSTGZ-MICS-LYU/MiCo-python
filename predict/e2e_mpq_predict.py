@@ -27,6 +27,7 @@ if __name__ == "__main__":
     args.add_argument('-n', '--num-samples', type=int, default=64, help='Number of random samples to evaluate')
     args.add_argument('--target', type=str, default='latency_bitfusion', help='Target metric to evaluate')
     args.add_argument('--plot', type=str, default='norm', help='Plot Actual vs Predicted (norm/abs)')
+    args.add_argument('--calib', action='store_true', help='Whether to perform one-shot scaling calibration')
     parsed_args = args.parse_args()
 
     model_name = parsed_args.model
@@ -73,10 +74,9 @@ if __name__ == "__main__":
         res_pred = evaluator.eval_pred_latency(scheme)
         X.append(res)
         Y.append(res_pred)
-        
-        print(scheme)
-        print(f"Actual  Latency:{res:>10}")
-        print(f"Predict Latency:{int(res_pred):>10}")
+        # print(scheme)
+        # print(f"Actual  Latency:{res:>10}")
+        # print(f"Predict Latency:{int(res_pred):>10}")
 
     X = np.array(X)
     Y = np.array(Y)
@@ -93,9 +93,10 @@ if __name__ == "__main__":
     # Y = Y * bias
 
     # Two-shot Scaling
-    # slope = (X_max - X_min) / (Y_max - Y_min)
-    # intercept = X_min - slope * Y_min
-    # Y = slope * Y + intercept
+    if parsed_args.calib:
+        slope = (X_max - X_min) / (Y_max - Y_min)
+        intercept = X_min - slope * Y_min
+        Y = slope * Y + intercept
 
     ratio_X = X / np.max(X)
     ratio_Y = Y / np.max(Y)
