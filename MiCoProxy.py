@@ -105,9 +105,11 @@ class MiCoProxy:
         return self.model.predict(X)
 
 
-class TwoStageProxy:
+class TwoStageProxy(MiCoProxy):
     """
     Two-stage proxy predictor that separates base latency (INT8) from speedup prediction.
+    
+    Inherits feature extraction methods and train_ratio handling from MiCoProxy.
     
     Stage 1: Base Latency Predictor - trained on INT8 data without QA, QW, CBOPs features
     Stage 2: Speedup Predictor - trained on non-INT8 data with precision features
@@ -117,12 +119,12 @@ class TwoStageProxy:
     def __init__(self, base_model, speedup_model, base_preprocess='raw', 
                  speedup_preprocess='cbops+', train_ratio=1.0, seed=42,
                  train_x=None, train_y=None):
+        # Initialize parent class with dummy model (not used directly)
+        super().__init__(model=None, preprocess='raw', train_ratio=train_ratio, 
+                        seed=seed, train_x=train_x, train_y=train_y)
+        
         self.base_model = base_model
         self.speedup_model = speedup_model
-        self.seed = seed
-        self.train_ratio = train_ratio
-        self.train_x = train_x
-        self.train_y = train_y
         
         # Base predictor uses features without precision info
         self.base_preprocess_dict = {
@@ -131,15 +133,8 @@ class TwoStageProxy:
         }
         self.base_preprocess = self.base_preprocess_dict.get(base_preprocess, self._get_base_features)
         
-        # Speedup predictor uses precision-aware features
-        self.speedup_preprocess_dict = {
-            "raw": self._get_raw_features,
-            "bops": self._get_bops_features,
-            "bops+": self._get_bops_plus_features,
-            "cbops": self._get_cbops_features,
-            "cbops+": self._get_cbops_plus_features
-        }
-        self.speedup_preprocess = self.speedup_preprocess_dict[speedup_preprocess]
+        # Speedup predictor uses precision-aware features (reuse parent methods)
+        self.speedup_preprocess = self.preprocess_dict[speedup_preprocess]
     
     def _get_base_features(self, X):
         """Extract features without QA, QW for base latency prediction."""
@@ -151,43 +146,6 @@ class TwoStageProxy:
         """Use only MACS for base prediction."""
         return X[:, [0]]  # MACS is first column
     
-    def _get_raw_features(self, X):
-        """Raw features including precision."""
-        return X
-    
-    def _get_bops_features(self, X):
-        """BOPs-based features."""
-        MACS = X[:, 0]
-        QA = X[:, -2]
-        QW = X[:, -1]
-        BOPS = MACS * QW * QA
-        return np.column_stack((BOPS,))
-    
-    def _get_cbops_features(self, X):
-        """CBOPs (compute-aware) features."""
-        MACS = X[:, 0]
-        QA = X[:, -2]
-        QW = X[:, -1]
-        Q_MAX = np.max(X[:, -2:], axis=1)
-        BMACS = MACS * Q_MAX
-        W_LOADS = MACS * QW
-        A_LOADS = MACS * QA
-        return np.column_stack((BMACS, W_LOADS, A_LOADS))
-    
-    def _get_cbops_plus_features(self, X):
-        """CBOPs features plus raw features."""
-        cbops = self._get_cbops_features(X)
-        return np.column_stack((cbops, X))
-    
-    def _get_bops_plus_features(self, X):
-        """BOPs features plus raw features."""
-        bops = self._get_bops_features(X)
-        return np.column_stack((bops, X))
-    
-    def set_train_ratio(self, train_ratio: float):
-        """Set training data ratio for experiments."""
-        self.train_ratio = train_ratio
-    
     def fit(self, X=None, y=None, train_ratio=None):
         """
         Fit both base and speedup models.
@@ -195,6 +153,7 @@ class TwoStageProxy:
         Stage 1: Train base model on INT8 data (QA=8, QW=8)
         Stage 2: Train speedup model on non-INT8 data
         """
+        # Use parent's logic for handling X, y, and train_ratio
         if X is None or y is None:
             X = self.train_x
             y = self.train_y
@@ -202,7 +161,7 @@ class TwoStageProxy:
         if train_ratio is not None:
             self.train_ratio = train_ratio
         
-        # Apply train_ratio if less than 1.0
+        # Apply train_ratio using parent's logic
         if self.train_ratio < 1.0:
             total = len(X)
             subset_size = int(total * self.train_ratio)
