@@ -63,6 +63,7 @@ class MiCoProxy:
         self.train_x = train_x
         self.train_y = train_y
         self.preprocess_dict = {
+            "macs+": self._get_mac_plus_features,
             "raw": self._get_raw_features,
             "bops": self._get_bops_features,
             "bops+": self._get_bops_plus_features,
@@ -70,7 +71,11 @@ class MiCoProxy:
             "cbops+": self._get_cbops_plus_features
         }
         self.preprocess = self.preprocess_dict[preprocess]
-        
+    def _get_mac_plus_features(self, X):
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        return np.column_stack((MACS, QA, QW))
     def _get_raw_features(self, X):
         return X
     def _get_bops_features(self, X):
