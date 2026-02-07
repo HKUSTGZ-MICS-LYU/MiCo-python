@@ -273,23 +273,25 @@ class MiCoEval:
 
     def eval_pred_latency(self, scheme: list):
 
-        pred_latency = 0
         wq = np.array(scheme[:self.n_layers])
         aq = np.array(scheme[self.n_layers:])
-        layer_latencys = []
+
+        # Batch layers by type for vectorized prediction
+        conv2d_features = []
+        linear_features = []
         for i in range(self.n_layers):
-            layer_macs = self.layer_macs[i]
-            layer_features =  [layer_macs] + self.layer_features[i] + [aq[i], wq[i]]
-            layer_features = np.array([layer_features])
-            # layer_features as int
-            # layer_features_int = [int(f) for f in self.layers[i].layer_features]
-            # print("Layer Features:", layer_features_int)
+            feat = [self.layer_macs[i]] + self.layer_features[i] + [aq[i], wq[i]]
             if isinstance(self.layers[i], BitConv2d):
-                layer_latencys += [float(self.conv2d_proxy.predict(layer_features)[0])]
+                conv2d_features.append(feat)
             elif isinstance(self.layers[i], BitLinear):
-                layer_latencys += [float(self.matmul_proxy.predict(layer_features)[0])]
-        # print(layer_latencys)
-        pred_latency = np.sum(layer_latencys)
+                linear_features.append(feat)
+
+        pred_latency = 0.0
+        if conv2d_features:
+            pred_latency += np.sum(self.conv2d_proxy.predict(np.array(conv2d_features)))
+        if linear_features:
+            pred_latency += np.sum(self.matmul_proxy.predict(np.array(linear_features)))
+
         return pred_latency + self.misc_latency
 
     def eval_size(self, scheme:list):
