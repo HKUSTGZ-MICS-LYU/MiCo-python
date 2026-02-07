@@ -19,3 +19,7 @@ torchao
 transformers
 datasets
 accelerate
+
+# Optional: for MLIR generation with torch-mlir backend
+# Install separately with: pip install torch-mlir -f https://github.com/llvm/torch-mlir-release/releases
+# torch-mlir
