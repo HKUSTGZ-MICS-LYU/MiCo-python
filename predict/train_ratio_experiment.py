@@ -71,7 +71,8 @@ def compute_metrics(X, Y):
     }
 
 
-def setup_evaluator_with_train_ratio(model_name, target, train_ratio, seed=42):
+def setup_evaluator_with_train_ratio(model_name, target, train_ratio, seed=42,
+                                     features=None, regressor=None):
     """Setup evaluator and proxies with specified train_ratio."""
     model, train_loader, test_loader = model_zoo.from_zoo(model_name)
     evaluator = MiCoEval(model, 1, train_loader, test_loader, 
@@ -83,8 +84,10 @@ def setup_evaluator_with_train_ratio(model_name, target, train_ratio, seed=42):
         mico_target = target.split("_")[-1]
         evaluator.set_mico_target(mico_target)
         # Get proxies with specified train_ratio
-        matmul_proxy = get_mico_matmul_proxy(mico_type=mico_target)
-        conv2d_proxy = get_mico_conv2d_proxy(mico_type=mico_target)
+        matmul_proxy = get_mico_matmul_proxy(mico_type=mico_target,
+                                             preprocess=features, regressor=regressor)
+        conv2d_proxy = get_mico_conv2d_proxy(mico_type=mico_target,
+                                             preprocess=features, regressor=regressor)
         # Re-fit proxies with the specified train_ratio
         matmul_proxy.set_train_ratio(train_ratio)
         matmul_proxy.seed = seed
@@ -98,8 +101,10 @@ def setup_evaluator_with_train_ratio(model_name, target, train_ratio, seed=42):
         evaluator.set_eval("latency_mico")
 
     elif target == "latency_bitfusion":
-        matmul_proxy = get_bitfusion_matmul_proxy()
-        conv2d_proxy = get_bitfusion_conv2d_proxy()
+        matmul_proxy = get_bitfusion_matmul_proxy(
+            preprocess=features, regressor=regressor)
+        conv2d_proxy = get_bitfusion_conv2d_proxy(
+            preprocess=features, regressor=regressor)
         # Re-fit proxies with the specified train_ratio
         matmul_proxy.set_train_ratio(train_ratio)
         matmul_proxy.seed = seed
@@ -127,6 +132,10 @@ def main():
                         help='Comma-separated list of train_ratios to test')
     parser.add_argument('--seeds', type=int, default=5, 
                         help='Number of random seeds for each train_ratio')
+    parser.add_argument('--features', type=str, default=None,
+                        help='Feature set for proxy (raw, cbops+, bops+, cbops, bops)')
+    parser.add_argument('--regressor', type=str, default=None,
+                        help='Regressor model (LogRandomForest, LogXGBRegressor, XGBRegressor, RandomForest)')
     parser.add_argument('--save-fig', action='store_true', 
                         help='Save figure to output/figs/')
     args = parser.parse_args()
@@ -136,10 +145,13 @@ def main():
     N = args.num_samples
     train_ratios = [float(r) for r in args.ratios.split(',')]
     num_seeds = args.seeds
+    features = args.features
+    regressor = args.regressor
 
     print(f"\n{'='*80}")
     print(f"Train Ratio Impact Experiment")
     print(f"Model: {model_name}, Target: {target}")
+    print(f"Features: {features or 'default'}, Regressor: {regressor or 'default'}")
     print(f"Train Ratios: {train_ratios}")
     print(f"Num Seeds: {num_seeds}, Num Samples: {N}")
     print(f"{'='*80}\n")
@@ -174,7 +186,8 @@ def main():
         for seed in range(num_seeds):
             print(f"  Seed {seed}...")
             evaluator, _ = setup_evaluator_with_train_ratio(
-                model_name, target, train_ratio, seed=seed
+                model_name, target, train_ratio, seed=seed,
+                features=features, regressor=regressor
             )
             
             X, Y = run_prediction_experiment(evaluator, all_schemes, target)

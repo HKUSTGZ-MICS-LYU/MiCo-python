@@ -65,6 +65,7 @@ class MiCoProxy:
         self.preprocess_dict = {
             "macs+": self._get_mac_plus_features,
             "raw": self._get_raw_features,
+            "raw+": self._get_raw_plus_features,
             "bops": self._get_bops_features,
             "bops+": self._get_bops_plus_features,
             "cbops": self._get_cbops_features,
@@ -93,9 +94,19 @@ class MiCoProxy:
         W_LOADS = MACS * QW
         A_LOADS = MACS * QA
         return np.column_stack((BMACS, W_LOADS, A_LOADS))
+    
+    def _get_raw_plus_features(self, X):
+        QA = X[:, -2]
+        QW = X[:, -1]
+        Q_MIX = np.array(QA != QW, dtype=int)
+        PACK_W = np.floor(32.0 / QW)
+        PACK_A = np.floor(32.0 / QA)
+        return np.column_stack((X, Q_MIX, PACK_W, PACK_A))
+    
     def _get_cbops_plus_features(self, X):
         cbops = self._get_cbops_features(X)
         return np.column_stack((cbops, X))
+    
     def _get_bops_plus_features(self, X):
         bops = self._get_bops_features(X)
         return np.column_stack((bops, X))
@@ -238,7 +249,15 @@ class TwoStageProxy(MiCoProxy):
         return base_latency * speedup
 
 
-def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
+REGRESSOR_FACTORIES = {
+    'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
+    'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42),
+    'XGBRegressor': lambda: XGBRegressor(random_state=42),
+    'RandomForest': lambda: RandomForestRegressor(random_state=42),
+}
+
+def get_proxy(profile_dataset: str, kernel_type: str = 'matmul',
+              preprocess: str = None, regressor: str = None):
     # Load Dataset
     with open(profile_dataset, 'r') as f:
         csv_data = csv.reader(f)
@@ -278,18 +297,17 @@ def get_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     X = np.column_stack(RAW)
 
     # Model factories - functions that create new model instances
-    model_factories = {
-        # 'LutProxy': lambda: LutProxy(),
-        # 'DirectSum': lambda: DirectSum(),
-        # 'RandomForest': lambda: RandomForestRegressor(random_state=42),
-        'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
-        # 'LinearRegression': lambda: LinearRegression(),
-        # 'XGBRegressor': lambda: XGBRegressor(random_state=42),
-        # 'LogXGBRegressor': lambda: LogXGBRegressor(random_state=42)
-    }
+    if regressor:
+        model_factories = {regressor: REGRESSOR_FACTORIES[regressor]}
+    else:
+        model_factories = {
+            'LogRandomForest': REGRESSOR_FACTORIES['LogRandomForest'],
+        }
 
-    # feature_sets = ['raw', 'bops+', 'cbops', 'cbops+']
-    feature_sets = ['raw']
+    if preprocess:
+        feature_sets = [preprocess]
+    else:
+        feature_sets = ['cbops+']
 
     best_mape = float('inf')
     best_model_factory = None
@@ -473,7 +491,8 @@ def get_two_stage_proxy(profile_dataset: str, kernel_type: str = 'matmul'):
     return best_model
 
 
-def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=False):
+def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=False,
+                         preprocess=None, regressor=None):
     if two_stage:
         return get_two_stage_proxy(
             f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
@@ -481,10 +500,11 @@ def get_mico_matmul_proxy(mico_type: str = 'small', two_stage=False):
         )
     return get_proxy(
         f'benchmark_results/mico_{mico_type}_matmul_zoo.csv',
-        'matmul'
+        'matmul', preprocess=preprocess, regressor=regressor
     )
 
-def get_mico_conv2d_proxy(mico_type: str = 'small', two_stage=False):
+def get_mico_conv2d_proxy(mico_type: str = 'small', two_stage=False,
+                          preprocess=None, regressor=None):
     if two_stage:
       return get_two_stage_proxy(
         f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
@@ -492,7 +512,7 @@ def get_mico_conv2d_proxy(mico_type: str = 'small', two_stage=False):
       )  
     return get_proxy(
         f'benchmark_results/mico_{mico_type}_conv2d_zoo.csv',
-        'conv2d'
+        'conv2d', preprocess=preprocess, regressor=regressor
     )
 
 def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: list):
@@ -512,15 +532,17 @@ def get_mico_misc_kernel_proxy(mico_type: str, kernel_type: str, kernel_args: li
     pred = reg.predict(kernel_args)
     return pred
 
-def get_bitfusion_matmul_proxy(two_stage=False):
+def get_bitfusion_matmul_proxy(two_stage=False, preprocess=None, regressor=None):
     if two_stage:
         return get_two_stage_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
-    return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul')
+    return get_proxy('benchmark_results/bitfusion_matmul_zoo.csv', 'matmul',
+                     preprocess=preprocess, regressor=regressor)
 
-def get_bitfusion_conv2d_proxy(two_stage=False):
+def get_bitfusion_conv2d_proxy(two_stage=False, preprocess=None, regressor=None):
     if two_stage:
         return get_two_stage_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
-    return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d')
+    return get_proxy('benchmark_results/bitfusion_conv2d_zoo.csv', 'conv2d',
+                     preprocess=preprocess, regressor=regressor)
 
 def get_host_matmul_proxy(opt="opt", two_stage=False):
     if two_stage:
