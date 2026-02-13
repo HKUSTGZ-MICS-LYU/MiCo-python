@@ -111,7 +111,6 @@ Here are the main components/modules of MiCo.
 **Hardware-Aware**
 + `SimUtils`: Invoke simulations for BitFusion or VexiiRiscv hardware.
 + `MiCoProxy`: CBOPs proxy models for hardware latency predictions.
-  - **NEW**: Two-stage speedup predictor with 61% average MAPE improvement over original approach. See [doc/TWO_STAGE_PREDICTOR.md](doc/TWO_STAGE_PREDICTOR.md) for details.
 
 ## Folder Structure
 + `examples`: Example scripts for MPQ training/searching.
