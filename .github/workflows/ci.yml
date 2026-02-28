@@ -40,7 +40,8 @@ jobs:
         # Install PyTorch CPU version first to ensure correct torch backend
         pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
         # Install remaining requirements (torch/torchvision/torchaudio already satisfied above)
-        grep -v "^torch\|^torchvision\|^torchaudio\|^torchcodec" requirements.txt | pip install -r /dev/stdin
+        # Note: pattern excludes exact package names to avoid overriding the CPU torch installation
+        grep -v -E "^(torch|torchvision|torchaudio|torchcodec)([>=<~!]|$)" requirements.txt | pip install -r /dev/stdin
         # Install torchcodec separately as it may not be available in all CI environments
         pip install torchcodec || true
     
