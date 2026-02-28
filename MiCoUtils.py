@@ -8,8 +8,7 @@ import torch.nn.utils.fusion as fusion
 
 from torchao.quantization.quant_api import(
     quantize_,
-    Int4DynamicActivationInt4WeightConfig,
-    Int8DynamicActivationInt4WeightConfig,
+    Int8DynamicActivationIntxWeightConfig,
     Int8DynamicActivationInt8WeightConfig,
     Int4WeightOnlyConfig,
     Int8WeightOnlyConfig,
@@ -48,9 +47,9 @@ def torchao_quantize(qw, qa):
     if (qw == 8) and (qa == 8):
         return Int8DynamicActivationInt8WeightConfig()
     elif (qw == 4) and (qa == 8):
-        return Int8DynamicActivationInt4WeightConfig()
+        return Int8DynamicActivationIntxWeightConfig(weight_dtype=torch.int4)
     elif (qw == 4) and (qa == 4):
-        return Int4DynamicActivationInt4WeightConfig()
+        raise NotImplementedError("INT4 dynamic activations are not supported in torchao 0.11.0+")
     elif (qw == 8) and (qa == 4):
         raise NotImplementedError
     elif (qw == 8) and (qa == 32):

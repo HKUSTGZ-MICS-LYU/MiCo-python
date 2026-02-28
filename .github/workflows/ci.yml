@@ -37,10 +37,13 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install flake8 pytest
-        # Install requirements first to avoid conflicts
-        pip install -r requirements.txt || true
-        # Install PyTorch CPU version (override if specified in requirements)
-        pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+        # Install PyTorch CPU version first to ensure correct torch backend
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+        # Install remaining requirements (torch/torchvision/torchaudio already satisfied above)
+        # Note: pattern excludes exact package names to avoid overriding the CPU torch installation
+        grep -v -E "^(torch|torchvision|torchaudio|torchcodec)([>=<~!]|$)" requirements.txt | pip install -r /dev/stdin
+        # Install torchcodec separately as it may not be available in all CI environments
+        pip install torchcodec || true
     
     - name: Lint with flake8
       run: |
