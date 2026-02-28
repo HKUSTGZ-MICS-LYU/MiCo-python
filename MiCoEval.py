@@ -101,7 +101,7 @@ class MiCoEval:
         return layer_info
 
     def _scheme_to_key(self, scheme: list):
-        return ",".join(str(int(x)) for x in np.asarray(scheme).astype(int).tolist())
+        return ",".join(str(int(x)) for x in scheme)
 
     def _load_data_trace(self):
         if not os.path.exists(self.output_json):
@@ -143,9 +143,10 @@ class MiCoEval:
         else:
             res = self.data_trace.get(legacy_key, {}).get(self.objective)
             if res is not None:
-                self.data_trace.setdefault(cache_key, {}).update(self.data_trace.get(legacy_key, {}))
+                self.data_trace[cache_key] = self.data_trace.pop(legacy_key, {})
+                self._save_data_trace()
         if res is None and offline:
-            raise ValueError(f"Missing cached result for scheme [{cache_key}] objective [{self.objective}] in {self.output_json}")
+            raise ValueError(f"Missing cached result for scheme {scheme} (key={cache_key}) objective [{self.objective}] in {self.output_json}")
         if res is None:
             res = self.eval_f(scheme)
             if cache_key not in self.data_trace:

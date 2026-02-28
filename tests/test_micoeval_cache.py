@@ -38,3 +38,10 @@ class TestMiCoEvalCache(unittest.TestCase):
         evaluator = _build_eval("unused.json", "json")
         evaluator.data_trace = {"[1, 2]": {"latency_proxy": 3}}
         self.assertEqual(evaluator.eval([1, 2], offline=True), 3)
+        self.assertIn("1,2", evaluator.data_trace)
+        self.assertNotIn("[1, 2]", evaluator.data_trace)
+
+    def test_offline_mode_raises_on_cache_miss(self):
+        evaluator = _build_eval("unused.json", "json")
+        with self.assertRaises(ValueError):
+            evaluator.eval([9, 9], offline=True)
