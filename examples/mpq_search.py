@@ -19,6 +19,7 @@ from searchers import (
 argsparse = argparse.ArgumentParser()
 argsparse.add_argument("model_name", type=str)
 argsparse.add_argument("--init", type=int , default=16)
+argsparse.add_argument("--mico-only", action="store_true")
 argsparse.add_argument("-n", "--n-search", type=int, default=16)
 argsparse.add_argument("-c", "--constraint-factor", type=float, default=0.5)
 argsparse.add_argument("-ctype", "--constraint", type=str, default="bops")
@@ -57,9 +58,11 @@ if __name__ == "__main__":
 
     res_data = {}
 
+    methods = ["nlp", "bo", "haq", "mico"] if not args.mico_only else ["mico"]
+
     for seed in range(TRAILS):
         
-        for method in ["bo", "haq", "nlp", "rf", "mico"]:
+        for method in methods:
             
             if method not in res_data:
                 res_data[method] = []
