@@ -8,6 +8,7 @@ from matplotlib import pyplot as plt
 
 import os
 import json
+import csv
 import time
 import warnings
 
@@ -51,14 +52,12 @@ class MiCoEval:
         print("Pretrained Model Loaded.")
 
         self.output_json = output_json
+        self.cache_format = 'csv' if str(self.output_json).lower().endswith('.csv') else 'json'
         self.model_name = model_name
         self.n_layers = self.model.n_layers
         self.dim = self.n_layers * 2
         
-        self.data_trace = {}
-        if os.path.exists(self.output_json):
-            with open(self.output_json, 'r') as f:
-                self.data_trace = json.load(f)
+        self.data_trace = self._load_data_trace()
         
         self.set_eval(objective)
         self.set_constraint(constraint)
@@ -101,19 +100,60 @@ class MiCoEval:
             layer_info.append(info)
         return layer_info
 
-    def eval(self, scheme: list):
-        res = None
-        if str(scheme) in self.data_trace:
-            if self.objective in self.data_trace[str(scheme)]:
-                res = self.data_trace[str(scheme)][self.objective]
+    def _scheme_to_key(self, scheme: list):
+        return ",".join(str(int(x)) for x in scheme)
+
+    def _load_data_trace(self):
+        if not os.path.exists(self.output_json):
+            return {}
+        if self.cache_format == 'csv':
+            data_trace = {}
+            with open(self.output_json, 'r', newline='') as f:
+                for row in csv.DictReader(f):
+                    scheme = row.get("scheme")
+                    objective = row.get("objective")
+                    value = row.get("value")
+                    if scheme is None or objective is None or value is None:
+                        continue
+                    data_trace.setdefault(scheme, {})[objective] = float(value)
+            return data_trace
+        with open(self.output_json, 'r') as f:
+            return json.load(f)
+
+    def _save_data_trace(self):
+        output_dir = os.path.dirname(self.output_json)
+        if output_dir:
+            os.makedirs(output_dir, exist_ok=True)
+        if self.cache_format == 'csv':
+            with open(self.output_json, 'w', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow(["scheme", "objective", "value"])
+                for scheme, objectives in self.data_trace.items():
+                    for objective, value in objectives.items():
+                        writer.writerow([scheme, objective, value])
+            return
+        with open(self.output_json, 'w') as f:
+            json.dump(self.data_trace, f, indent=4)
+
+    def eval(self, scheme: list, offline: bool = False):
+        cache_key = self._scheme_to_key(scheme)
+        legacy_key = str(scheme)
+        if cache_key in self.data_trace:
+            res = self.data_trace[cache_key].get(self.objective)
+        else:
+            res = self.data_trace.get(legacy_key, {}).get(self.objective)
+            if res is not None:
+                self.data_trace[cache_key] = self.data_trace.pop(legacy_key, {})
+                self._save_data_trace()
+        if res is None and offline:
+            raise ValueError(f"Missing cached result for scheme {scheme} (key={cache_key}) objective [{self.objective}] in {self.output_json}")
         if res is None:
             res = self.eval_f(scheme)
-            if str(scheme) not in self.data_trace:
-                self.data_trace[str(scheme)] = {}
-            if self.objective not in self.data_trace[str(scheme)]:
-                self.data_trace[str(scheme)][self.objective] = res
-            with open(self.output_json, 'w') as f:
-                json.dump(self.data_trace, f, indent=4)
+            if cache_key not in self.data_trace:
+                self.data_trace[cache_key] = {}
+            if self.objective not in self.data_trace[cache_key]:
+                self.data_trace[cache_key][self.objective] = res
+            self._save_data_trace()
         else:
             pass
             # print("[MiCoEval] Found result in cache.")
@@ -382,4 +422,3 @@ if __name__ == "__main__":
     
     res = evaluator.eval_latency([8]*model.n_layers*2, 'bitfusion')
     print("Latency:", res)
-
