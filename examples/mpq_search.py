@@ -1,3 +1,4 @@
+import json
 import torch
 import argparse
 import random
@@ -25,6 +26,7 @@ argsparse.add_argument("-c", "--constraint-factor", type=float, default=0.5)
 argsparse.add_argument("-ctype", "--constraint", type=str, default="bops")
 argsparse.add_argument("-t", "--trails", type=int, default=5)
 argsparse.add_argument("-m", "--mode", type=str, default="ptq_acc")
+argsparse.add_argument("-e", "--epochs", type=int, default=1)
 
 args = argsparse.parse_args()
 
@@ -35,12 +37,13 @@ CONSTR_RATIO = args.constraint_factor
 CONSTR_TYPE = args.constraint
 TRAILS = args.trails
 MODE = args.mode
+EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
 
 if __name__ == "__main__":
 
     model, train_loader, test_loader = model_zoo.from_zoo(model_name)
 
-    evaluator = MiCoEval(model, 1, train_loader, test_loader, 
+    evaluator = MiCoEval(model, EPOCHS, train_loader, test_loader, 
                          f"output/ckpt/{model_name}.pth",
                          output_json=f"output/json/{model_name}_search.json")
 
@@ -58,7 +61,7 @@ if __name__ == "__main__":
 
     res_data = {}
 
-    methods = ["nlp", "bo", "haq", "mico"] if not args.mico_only else ["mico"]
+    methods = ["nlp", "haq", "bo", "mico"] if not args.mico_only else ["mico"]
 
     for seed in range(TRAILS):
         
@@ -103,10 +106,12 @@ if __name__ == "__main__":
             res_data[method].append(searcher.best_trace)
 
     final_res = {}
+    final_trace = {}
     # Plot Average Results
     for method in res_data.keys():
         avg_trace = np.mean(res_data[method], axis=0)
         final_res[method] = avg_trace[-1]
+        final_trace[method] = avg_trace.tolist()
         plt.plot(avg_trace, label=method)
 
     plt.legend()
@@ -115,5 +120,8 @@ if __name__ == "__main__":
     with open(f"output/txt/{model_name}_search_{CONSTR_RATIO}_{MODE}.txt", "w") as f:
         for method in final_res.keys():
             f.write(f"{method}: {final_res[method]}\n")
+
+    with open(f"output/json/{model_name}_search_{CONSTR_RATIO}_{MODE}_trace.json", "w") as f:
+        json.dump(final_trace, f)
 
     # plt.show()

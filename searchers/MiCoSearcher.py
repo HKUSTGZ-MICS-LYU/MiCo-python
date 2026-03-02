@@ -219,8 +219,12 @@ class MiCoSearcher(QSearcher):
         WQ = X[:, :self.n_layers]
         AQ = X[:, self.n_layers:]
         MACS = np.array(self.evaluator.layer_macs) / np.sum(self.evaluator.layer_macs)
-        # AVE_WQ = np.mean(WQ, axis=1, keepdims=True)
-        # AVE_AQ = np.mean(AQ, axis=1, keepdims=True)
+        
+        # First/Last Layer WQ/AQ
+        # FST_WQ = WQ[:, 0:1]
+        # FST_AQ = AQ[:, 0:1]
+        # LST_WQ = WQ[:, -1:]
+        # LST_AQ = AQ[:, -1:]
 
         # Expand to [WQ, AQ, WQ*MACS, AQ*MACS]
         expanded_X = np.hstack([WQ, AQ, WQ * MACS, AQ * MACS])
