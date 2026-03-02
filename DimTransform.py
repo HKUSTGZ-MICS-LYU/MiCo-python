@@ -7,6 +7,20 @@ class DimTransform:
     def __call__(self, scheme: list) -> list:
         return scheme
 
+class WxA8Transform(DimTransform):
+    def __init__(self, dim: int):
+        super().__init__(dim)
+        assert dim % 2 == 0
+        self.in_dim = dim // 2
+
+    def __call__(self, scheme: list) -> list:
+        assert len(scheme) == self.in_dim
+        wq_scheme = scheme
+        aq_scheme = [8] * self.in_dim
+        out_scheme = wq_scheme + aq_scheme
+        assert len(out_scheme) == self.out_dim
+        return out_scheme
+
 class SameWQAQTransform(DimTransform):
     def __init__(self, dim: int):
         super().__init__(dim)

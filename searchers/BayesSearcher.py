@@ -48,6 +48,26 @@ class BayesSearcher(QSearcher):
         X = [x for x in X if self.evaluator.constr(x) <= constr_value]
         return X
 
+    def constr_fallback(self, n_samples: int, constr_value: float) -> list:
+        """Repair random samples to meet constraint by randomly decreasing bitwidths."""
+        results = []
+        for _ in range(n_samples):
+            x = list(np.random.choice(self.qtypes, self.dims))
+            # Iteratively decrease a random dimension until constraint is satisfied
+            for _ in range(self.dims * len(self.qtypes)):
+                if self.evaluator.constr(x) <= constr_value:
+                    break
+                dim_idx = np.random.randint(self.dims)
+                current = x[dim_idx]
+                lower = [q for q in self.qtypes if q < current]
+                if lower:
+                    x[dim_idx] = np.random.choice(lower)
+            else:
+                # Force minimum bitwidth on all dims as last resort
+                x = [min(self.qtypes)] * self.dims
+            results.append(x)
+        return results
+
     def search(self, n_iter: int, target: str, 
                constr: str = None, 
                constr_value = None):
@@ -91,7 +111,10 @@ class BayesSearcher(QSearcher):
                     X = self.select(X, constr_value)
                     timeout_count += 1
                     if timeout_count > 50:
-                        raise ValueError("Cannot find any feasible solution. Please consider relaxing the constraint.")
+                        print("Warning: random sampling timeout. Using bitwidth-reduction fallback.")
+                        X = self.constr_fallback(self.NUM_SAMPLES, constr_value)
+                        X = self.select(X, constr_value)
+                        break
             else:
                 X = self.sample(self.NUM_SAMPLES)
 
