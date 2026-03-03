@@ -44,6 +44,8 @@ class MiCoSearcher(QSearcher):
                  initial_method: str = "orth",
                  sample_method: str = "near-constr",
                  feature_en: bool = True,
+                 roi: float = 0.2,
+                 max_roi: float = 0.5,
                  dim_trans: DimTransform = None) -> None:
         
         super().__init__(evaluator, n_inits, qtypes)
@@ -67,7 +69,8 @@ class MiCoSearcher(QSearcher):
 
         self.dims = self.dim
         self.qtypes = qtypes
-        self.roi = 0.2 # Start with 20% ROI
+        self.roi_start = roi
+        self.max_roi = max_roi
         self.dim_transform = dim_trans
         if self.dim_transform is not None:
             assert self.dim_transform.out_dim == self.n_layers * 2
@@ -178,7 +181,7 @@ class MiCoSearcher(QSearcher):
         final_y = None
         for i in range(n_iter):
             
-            self.roi = 0.2 + 0.3 * (i / n_iter)
+            self.roi = self.roi_start + (self.max_roi - self.roi_start) * (i / n_iter)
             print("ROI:", self.roi)
 
             X = []

@@ -11,6 +11,8 @@ import sys, os
 import io, contextlib
 import multiprocessing
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from matplotlib import pyplot as plt
+from tqdm import tqdm
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
@@ -37,10 +39,56 @@ EXPERIMENTS = [
      'n': 32, 'bitwidths': [1,2,4,8]},
 ]
 
-FEATURE_SETS = ['raw', 'bops', 'cbops', 'cbops+']
-REGRESSORS = ['LogRandomForest']
-TRAIN_RATIOS = [0.2, 0.4, 0.6, 0.8, 1.0]
+FEATURE_SETS = ['raw']
+REGRESSORS = ['LogRandomForest', 'LogXGBRegressor']
+TRAIN_RATIOS = [0.8]
 NUM_SEEDS = 5
+
+
+def output_avg_regression_scatter(exp, results):
+    """Output averaged regression scatter charts per train ratio (x: actual, y: predicted)."""
+    os.makedirs("output/figs", exist_ok=True)
+    fig_paths = []
+    for train_ratio in TRAIN_RATIOS:
+        fig, ax = plt.subplots(1, 1, figsize=(6, 6))
+        all_x = []
+        all_y = []
+        for features in FEATURE_SETS:
+            for regressor in REGRESSORS:
+                config_key = f"{features}+{regressor}"
+                pred_runs = results[config_key][train_ratio]['preds']
+                if not pred_runs:
+                    continue
+
+                x_eval = results[config_key][train_ratio]['x_eval'] / 1e6
+                y_avg = np.mean(np.vstack(pred_runs), axis=0) / 1e6
+                ax.scatter(x_eval, y_avg, alpha=0.6, s=48, label=features)
+                all_x.append(x_eval)
+                all_y.append(y_avg)
+
+        if all_x and all_y:
+            x_all = np.concatenate(all_x)
+            y_all = np.concatenate(all_y)
+            lo = min(np.min(x_all), np.min(y_all))
+            hi = max(np.max(x_all), np.max(y_all))
+            ax.plot([lo, hi], [lo, hi], color='red', linestyle='--', linewidth=1, label='Ideal')
+
+        # Set all font as times new roman
+        # plt.rcParams["font.family"] = "Times New Roman"
+        # ax.set_title(f"{exp['name']} ({train_ratio:.0%} train)")
+
+        ax.set_xlabel("Actual Latency (M Cycles)", fontsize=24)
+        ax.set_ylabel("Predicted Latency (M Cycles)", fontsize=24)
+        # Set tick font size
+        ax.tick_params(axis='both', which='both', labelsize=20)
+        ax.grid(True, alpha=0.3)
+        ax.legend(fontsize=24)
+        plt.tight_layout()
+        fig_path = f"output/figs/{exp['model']}_{exp['target']}_avg_reg_scatter_{int(train_ratio*100)}.pdf"
+        plt.savefig(fig_path)
+        plt.close()
+        fig_paths.append(fig_path)
+    return fig_paths
 
 
 def build_proxies(target, features, regressor):
@@ -56,7 +104,7 @@ def build_proxies(target, features, regressor):
     return mp, cp
 
 
-def run_experiment(exp):
+def run_experiment(exp, position=0):
     """Run one experiment across all configs. Designed to run in a subprocess."""
     model_name = exp['model']
     target = exp['target']
@@ -92,10 +140,20 @@ def run_experiment(exp):
     X_true = np.array([evaluator.eval(s, offline=True) for s in all_schemes])
 
     results = {}
+    total_steps = len(FEATURE_SETS) * len(REGRESSORS) * sum(
+        1 if train_ratio >= 1.0 else NUM_SEEDS for train_ratio in TRAIN_RATIOS
+    )
+    pbar = tqdm(total=total_steps, desc=exp['name'], position=position, leave=True)
     for features in FEATURE_SETS:
         for regressor in REGRESSORS:
             config_key = f"{features}+{regressor}"
-            results[config_key] = {r: {'mape': [], 'spearman': [], 'r2': []} for r in TRAIN_RATIOS}
+            results[config_key] = {r: {
+                'mape': [], 
+                'spearman': [], 
+                'r2': [], 
+                'rrse': [],
+                'preds': [], 
+                'x_eval': None} for r in TRAIN_RATIOS}
 
             for train_ratio in TRAIN_RATIOS:
                 n_seeds = 1 if train_ratio >= 1.0 else NUM_SEEDS
@@ -124,11 +182,19 @@ def run_experiment(exp):
                     mape = mean_absolute_percentage_error(X_eval, Y_eval)
                     spear, _ = spearmanr(X_eval, Y_eval)
                     r2 = r2_score(X_eval / np.max(X_eval), Y_eval / np.max(Y_eval))
+                    # r2 = r2_score(X_eval, Y_eval)
+                    rrse = np.sqrt(np.sum((X_eval - Y_eval) ** 2) / np.sum((X_eval - np.mean(X_eval)) ** 2))
 
                     results[config_key][train_ratio]['mape'].append(mape)
                     results[config_key][train_ratio]['spearman'].append(spear)
                     results[config_key][train_ratio]['r2'].append(r2)
+                    results[config_key][train_ratio]['rrse'].append(rrse)
+                    results[config_key][train_ratio]['preds'].append(Y_eval)
+                    if results[config_key][train_ratio]['x_eval'] is None:
+                        results[config_key][train_ratio]['x_eval'] = X_eval
+                    pbar.update(1)
 
+    pbar.close()
     return exp, results
 
 
@@ -145,6 +211,7 @@ def format_results(all_results):
         for metric_name, metric_key, fmt, scale in [
             ("MAPE% (mean±std, lower is better)", 'mape', "{:.2f}", 100),
             ("R² (mean±std, higher is better)", 'r2', "{:.4f}", 1),
+            ("RRSE (mean±std, lower is better)", 'rrse', "{:.4f}", 1),
             ("Spearman Correlation (mean±std, higher is better)", 'spearman', "{:.4f}", 1),
         ]:
             lines.append(f"\n**{metric_name}**\n")
@@ -173,7 +240,10 @@ def main():
     exp_index = {exp['name']: i for i, exp in enumerate(EXPERIMENTS)}
 
     with ProcessPoolExecutor(max_workers=n_workers) as executor:
-        futures = {executor.submit(run_experiment, exp): exp for exp in EXPERIMENTS}
+        futures = {
+            executor.submit(run_experiment, exp, idx): exp
+            for idx, exp in enumerate(EXPERIMENTS)
+        }
         for future in as_completed(futures):
             exp, results = future.result()
             idx = exp_index[exp['name']]
@@ -189,6 +259,12 @@ def main():
     with open("predict/e2e_results.md", "w") as f:
         f.write(md)
     print("\nResults saved to predict/e2e_results.md")
+
+    print("\nGenerating averaged regression scatter charts...")
+    for exp, results in all_results:
+        fig_paths = output_avg_regression_scatter(exp, results)
+        for fig_path in fig_paths:
+            print(f"  ✓ saved {fig_path}")
 
 
 if __name__ == "__main__":
