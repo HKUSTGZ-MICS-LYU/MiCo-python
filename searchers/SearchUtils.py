@@ -88,11 +88,16 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
         return random_sample(n_samples, qtypes)
     
     pop = []
+    score = []
     for q in qtypes:
         pop.append([q] * dims)
     if initial_pop is not None:
         pop += initial_pop
-    
+
+    # Get initial score
+    for x in pop:
+        score.append(dist_to_roi(x, constr_func, constr_value, roi))
+
     gen = 0
     n_layers = dims // 2
 
@@ -155,14 +160,13 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
                 continue
 
             pop.append(sample)
+            score.append(dist_to_roi(sample, constr_func, constr_value, roi))
 
         # rank to get near to constraint
-        pop = sorted(
-            pop, 
-            key=lambda x: dist_to_roi(x, constr_func, constr_value, roi),
-        )
-
-        pop = pop[:n_samples]
+        sorted_pairs = sorted(zip(score, pop), key=lambda pair: pair[0])
+        # sort by score and eliminate population to keep only near constraint samples
+        score = [pair[0] for pair in sorted_pairs[:n_samples]]
+        pop = [pair[1] for pair in sorted_pairs[:n_samples]]
 
         if dist_to_roi(pop[-1], constr_func, constr_value, roi) == 0.0:
             break
