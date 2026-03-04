@@ -79,6 +79,10 @@ class MiCoEval:
         self.misc_latency = 0.0
         self.misc_proxy = None
 
+        # Proxy Calibration
+        self.intercept = 0.0
+        self.slope = 1.0
+
         print("Model:", self.model._get_name())
         print("Number of QLayers: ", self.n_layers)
         print("Total MACs: ", np.sum(self.layer_macs))
@@ -331,8 +335,29 @@ class MiCoEval:
             pred_latency += np.sum(self.conv2d_proxy.predict(np.array(conv2d_features)))
         if linear_features:
             pred_latency += np.sum(self.matmul_proxy.predict(np.array(linear_features)))
+        pred_latency += self.misc_latency
+        pred_latency = self.slope * pred_latency + self.intercept
+        return pred_latency
 
-        return pred_latency + self.misc_latency
+    def calibrate_proxy(self, min_q: int = 2, max_q: int = 8, target: str = 'bitfusion'):
+        
+        print("Calibrating Proxy...")
+
+        min_pred = self.eval_pred_latency([min_q] * self.n_layers * 2)
+        min_real = self.eval_latency([min_q] * self.n_layers * 2, target=target)
+        print("Min Predicted Latency:", min_pred)
+        print("Min Real Latency:", min_real)
+
+        max_pred = self.eval_pred_latency([max_q] * self.n_layers * 2)
+        max_real = self.eval_latency([max_q] * self.n_layers * 2, target=target)
+        print("Max Predicted Latency:", max_pred)
+        print("Max Real Latency:", max_real)
+
+        # Linear Calibration
+        self.slope = (max_real - min_real) / (max_pred - min_pred)
+        self.intercept = min_real - self.slope * min_pred
+        
+        return min_real, max_real
 
     def eval_size(self, scheme:list):
         size = 0

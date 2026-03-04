@@ -23,7 +23,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("model", type=str)
-    parser.add_argument("-c","--target_ratio", type=float, default=0.75)
+    parser.add_argument("-c","--target_ratio", type=float, default=0.6)
     parser.add_argument("-s","--seed", type=int, default=0)
     parser.add_argument("-n","--n_inits", type=int, default=10)
     parser.add_argument("-i","--n_iter", type=int, default=10)
@@ -42,7 +42,7 @@ if __name__ == "__main__":
 
     dim = model.n_layers * 2
     bitwidths = [4, 5, 6, 7, 8]
-    target_ratio = 0.6
+    target_ratio = args.target_ratio
 
     # Calibration 
     if args.mode == "proxy":

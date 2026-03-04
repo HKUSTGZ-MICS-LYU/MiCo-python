@@ -128,8 +128,8 @@ def benchmark_bitfusion_matmul(N:int, M:int, K:int):
         "m": M,
         "k": K
     }
-    qa = [2, 4, 8]
-    qb = [2, 4, 8]
+    qa = [2, 3, 4, 5, 6, 7, 8]
+    qb = [2, 3, 4, 5, 6, 7, 8]
     res = []
     for i in range(len(qa)):
         for j in range(len(qb)):
@@ -158,8 +158,8 @@ def benchmark_bitfusion_conv2d(HW, C, K, KS, S):
         "ks": KS,
         "s": S
     }
-    qa = [2, 4, 8]
-    qb = [2, 4, 8]
+    qa = [2, 3, 4, 5, 6, 7, 8]
+    qb = [2, 3, 4, 5, 6, 7, 8]
     res = []
     for i in range(len(qa)):
         for j in range(len(qb)):
