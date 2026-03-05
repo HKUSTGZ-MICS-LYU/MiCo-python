@@ -18,7 +18,7 @@ from MiCoModel import MiCoModel, from_torch
 from MiCoQLayers import BitConv2d, BitLinear
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
-from SimUtils import gen_sim_bitfusion, sim_mico
+from SimUtils import gen_sim_bitfusion, sim_mico, run_host
 
 from copy import deepcopy
 
@@ -180,6 +180,7 @@ class MiCoEval:
             'torchao_acc': self.eval_torchao,
             'bops': self.eval_bops,
             'size': self.eval_size,
+            'latency_host': lambda scheme: self.eval_latency(scheme, 'host'),
             'latency_bitfusion': lambda scheme: self.eval_latency(scheme, 'bitfusion'),
             'latency_mico': lambda scheme: self.eval_latency(scheme, 'mico'),
             'latency_proxy': lambda scheme: self.eval_latency(scheme, 'proxy'),
@@ -282,12 +283,14 @@ class MiCoEval:
         self.model.set_qscheme([wq, aq], group_size=self.group_size)
         return self.model.test(self.test_loader)['TestAcc']
     
-    def eval_qat(self, scheme: list):
+    def eval_qat(self, scheme: list, epochs: int = None):
+        if epochs is None:
+            epochs = self.epochs
         wq = scheme[:self.n_layers]
         aq = scheme[self.n_layers:]
         self.load_pretrain()
         self.model.set_qscheme([wq, aq], qat=True, group_size=self.group_size)
-        self.model.train_loop(self.epochs, self.train_loader, self.test_loader, 
+        self.model.train_loop(epochs, self.train_loader, self.test_loader, 
                               verbose=True, lr=self.lr)
         return self.model.test(self.test_loader)['TestAcc']
     
@@ -398,7 +401,8 @@ class MiCoEval:
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
             codegen.forward(example_input)
             codegen.convert()
-            codegen.build(target="host")
+            codegen.build(target="host", options="OPT=lut")
+            res = run_host()
             
         elif target == 'proxy':
             res = self.eval_pred_latency(scheme)
@@ -445,5 +449,5 @@ if __name__ == "__main__":
     evaluator = MiCoEval(model, 10, train_loader, test_loader, 
                          "output/ckpt/resnet8_cifar10.pth", model_name="resnet8")
     
-    res = evaluator.eval_latency([8]*model.n_layers*2, 'bitfusion')
+    res = evaluator.eval_latency([8]*model.n_layers*2, 'host')
     print("Latency:", res)

@@ -53,30 +53,19 @@ class NLPSearcher(QSearcher):
                constr_value = None):
         
         self.evaluator.set_eval(target)
-
         assert constr == 'bops', "Only BOPS constraint is supported"
         self.evaluator.set_constraint(constr)
 
         print("Calculating Layer-wise W...")
         self.calculate_w(qbits=min(self.qbits))
         m = GEKKO(remote=False)
-        m.options.IMODE = 3
-        m.options.SOLVER = 3
-
-        # Manual SOS1
-        # q_vars = []
-        # for i in range(self.n_layers):
-        #     b = m.Array(m.Var, len(self.qbits), lb=0, ub=1, integer=True)
-        #     m.Equation(m.sum(b) == 1)
-        #     q = m.sum([self.qbits[j] * b[j] for j in range(len(self.qbits))])
-        #     q_vars.append(q)
 
         if self.use_sos:
             # SOS1 Method
             q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
             for i in range(self.n_layers):
                 # We need to start from the highest bitwidth
-                q_vars[i].value = max(self.qbits) 
+                q_vars[i].value = 8
         else:
             # Integer Method
             q_vars = [m.CV(lb=min(self.qbits), ub=max(self.qbits), integer=True) \
@@ -85,13 +74,23 @@ class NLPSearcher(QSearcher):
         m.Equation(m.sum([(q_vars[i]**2) * self.layer_macs[i] 
                         for i in range(self.n_layers)]) <= constr_value)
         
-        total_w = m.sum([q_vars[i] * self.layer_w[i] for i in range(self.n_layers)])
+        total_w = m.sum([(q_vars[i]*q_vars[i]) * self.layer_w[i] for i in range(self.n_layers)])
+        m.Obj(total_w)
 
-        m.Minimize(total_w)
+        if self.use_sos:
+            print("Using SOS1 Constraints for Quantization Bitwidths")
+            m.options.IMODE = 3
+        else:
+            m.options.IMODE = 3
+            m.options.SOLVER = 3
         
         print("Searching with BOPS Constraint:", constr_value)
 
-        m.solve(disp=True)
+        try:
+            m.solve(disp=True)
+        except Exception as e:
+            print("Gekko Solver Error:", e)
+            return None, None
 
         def convert_q(q):
             if 1.58 <= q < 2:

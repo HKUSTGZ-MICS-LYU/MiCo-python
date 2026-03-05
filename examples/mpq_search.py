@@ -80,7 +80,7 @@ if __name__ == "__main__":
                     evaluator, n_inits=N_INIT, qtypes=bitwidths)
             elif method == "nlp":
                 searcher = NLPSearcher(
-                    evaluator, n_inits=N_INIT, qtypes=bitwidths
+                    evaluator, n_inits=N_INIT, qtypes=bitwidths, use_sos=(MODE=="qat_acc")
                 )
             elif method == "mico":
                 searcher = MiCoSearcher(
@@ -103,6 +103,11 @@ if __name__ == "__main__":
             res = evaluator.eval_bops(res_x)
             print(f"MPQ Real Latency: {res} ({res / max_bops:.2%})")
 
+            if MODE == "qat_acc":
+                # Final Fine-tuning and evaluation
+                final_acc = evaluator.eval_qat(res_x, EPOCHS*2)
+                print(f"Final QAT Accuracy: {final_acc}")
+                searcher.best_trace.append(final_acc)
             res_data[method].append(searcher.best_trace)
 
     final_res = {}
