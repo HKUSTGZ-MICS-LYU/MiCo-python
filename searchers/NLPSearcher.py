@@ -61,11 +61,16 @@ class NLPSearcher(QSearcher):
         m = GEKKO(remote=False)
 
         if self.use_sos:
-            # SOS1 Method
-            q_vars = [m.sos1(self.qbits) for i in range(self.n_layers)]
+            # Use binary variables to select exactly one value from qbits
+            q_vars = []
             for i in range(self.n_layers):
-                # We need to start from the highest bitwidth
-                q_vars[i].value = 8
+                b = [m.Var(lb=0, ub=1, integer=True) for _ in self.qbits]
+                b[0].value = 1
+                m.Equation(m.sum(b) == 1)
+                q_var = m.Intermediate(
+                    m.sum([b[j] * self.qbits[j] for j in range(len(self.qbits))])
+                )
+                q_vars.append(q_var)
         else:
             # Integer Method
             q_vars = [m.CV(lb=min(self.qbits), ub=max(self.qbits), integer=True) \
@@ -80,6 +85,7 @@ class NLPSearcher(QSearcher):
         if self.use_sos:
             print("Using SOS1 Constraints for Quantization Bitwidths")
             m.options.IMODE = 3
+            m.options.SOLVER = 1
         else:
             m.options.IMODE = 3
             m.options.SOLVER = 3
@@ -100,6 +106,12 @@ class NLPSearcher(QSearcher):
 
         wq_vars = [convert_q(v.value[0]) for v in q_vars]
         aq_vars = [convert_q(v.value[0]) for v in q_vars]
+
+        # Assert all variables are in the allowed quantization bitwidths
+        for v in wq_vars + aq_vars:
+            if v not in self.qbits:
+                print("Warning: Gekko returned a bitwidth that is not in the allowed set:", v)
+                return None, None
 
         qscheme = wq_vars + aq_vars
         print("Best QS: ", qscheme)
