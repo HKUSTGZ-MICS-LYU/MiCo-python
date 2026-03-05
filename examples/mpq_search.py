@@ -20,7 +20,7 @@ from searchers import (
 argsparse = argparse.ArgumentParser()
 argsparse.add_argument("model_name", type=str)
 argsparse.add_argument("--init", type=int , default=16)
-argsparse.add_argument("--mico-only", action="store_true")
+argsparse.add_argument("--methods", type=str, default="nlp,haq,bo,mico")
 argsparse.add_argument("-n", "--n-search", type=int, default=16)
 argsparse.add_argument("-c", "--constraint-factor", type=float, default=0.5)
 argsparse.add_argument("-ctype", "--constraint", type=str, default="bops")
@@ -35,6 +35,7 @@ N_INIT = args.init
 N_SEARCH = args.n_search
 CONSTR_RATIO = args.constraint_factor
 CONSTR_TYPE = args.constraint
+METHODS = args.methods.split(",")
 TRAILS = args.trails
 MODE = args.mode
 EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
@@ -61,7 +62,7 @@ if __name__ == "__main__":
 
     res_data = {}
 
-    methods = ["nlp", "haq", "bo", "mico"] if not args.mico_only else ["mico"]
+    methods = METHODS
 
     for seed in range(TRAILS):
         
@@ -105,6 +106,7 @@ if __name__ == "__main__":
 
             if MODE == "qat_acc":
                 # Final Fine-tuning and evaluation
+                print("Starting QAT fine-tuning...")
                 final_acc = evaluator.eval_qat(res_x, EPOCHS*2)
                 print(f"Final QAT Accuracy: {final_acc}")
                 searcher.best_trace.append(final_acc)
