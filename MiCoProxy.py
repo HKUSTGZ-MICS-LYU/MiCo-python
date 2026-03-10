@@ -54,6 +54,55 @@ class LogRandomForestRegressor:
         y_pred_log = self.model.predict(X)
         return np.expm1(y_pred_log)
 
+class TransferLearner:
+    def __init__(self, src_model, mode = "cascade", **kwargs):
+        self.src = src_model
+        self.tgt = XGBRegressor(**kwargs)
+
+        if mode == "cascade":
+            self.fit = self._fit_cascade
+            self.predict = self._predict_cascade
+        elif mode == "residual":
+            self.fit = self._fit_residual
+            self.predict = self._predict_residual
+        elif mode == "rational":
+            self.fit = self._fit_rational
+            self.predict = self._predict_rational
+        else:
+            raise ValueError(f"Unsupported mode: {mode}")
+
+    def _fit_cascade(self, X, y):
+        # Get source predictions as features
+        src_preds = self.src.predict(X).reshape(-1, 1)
+        # Combine with original features
+        combined_features = np.hstack((X, src_preds))
+        self.tgt.fit(combined_features, y)
+    
+    def _predict_cascade(self, X):
+        src_preds = self.src.predict(X).reshape(-1, 1)
+        combined_features = np.hstack((X, src_preds))
+        return self.tgt.predict(combined_features)
+    
+    def _fit_residual(self, X, y):
+        src_preds = self.src.predict(X)
+        residuals = y - src_preds
+        self.tgt.fit(X, residuals)
+
+    def _predict_residual(self, X):
+        src_preds = self.src.predict(X)
+        residual_preds = self.tgt.predict(X)
+        return src_preds + residual_preds
+
+    def _fit_rational(self, X, y):
+        src_preds = self.src.predict(X)
+        ratio = y / src_preds
+        self.tgt.fit(X, ratio)
+    
+    def _predict_rational(self, X):
+        src_preds = self.src.predict(X)
+        ratio_preds = self.tgt.predict(X)
+        return src_preds * ratio_preds
+
 class MiCoProxy:
     def __init__(self, model, preprocess = 'raw', train_ratio = 1.0, seed = 42, 
                  train_x=None, train_y=None):
@@ -71,6 +120,7 @@ class MiCoProxy:
             "cbops": self._get_cbops_features,
             "cbops+": self._get_cbops_plus_features
         }
+        self.preprocess_name = preprocess
         self.preprocess = self.preprocess_dict[preprocess]
     def _get_mac_plus_features(self, X):
         MACS = X[:, 0]
@@ -136,6 +186,13 @@ class MiCoProxy:
         X = self.preprocess(X)
         return self.model.predict(X)
 
+class MiCoTransferProxy(MiCoProxy):
+    def __init__(self, src_proxy: MiCoProxy, train_ratio=1, seed=42, 
+                 train_x=None, train_y=None, mode="cascade"):
+        
+        model = TransferLearner(src_proxy.model, mode=mode)
+        super().__init__(model, src_proxy.preprocess_name, train_ratio, seed, 
+                         train_x, train_y)
 
 REGRESSOR_FACTORIES = {
     'LogRandomForest': lambda: LogRandomForestRegressor(random_state=42),
@@ -301,6 +358,48 @@ def get_host_conv2d_proxy(opt="opt", preprocess=None, regressor=None):
         'conv2d',
         preprocess=preprocess, regressor=regressor
     )
+
+
+def get_transfer_mico_pair(src_mico_type: str, tgt_mico_type: str,
+                           src_ratio: float = 0.8, tgt_ratio: float = 0.1,
+                           preprocess: str = "raw", regressor: str = "LogRandomForest",
+                           mode: str = "cascade"):
+    """Create transfer learning proxy pair from source to target.
+
+    Args:
+        src_mico_type: Source mico type (e.g., 'small', 'high')
+        tgt_mico_type: Target mico type (e.g., 'small', 'high')
+        src_ratio: Training ratio for source proxy (default 0.8)
+        tgt_ratio: Training ratio for target proxy (default 0.1)
+        preprocess: Feature preprocessing method (default "raw")
+        regressor: Regressor type (default "LogRandomForest")
+        mode: Transfer learning mode - "cascade" or "residual" (default "cascade")
+
+    Returns:
+        Tuple of (matmul_proxy, conv2d_proxy) for the target with transfer learning
+    """
+    # Build source proxy (trained with src_ratio)
+    src_mp = get_mico_matmul_proxy(mico_type=src_mico_type, preprocess=preprocess, regressor=regressor)
+    src_cp = get_mico_conv2d_proxy(mico_type=src_mico_type, preprocess=preprocess, regressor=regressor)
+    src_mp.set_train_ratio(src_ratio)
+    src_mp.fit()
+    src_cp.set_train_ratio(src_ratio)
+    src_cp.fit()
+
+    # Build target proxy (get training data but will use transfer learning)
+    tgt_mp = get_mico_matmul_proxy(mico_type=tgt_mico_type, preprocess=preprocess, regressor=regressor)
+    tgt_cp = get_mico_conv2d_proxy(mico_type=tgt_mico_type, preprocess=preprocess, regressor=regressor)
+
+    # Create transfer proxies using source as base
+    transfer_mp = MiCoTransferProxy(src_mp, train_ratio=tgt_ratio, mode=mode,
+                                    train_x=tgt_mp.train_x, train_y=tgt_mp.train_y)
+    transfer_cp = MiCoTransferProxy(src_cp, train_ratio=tgt_ratio, mode=mode,
+                                     train_x=tgt_cp.train_x, train_y=tgt_cp.train_y)
+    transfer_mp.fit()
+    transfer_cp.fit()
+
+    return transfer_mp, transfer_cp
+
 
 if __name__ == "__main__":
     # Test Bitfusion proxies with cross-validation
