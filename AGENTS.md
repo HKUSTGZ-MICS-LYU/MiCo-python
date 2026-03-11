@@ -69,7 +69,7 @@ MiCo-python/
 │   ├── MiCoAnalysis.py        # Model statistics and analysis
 │   ├── SimUtils.py            # Hardware simulation utilities
 │   ├── DimTransform.py        # Dimension transformation for search
-│   └── datasets.py            # Dataset loaders
+│   └── MiCoDatasets.py         # Dataset loaders
 │
 ├── searchers/                 # MPQ search algorithms
 │   ├── MiCoSearcher.py        # Main MiCo searcher (RF/XGB/Bayes)
@@ -422,7 +422,8 @@ best_config, best_acc = searcher.search(40, 'ptq_acc', 'latency_proxy', max_late
 | MLP | Linear | ✅ | ✅ | ✅ |
 | HARMLP | Linear | ✅ | ✅ | ✅ |
 | LeNet | Linear, Conv2D | ✅ | ✅ | ✅ |
-| CNN | Linear, Conv2D | ✅ | ✅ | ✅ |
+| AlexNet | Linear, Conv2D | ✅ | ✅ | ✅ |
+| CmsisCNN | Linear, Conv2D | ✅ | ✅ | ✅ |
 | VGG | Linear, Conv2D | ✅ | ✅ | ✅ |
 | ResNet | Linear, BottleNeck | ✅ | ✅ | ✅ |
 | MobileNetV2 | Linear, BottleNeck | ✅ | ✅ | ✅ |
@@ -430,19 +431,21 @@ best_config, best_acc = searcher.search(40, 'ptq_acc', 'latency_proxy', max_late
 | ShuffleNet | Linear, Conv2D | ✅ | ✅ | ⏳ Not Yet |
 | LLaMa | Transformers | ✅ | ✅ | ⏳ Not Yet |
 | ViT | Transformers | ✅ | ⏳ Not Yet | ⏳ Not Yet |
+| HuggingFace Models | Transformers | ✅ | ⏳ Not Yet | ⏳ Not Yet |
 | M5 | Linear, Conv1D | ✅ | ✅ | ⏳ Not Yet |
+| KWSConv1d | Linear, Conv1D | ✅ | ✅ | ⏳ Not Yet |
 | DS CNN | Linear, Conv2D | ✅ | ✅ | ✅ |
 
 ### Supported Datasets
 
-- **Vision**: MNIST, Fashion MNIST, CIFAR-10, CIFAR-100
-- **Text**: TinyStories (for LLaMa)
+- **Vision**: MNIST, Fashion MNIST, CIFAR-10, CIFAR-100, ImageNet *(requires external download)*
+- **Text**: TinyStories (for LLaMa), WikiText / WikiText-2 / WikiText-103, HuggingFace Text Datasets *(W.I.P.)*
 - **Sensor**: UCI HAR (wearable sensors)
 - **Audio**: SpeechCommands (keyword spotting, requires additional packages)
 
 **Load Dataset Example**:
 ```python
-from datasets import mnist, cifar10, cifar100
+from MiCoDatasets import mnist, cifar10, cifar100
 
 train_loader, test_loader = mnist(batch_size=64, resize=28)
 train_loader, test_loader = cifar10(batch_size=128)

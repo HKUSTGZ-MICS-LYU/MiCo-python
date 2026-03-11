@@ -64,8 +64,8 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | MLP   | Linear         | Supported | Supported | Supported |
 | HARMLP | Linear        | Supported | Supported | Supported |
 | LeNet | Linear, Conv2D | Supported | Supported | Supported |
-| AlexNet | Linear, Conv2D | Supported | Supported | Not Yet |
-| CmsisCNN | Linear, Conv2D | Supported | Supported | Not Yet |
+| AlexNet | Linear, Conv2D | Supported | Supported | Supported |
+| CmsisCNN | Linear, Conv2D | Supported | Supported | Supported |
 | VGG   | Linear, Conv2D | Supported | Supported | Supported |
 | ResNet | Linear, BottleNeck (Conv2D) | Supported | Supported | Supported |
 | MobileNetV2 | Linear, BottleNeck (Conv2D) | Supported | Supported | Supported |
@@ -87,12 +87,12 @@ Currently MiCo includes the following datasets:
 + Fashion MNIST
 + CIFAR-10
 + CIFAR-100
-+ ImageNet
++ ImageNet *(requires external download)*
 + TinyStories
 + UCI HAR (wearable sensors)
 + SpeechCommands (keyword spotting)
 + WikiText / WikiText-2 / WikiText-103
-+ HuggingFace Text Datasets (generic loader)
++ HuggingFace Text Datasets *(W.I.P.)*
 
 *(SpeechCommands requires a few more packages and libraries to install)*
 
