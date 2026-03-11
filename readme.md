@@ -48,7 +48,7 @@ python MiCoCodeGen.py
 git submodule update --init
 cd project
 make clean
-make MAIN=main TARGET=<host, vexii> OPT=<unroll, simd>
+make MAIN=main TARGET=<host, vexii, rocket, spike> OPT=<unroll, simd>
 ```
 **To run the inference on your host machine** after compilation:
 ```shell
@@ -64,7 +64,8 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | MLP   | Linear         | Supported | Supported | Supported |
 | HARMLP | Linear        | Supported | Supported | Supported |
 | LeNet | Linear, Conv2D | Supported | Supported | Supported |
-| CNN   | Linear, Conv2D | Supported | Supported | Supported |
+| AlexNet | Linear, Conv2D | Supported | Supported | Supported |
+| CmsisCNN | Linear, Conv2D | Supported | Supported | Supported |
 | VGG   | Linear, Conv2D | Supported | Supported | Supported |
 | ResNet | Linear, BottleNeck (Conv2D) | Supported | Supported | Supported |
 | MobileNetV2 | Linear, BottleNeck (Conv2D) | Supported | Supported | Supported |
@@ -72,7 +73,9 @@ Check the [VexiiRiscv document](https://spinalhdl.github.io/VexiiRiscv-RTD/maste
 | ShuffleNet | Linear, Conv2D | Supported | Supported | Not Yet |
 | LLaMa | Transformers (Linear) | Supported | Supported | Not Yet |
 | ViT   | Transformers (Linear) | Supported | Not Yet | Not Yet |
+| HuggingFace Models | Transformers (Linear) | Supported | Not Yet | Not Yet |
 | M5    | Linear, Conv1D | Supported | Supported | Not Yet |
+| KWSConv1d | Linear, Conv1D | Supported | Supported | Not Yet |
 | DS CNN    | Linear, Conv2D | Supported | Supported | Supported |
 
 
@@ -84,9 +87,12 @@ Currently MiCo includes the following datasets:
 + Fashion MNIST
 + CIFAR-10
 + CIFAR-100
++ ImageNet *(requires external download)*
 + TinyStories
 + UCI HAR (wearable sensors)
 + SpeechCommands (keyword spotting)
++ WikiText / WikiText-2 / WikiText-103
++ HuggingFace Text Datasets *(W.I.P.)*
 
 *(SpeechCommands requires a few more packages and libraries to install)*
 
@@ -99,31 +105,50 @@ Here are the main components/modules of MiCo.
 + `MiCoQLayers`: Fundamental quantized layer classes for MiCo models and quantization functions.
 + `MiCoEval`: Model evaluation for MiCo models, evaluating accuracy, BOPs, MACs, end-to-end latency results.
 + `MiCoAnalysis`: Various statistics for quantized models.
++ `MiCoDatasets`: Dataset loaders for all supported datasets.
++ `MiCoLLMEval`: Evaluation utilities for LLM models, including token agreement, generation comparison, and perplexity analysis.
++ `DimTransform`: Dimension transformation utilities for reducing search space in large models.
 
 **Codegen**
-+ `MiCoCodeGen`： C code generator for MiCo models.
++ `MiCoCodeGen`： C code generator for MiCo models, with automatic memory pool optimization.
 + `MiCoGraphGen`: DNN Weaver Op graph generator for MiCo models.
 + `MiCoLLaMaGen`: C code generator for MiCo TinyLLaMa models.
++ `MiCoRegistry`: Registry pattern for extensible PyTorch operation handlers in code generation.
 
 **Searchers**
-+ `searchers.MiCoSearcher`: Main MPQ searcher of MiCo framework.
++ `searchers.MiCoSearcher`: Main MPQ searcher of MiCo framework (Random Forest / XGBoost / Bayesian regressors).
++ `searchers.BayesSearcher`: Bayesian Optimization searcher with Gaussian Process.
++ `searchers.HAQSearcher`: Hardware-Aware Quantization searcher.
++ `searchers.NLPSearcher`: NLP-inspired searcher.
++ `searchers.RegressionSearcher`: Generic regression-based searcher.
++ `searchers.DDPG`: DDPG reinforcement learning based searcher.
++ `searchers.Ensemble`: Ensemble Bayesian optimization models.
 
 **Hardware-Aware**
 + `SimUtils`: Invoke simulations for BitFusion or VexiiRiscv hardware.
-+ `MiCoProxy`: CBOPs proxy models for hardware latency predictions.
++ `MiCoProxy`: Hardware latency proxy models for MiCo, BitFusion, and host targets.
 
 ## Folder Structure
 + `examples`: Example scripts for MPQ training/searching.
 + `deploy`: Example scripts for hardware-aware end-to-end MPQ search-deploy flow.
 + `searchers`: Implementations of MPQ searching algorithms.
 + `models`: MPQ models.
-+ `profile`: Scripts for hardware profiling (require hardware submodules).
++ `profiler`: Scripts for hardware profiling and adaptive sampling (require hardware submodules).
 + `project`: C project templates for MPQ inference on CPUs (require MiCo Library submodule).
 + `benchmark_results`: Profiled hardware kernel datasets for hardware-aware proxy models.
++ `hw`: Hardware-specific implementations (VexiiMico, BitFusion).
++ `tests`: Unit and integration tests.
++ `predict`: Experiment scripts for MPQ prediction and ablation studies.
++ `doc`: Documentation for advanced features and integrations.
++ `TinyStories`: TinyStories dataset utilities and tokenizer.
 
-## Chipyard Integration
+## Documentation
 
-[doc/CHIPYARD_INTEGRATION.md](doc/CHIPYARD_INTEGRATION.md)
++ [Chipyard Integration](doc/CHIPYARD_INTEGRATION.md)
++ [Registry Pattern Usage](doc/REGISTRY_USAGE.md)
++ [Memory Optimization](doc/MEMORY_OPTIMIZATION.md)
++ [MiCo Searcher Algorithm](doc/MICO_SEARCHER_ALGORITHM.md)
++ [LLM Evaluation Methods](doc/LLM_EVALUATION.md)
 
 ## Publication
 
