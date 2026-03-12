@@ -230,8 +230,8 @@ class MiCoONNXGen(torch.fx.Interpreter):
         candidates = [node.name] + list(node.output)
 
         for key in bitwidth_info:
-            # Normalise key: replace dots with underscores / slashes
-            normalised_variants = [
+            # Normalize key: replace dots with underscores / slashes
+            normalized_variants = [
                 key,
                 key.replace(".", "_"),
                 key.replace(".", "/"),
@@ -239,7 +239,7 @@ class MiCoONNXGen(torch.fx.Interpreter):
             for candidate in candidates:
                 if not candidate:
                     continue
-                for variant in normalised_variants:
+                for variant in normalized_variants:
                     if variant in candidate:
                         return key
         return None

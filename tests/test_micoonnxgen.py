@@ -53,7 +53,7 @@ class TestMiCoONNXGenInit(unittest.TestCase):
         self.assertIsNotNone(exporter)
 
 
-class TestMiCoONNXGenBitwdithCollection(unittest.TestCase):
+class TestMiCoONNXGenBitwidthCollection(unittest.TestCase):
     """Test bitwidth metadata collection."""
 
     def test_collect_uniform_bitwidths(self):
