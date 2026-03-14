@@ -26,10 +26,7 @@ from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikeliho
 
 
 from xgboost import XGBRegressor
-from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.ensemble import RandomForestRegressor
-
-from searchers.Ensemble.Models import MPGPEnsemble, RFModel
 
 class MiCoSearcher(QSearcher):
 
@@ -46,6 +43,12 @@ class MiCoSearcher(QSearcher):
                  feature_en: bool = True,
                  roi: float = 0.2,
                  max_roi: float = 0.5,
+                 rf_n_estimators: int = None,
+                 rf_max_depth: int = None,
+                 rf_max_features = None,
+                 rf_min_samples_split = None,
+                 rf_min_samples_leaf = None,
+                 rf_random_state: int = None,
                  dim_trans: DimTransform = None) -> None:
         
         super().__init__(evaluator, n_inits, qtypes)
@@ -71,6 +74,12 @@ class MiCoSearcher(QSearcher):
         self.qtypes = qtypes
         self.roi_start = roi
         self.max_roi = max_roi
+        self.rf_n_estimators = rf_n_estimators
+        self.rf_max_depth = rf_max_depth
+        self.rf_max_features = rf_max_features
+        self.rf_min_samples_split = rf_min_samples_split
+        self.rf_min_samples_leaf = rf_min_samples_leaf
+        self.rf_random_state = rf_random_state
         self.dim_transform = dim_trans
         if self.dim_transform is not None:
             assert self.dim_transform.out_dim == self.n_layers * 2
@@ -272,14 +281,29 @@ class MiCoSearcher(QSearcher):
                 model = XGBRegressor()
             return model
         elif self.regressor == "rf":
-            if self.dims > 10:
-                # Prevent overfitting for high-dimensional data
-                model = RandomForestRegressor(
-                    n_estimators=250, max_depth=15, max_features="sqrt"
-                )
-            else:
-                # Use constrained parameters for low-dimensional data to prevent overfitting
-                model = RandomForestRegressor()
+            rf_kwargs = {
+                "n_estimators": 250,
+                "min_samples_leaf": 2,
+            }
+            if self.dims > 20:
+                rf_kwargs = {
+                    "n_estimators": 250,
+                    "max_depth": 20,
+                    "min_samples_split": 4
+                }
+            if self.rf_n_estimators is not None:
+                rf_kwargs["n_estimators"] = self.rf_n_estimators
+            if self.rf_max_depth is not None:
+                rf_kwargs["max_depth"] = self.rf_max_depth
+            if self.rf_max_features is not None:
+                rf_kwargs["max_features"] = self.rf_max_features
+            if self.rf_min_samples_split is not None:
+                rf_kwargs["min_samples_split"] = self.rf_min_samples_split
+            if self.rf_min_samples_leaf is not None:
+                rf_kwargs["min_samples_leaf"] = self.rf_min_samples_leaf
+            if self.rf_random_state is not None:
+                rf_kwargs["random_state"] = self.rf_random_state
+            model = RandomForestRegressor(**rf_kwargs)
             return model
         else:
             raise ValueError(f"Regressor {self.regressor} not supported.")
