@@ -65,10 +65,10 @@ def grid_sample(n_samples: int, qtypes: list, dims: int):
             X.append(x)
     return X
 
-def dist_to_roi(x, constr_func, constr_value, roi):
+def dist_to_roi(x, constr_func, roi_lb, roi_ub):
     constr = constr_func(x)
-    lb = constr_value * (1-roi)
-    ub = constr_value
+    lb = roi_lb
+    ub = roi_ub
     
     # Strictly prioritize valid samples (<= ub)
     if constr > ub:
@@ -82,8 +82,8 @@ def dist_to_roi(x, constr_func, constr_value, roi):
         return lb - constr # Valid but too efficient (too small), penalize slightly
 
 def near_constr_sample(n_samples: int, qtypes: list, dims: int,
-                       constr_func=None, constr_value=None,
-                       roi=0.2, layer_macs:list=None, initial_pop=None):
+                       constr_func=None, constr_value=None, max_value=None,
+                       roi=0.2, initial_pop=None):
     if constr_func is None:
         return random_sample(n_samples, qtypes)
     
@@ -94,9 +94,14 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
     if initial_pop is not None:
         pop += initial_pop
 
+    cur_ratio = constr_value / max_value
+    assert cur_ratio > roi
+    roi_lb = (cur_ratio - roi) * max_value
+    roi_ub = constr_value
+
     # Get initial score
     for x in pop:
-        score.append(dist_to_roi(x, constr_func, constr_value, roi))
+        score.append(dist_to_roi(x, constr_func, roi_lb, roi_ub))
 
     gen = 0
     n_layers = dims // 2
@@ -160,7 +165,7 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
                 continue
 
             pop.append(sample)
-            score.append(dist_to_roi(sample, constr_func, constr_value, roi))
+            score.append(dist_to_roi(sample, constr_func, roi_lb, roi_ub))
 
         # rank to get near to constraint
         sorted_pairs = sorted(zip(score, pop), key=lambda pair: pair[0])
@@ -168,7 +173,7 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
         score = [pair[0] for pair in sorted_pairs[:n_samples]]
         pop = [pair[1] for pair in sorted_pairs[:n_samples]]
 
-        if dist_to_roi(pop[-1], constr_func, constr_value, roi) == 0.0:
+        if dist_to_roi(pop[-1], constr_func, roi_lb, roi_ub) == 0.0:
             break
         
         gen += 1
@@ -178,7 +183,7 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
             # Only discard truly invalid samples (those with huge distance)
             end_idx = len(pop)
             for i in range(len(pop)):
-                if dist_to_roi(pop[i], constr_func, constr_value, roi) > 1e5:
+                if dist_to_roi(pop[i], constr_func, roi_lb, roi_ub) > 1e5:
                     end_idx = i
                     break
             pop = pop[:end_idx]

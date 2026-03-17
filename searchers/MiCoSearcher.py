@@ -41,8 +41,9 @@ class MiCoSearcher(QSearcher):
                  initial_method: str = "orth",
                  sample_method: str = "near-constr",
                  feature_en: bool = True,
-                 roi: float = 0.2,
-                 max_roi: float = 0.5,
+                 ucb : bool = True,
+                 roi: float = 0.1,
+                 max_roi: float = 0.3,
                  rf_n_estimators: int = None,
                  rf_max_depth: int = None,
                  rf_max_features = None,
@@ -68,6 +69,9 @@ class MiCoSearcher(QSearcher):
             "xgb": self.regress_opt,
             "bayes": self.bayes_opt,
         }
+        if ucb:
+            self.regressor_dict["rf"] = self.rf_ucb
+
         assert regressor in self.regressor_dict, f"Regressor {regressor} not supported."
 
         self.dims = self.dim
@@ -87,6 +91,9 @@ class MiCoSearcher(QSearcher):
         print("Searcher Input Dim:", self.dims)
         self.sampled_X = None
         self.sampled_y = None
+
+        self.max_value = self.constr([max(qtypes)] * self.dims)
+
         return
     
     def constr(self, scheme: list):
@@ -115,8 +122,8 @@ class MiCoSearcher(QSearcher):
                                      dims=self.dims,
                                      constr_func=self.constr,
                                      constr_value=self.constr_value,
+                                     max_value=self.max_value,
                                      roi=self.roi,
-                                     layer_macs=self.evaluator.layer_macs,
                                      initial_pop=initial_pop)
         else:
             raise ValueError(f"Sample method {self.sample_method} not supported.")
@@ -281,16 +288,23 @@ class MiCoSearcher(QSearcher):
                 model = XGBRegressor()
             return model
         elif self.regressor == "rf":
-            rf_kwargs = {
-                "n_estimators": 250,
-                "min_samples_leaf": 2,
-            }
-            if self.dims > 20:
-                rf_kwargs = {
-                    "n_estimators": 250,
-                    "max_depth": 20,
-                    "min_samples_split": 4
-                }
+
+            rf_kwargs = {}
+            sample_num = len(self.sampled_X)
+            # Progressive Parameter Tuning
+            rf_kwargs["min_samples_leaf"] = 2
+            # rf_kwargs["max_features"] = "sqrt"
+            # rf_kwargs["n_estimators"] = int(100 * (sample_num / 16))
+            # if sample_num < 32:
+            #     rf_kwargs["max_depth"] = int(5 * (sample_num / 16))
+            if self.dims > 16:
+                rf_kwargs["n_estimators"] = 250
+                rf_kwargs["min_samples_leaf"] = 4
+                # rf_kwargs["max_depth"] = 3
+                # rf_kwargs["max_features"] = "sqrt"
+
+            rf_kwargs["random_state"] = 42
+
             if self.rf_n_estimators is not None:
                 rf_kwargs["n_estimators"] = self.rf_n_estimators
             if self.rf_max_depth is not None:
@@ -307,6 +321,24 @@ class MiCoSearcher(QSearcher):
             return model
         else:
             raise ValueError(f"Regressor {self.regressor} not supported.")
+
+    def rf_ucb(self, X):
+        model = self.get_regressor()
+
+        train_X = self.feature_expand(self.sampled_X) if self.feature_en else self.sampled_X
+        pred_X = self.feature_expand(X) if self.feature_en else X
+
+        model.fit(train_X, self.sampled_y)
+
+        if not hasattr(model, "estimators_") or len(model.estimators_) == 0:
+            return model.predict(pred_X)
+
+        tree_preds = np.array([est.predict(pred_X) for est in model.estimators_])
+        pred_mean = np.mean(tree_preds, axis=0)
+        pred_std = np.std(tree_preds, axis=0)
+
+        ucb_beta = 0.5 * self.n_inits / len(self.sampled_X)
+        return pred_mean + ucb_beta * pred_std
 
     def regress_opt(self, X):
 
