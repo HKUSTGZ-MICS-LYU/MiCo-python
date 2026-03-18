@@ -123,7 +123,7 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
 
     crossover_ratio = 0.25
     mutation_ratio = 0.1
-    keep_ratio = 0.75
+    keep_ratio = 0.5
 
     while True:
         # Generate Next Generation

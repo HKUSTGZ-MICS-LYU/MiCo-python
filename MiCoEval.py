@@ -11,6 +11,13 @@ import json
 import csv
 import time
 import warnings
+import tempfile
+from contextlib import contextmanager
+
+try:
+    import fcntl
+except ImportError:
+    fcntl = None
 
 from tqdm import tqdm
 
@@ -107,7 +114,26 @@ class MiCoEval:
     def _scheme_to_key(self, scheme: list):
         return ",".join(str(int(x)) for x in scheme)
 
-    def _load_data_trace(self):
+    def _cache_lock_path(self):
+        return f"{self.output_json}.lock"
+
+    @contextmanager
+    def _cache_lock(self, exclusive: bool):
+        lock_path = self._cache_lock_path()
+        lock_dir = os.path.dirname(lock_path)
+        if lock_dir:
+            os.makedirs(lock_dir, exist_ok=True)
+        with open(lock_path, "a+") as lock_file:
+            if fcntl is not None:
+                lock_mode = fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH
+                fcntl.flock(lock_file.fileno(), lock_mode)
+            try:
+                yield
+            finally:
+                if fcntl is not None:
+                    fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+    def _load_data_trace_unlocked(self):
         if not os.path.exists(self.output_json):
             return {}
         if self.cache_format == 'csv':
@@ -124,43 +150,75 @@ class MiCoEval:
         with open(self.output_json, 'r') as f:
             return json.load(f)
 
-    def _save_data_trace(self):
+    def _save_data_trace_unlocked(self, data_trace: dict):
         output_dir = os.path.dirname(self.output_json)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        if self.cache_format == 'csv':
-            with open(self.output_json, 'w', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow(["scheme", "objective", "value"])
-                for scheme, objectives in self.data_trace.items():
-                    for objective, value in objectives.items():
-                        writer.writerow([scheme, objective, value])
-            return
-        with open(self.output_json, 'w') as f:
-            json.dump(self.data_trace, f, indent=4)
+        temp_dir = output_dir if output_dir else "."
+        fd, tmp_path = tempfile.mkstemp(prefix=".micoeval_", suffix=".tmp", dir=temp_dir)
+        try:
+            if self.cache_format == 'csv':
+                with os.fdopen(fd, 'w', newline='') as f:
+                    writer = csv.writer(f)
+                    writer.writerow(["scheme", "objective", "value"])
+                    for scheme, objectives in data_trace.items():
+                        for objective, value in objectives.items():
+                            writer.writerow([scheme, objective, value])
+            else:
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(data_trace, f, indent=4)
+            os.replace(tmp_path, self.output_json)
+        finally:
+            if os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+    def _load_data_trace(self):
+        with self._cache_lock(exclusive=False):
+            return self._load_data_trace_unlocked()
+
+    def _save_data_trace(self):
+        with self._cache_lock(exclusive=True):
+            self._save_data_trace_unlocked(self.data_trace)
+
+    def _lookup_cached_result(self, data_trace: dict, cache_key: str, legacy_key: str):
+        if cache_key in data_trace:
+            return data_trace[cache_key].get(self.objective), False
+        legacy_values = data_trace.get(legacy_key)
+        if legacy_values is None:
+            return None, False
+        data_trace[cache_key] = data_trace.pop(legacy_key, {})
+        return data_trace[cache_key].get(self.objective), True
 
     def eval(self, scheme: list, offline: bool = False):
         cache_key = self._scheme_to_key(scheme)
         legacy_key = str(scheme)
-        if cache_key in self.data_trace:
-            res = self.data_trace[cache_key].get(self.objective)
-        else:
-            res = self.data_trace.get(legacy_key, {}).get(self.objective)
-            if res is not None:
-                self.data_trace[cache_key] = self.data_trace.pop(legacy_key, {})
-                self._save_data_trace()
+        with self._cache_lock(exclusive=True):
+            current_trace = self._load_data_trace_unlocked()
+            res, migrated = self._lookup_cached_result(current_trace, cache_key, legacy_key)
+            if migrated:
+                self._save_data_trace_unlocked(current_trace)
+            self.data_trace = current_trace
+
         if res is None and offline:
             raise ValueError(f"Missing cached result for scheme {scheme} (key={cache_key}) objective [{self.objective}] in {self.output_json}")
-        if res is None:
-            res = self.eval_f(scheme)
-            if cache_key not in self.data_trace:
-                self.data_trace[cache_key] = {}
-            if self.objective not in self.data_trace[cache_key]:
-                self.data_trace[cache_key][self.objective] = res
-            self._save_data_trace()
-        else:
-            pass
-            # print("[MiCoEval] Found result in cache.")
+        if res is not None:
+            return res
+
+        res = self.eval_f(scheme)
+
+        with self._cache_lock(exclusive=True):
+            current_trace = self._load_data_trace_unlocked()
+            cached_res, migrated = self._lookup_cached_result(current_trace, cache_key, legacy_key)
+            if cached_res is not None:
+                if migrated:
+                    self._save_data_trace_unlocked(current_trace)
+                self.data_trace = current_trace
+                return cached_res
+
+            current_trace.setdefault(cache_key, {})[self.objective] = res
+            self._save_data_trace_unlocked(current_trace)
+            self.data_trace = current_trace
+
         return res
 
     def set_eval(self, objective: str):

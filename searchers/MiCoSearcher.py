@@ -298,10 +298,10 @@ class MiCoSearcher(QSearcher):
             # if sample_num < 32:
             #     rf_kwargs["max_depth"] = int(5 * (sample_num / 16))
             if self.dims > 16:
-                rf_kwargs["n_estimators"] = 250
-                rf_kwargs["min_samples_leaf"] = 4
-                # rf_kwargs["max_depth"] = 3
-                # rf_kwargs["max_features"] = "sqrt"
+                rf_kwargs["n_estimators"] = int(125 * (self.dims / 16))
+                rf_kwargs["max_features"] = "sqrt"
+                rf_kwargs["max_depth"] = max(1, 5 - self.dims // 16)
+                rf_kwargs["min_samples_leaf"] = (2 + self.dims // 20)
 
             rf_kwargs["random_state"] = 42
 
