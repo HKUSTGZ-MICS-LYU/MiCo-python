@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -42,11 +43,17 @@ class TestMiCoEvalCache(unittest.TestCase):
             self.assertEqual(reloaded.eval([4, 5], offline=True), 9)
 
     def test_legacy_json_scheme_key_is_supported(self):
-        evaluator = _build_eval("unused.json", "json")
-        evaluator.data_trace = {"[1, 2]": {"latency_proxy": 3}}
-        self.assertEqual(evaluator.eval([1, 2], offline=True), 3)
-        self.assertIn("1,2", evaluator.data_trace)
-        self.assertNotIn("[1, 2]", evaluator.data_trace)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = os.path.join(tmpdir, "cache.json")
+            # Write legacy format to file
+            with open(cache_path, 'w') as f:
+                json.dump({"[1, 2]": {"latency_proxy": 3}}, f)
+
+            evaluator = _build_eval(cache_path, "json")
+            evaluator.data_trace = evaluator._load_data_trace()
+            self.assertEqual(evaluator.eval([1, 2], offline=True), 3)
+            self.assertIn("1,2", evaluator.data_trace)
+            self.assertNotIn("[1, 2]", evaluator.data_trace)
 
     def test_offline_mode_raises_on_cache_miss(self):
         evaluator = _build_eval("unused.json", "json")
