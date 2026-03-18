@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from multiprocessing import Process
 
 from MiCoEval import MiCoEval
 
@@ -13,6 +14,12 @@ def _build_eval(cache_path, cache_format, objective="latency_proxy"):
     evaluator.data_trace = {}
     evaluator.eval_f = lambda scheme: sum(scheme)
     return evaluator
+
+
+def _concurrent_eval_worker(cache_path, schemes):
+    evaluator = _build_eval(cache_path, "json")
+    for scheme in schemes:
+        evaluator.eval(scheme)
 
 
 class TestMiCoEvalCache(unittest.TestCase):
@@ -45,3 +52,24 @@ class TestMiCoEvalCache(unittest.TestCase):
         evaluator = _build_eval("unused.json", "json")
         with self.assertRaises(ValueError):
             evaluator.eval([9, 9], offline=True)
+
+    def test_json_cache_concurrent_process_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = os.path.join(tmpdir, "cache.json")
+            schemes_a = [[i, i + 1] for i in range(0, 80, 2)]
+            schemes_b = [[i, i + 1] for i in range(1, 81, 2)]
+
+            p1 = Process(target=_concurrent_eval_worker, args=(cache_path, schemes_a))
+            p2 = Process(target=_concurrent_eval_worker, args=(cache_path, schemes_b))
+            p1.start()
+            p2.start()
+            p1.join()
+            p2.join()
+
+            self.assertEqual(p1.exitcode, 0)
+            self.assertEqual(p2.exitcode, 0)
+
+            reloaded = _build_eval(cache_path, "json")
+            reloaded.data_trace = reloaded._load_data_trace()
+            for scheme in schemes_a + schemes_b:
+                self.assertEqual(reloaded.eval(scheme, offline=True), sum(scheme))
