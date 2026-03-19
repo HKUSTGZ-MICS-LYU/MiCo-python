@@ -25,8 +25,9 @@ from gpytorch.kernels.matern_kernel import MaternKernel
 from gpytorch.mlls.exact_marginal_log_likelihood import ExactMarginalLogLikelihood
 
 
-from xgboost import XGBRegressor
+from xgboost import XGBRegressor, XGBRanker
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.svm import SVR
 
 class MiCoSearcher(QSearcher):
 
@@ -66,6 +67,8 @@ class MiCoSearcher(QSearcher):
 
         self.regressor_dict = {
             "rf": self.regress_opt,
+            "svr": self.regress_opt,
+            "ltr": self.learn2rank_opt,
             "xgb": self.regress_opt,
             "bayes": self.bayes_opt,
             "ensmble": self.ensmble_opt,
@@ -289,8 +292,19 @@ class MiCoSearcher(QSearcher):
                 # Use constrained parameters for low-dimensional data to prevent overfitting
                 model = XGBRegressor()
             return model
+        elif self.regressor == "svr":
+            model = SVR()
+            return model
+        elif self.regressor == "ltr":
+            # Learn to Rank model
+            model = XGBRanker(
+                objective="rank:pairwise",
+                n_estimators=200,
+                learning_rate=0.05,
+                random_state=42,
+            )
+            return model
         elif self.regressor == "rf":
-
             rf_kwargs = {}
             sample_num = len(self.sampled_X)
             if self.dims > 20:
@@ -348,9 +362,40 @@ class MiCoSearcher(QSearcher):
 
         return y_pred
 
+    def learn2rank_opt(self, X):
+        model : XGBRanker = self.get_regressor()
+
+        train_X = self.feature_expand(self.sampled_X) if self.feature_en else self.sampled_X
+        pred_X = self.feature_expand(X) if self.feature_en else X
+
+        train_X = np.asarray(train_X)
+        train_y = np.asarray(self.sampled_y, dtype=float)
+        pred_X = np.asarray(pred_X)
+
+        # Learn-to-rank needs at least one pair and non-constant labels.
+        if len(train_X) < 2 or np.allclose(train_y, train_y[0]):
+            return np.full(len(pred_X), train_y.mean() if len(train_y) > 0 else 0.0)
+
+        # Single-query ranking: all observed schemes belong to one ranking group.
+        group = np.array([len(train_X)], dtype=np.uint32)
+        try:
+            model.fit(train_X, train_y, group=group, verbose=False)
+            y_pred = model.predict(pred_X)
+            return np.asarray(y_pred, dtype=float)
+        except Exception as e:
+            print(f"Warning: LTR fitting failed ({e}), falling back to XGBRegressor.")
+            if self.dims > 20:
+                fallback = XGBRegressor(
+                    n_estimators=250, max_depth=15, colsample_bytree=0.5
+                )
+            else:
+                fallback = XGBRegressor()
+            fallback.fit(train_X, train_y)
+            return np.asarray(fallback.predict(pred_X), dtype=float)
+
     def ensmble_opt(self, X):
         # Voting Ensemble - combine predictions from multiple models via rank voting
-        regressors = ["rf", "xgb", "bayes"]
+        regressors = ["rf", "ltr", "bayes"]
         scores = []
 
         for regressor in regressors:
