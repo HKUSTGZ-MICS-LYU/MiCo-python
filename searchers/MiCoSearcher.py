@@ -37,7 +37,7 @@ class MiCoSearcher(QSearcher):
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
                  qtypes: list = [4,5,6,7,8],
-                 regressor: str = "rf",
+                 regressor: str = "ensmble",
                  initial_method: str = "orth",
                  sample_method: str = "near-constr",
                  feature_en: bool = True,
@@ -68,6 +68,7 @@ class MiCoSearcher(QSearcher):
             "rf": self.regress_opt,
             "xgb": self.regress_opt,
             "bayes": self.bayes_opt,
+            "ensmble": self.ensmble_opt,
         }
         if ucb:
             self.regressor_dict["rf"] = self.rf_ucb
@@ -266,7 +267,8 @@ class MiCoSearcher(QSearcher):
 
         X = self.feature_expand(X) if self.feature_en else X
         max_Y = max(Y_tensor)
-        acq = LogExpectedImprovement(gpr, best_f=max_Y)
+        # acq = LogExpectedImprovement(gpr, best_f=max_Y)
+        acq = UpperConfidenceBound(gpr, beta=0.1)
         acq_val = acq(torch.tensor(X, dtype=torch.float).unsqueeze(-2))
 
         # best = torch.argmax(acq_val)
@@ -278,7 +280,7 @@ class MiCoSearcher(QSearcher):
 
     def get_regressor(self):
         if self.regressor == "xgb":
-            if self.dims > 10:
+            if self.dims > 20:
                 # Prevent overfitting for high-dimensional data
                 model = XGBRegressor(
                     n_estimators=250, max_depth=15, colsample_bytree=0.5
@@ -291,19 +293,13 @@ class MiCoSearcher(QSearcher):
 
             rf_kwargs = {}
             sample_num = len(self.sampled_X)
-            # Progressive Parameter Tuning
-            rf_kwargs["min_samples_leaf"] = 2
-            # rf_kwargs["max_features"] = "sqrt"
-            # rf_kwargs["n_estimators"] = int(100 * (sample_num / 16))
-            # if sample_num < 32:
-            #     rf_kwargs["max_depth"] = int(5 * (sample_num / 16))
-            if self.dims > 16:
-                rf_kwargs["n_estimators"] = int(125 * (self.dims / 16))
+            if self.dims > 20:
                 rf_kwargs["max_features"] = "sqrt"
-                rf_kwargs["max_depth"] = max(1, 5 - self.dims // 16)
-                rf_kwargs["min_samples_leaf"] = (2 + self.dims // 20)
+                rf_kwargs["n_estimators"] = 250
+                rf_kwargs["max_depth"] = 15
 
             rf_kwargs["random_state"] = 42
+            rf_kwargs["oob_score"] = True
 
             if self.rf_n_estimators is not None:
                 rf_kwargs["n_estimators"] = self.rf_n_estimators
@@ -351,3 +347,31 @@ class MiCoSearcher(QSearcher):
         y_pred = model.predict(pred_X)
 
         return y_pred
+
+    def ensmble_opt(self, X):
+        # Voting Ensemble - combine predictions from multiple models via rank voting
+        regressors = ["rf", "xgb", "bayes"]
+        scores = []
+
+        for regressor in regressors:
+            self.regressor = regressor
+            score = self.regressor_dict[regressor](X)
+            scores.append(score)
+
+        self.regressor = "ensmble"  # Reset the regressor
+
+        # Rank-based voting: convert scores to ranks and average
+        scores = np.array(scores)
+        n_models, n_samples = scores.shape
+
+        # Rank each model's predictions (higher score = higher rank)
+        ranks = np.zeros_like(scores)
+        for i in range(n_models):
+            ranks[i] = np.argsort(np.argsort(-scores[i]))  # Descending rank
+
+        # Average ranks across models
+        avg_ranks = np.mean(ranks, axis=0)
+
+        # Convert back to scores (higher average rank = better)
+        return -avg_ranks  # Negate so higher = better for argmax
+        

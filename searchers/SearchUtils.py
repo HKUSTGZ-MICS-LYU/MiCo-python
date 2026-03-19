@@ -123,7 +123,7 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
 
     crossover_ratio = 0.25
     mutation_ratio = 0.1
-    keep_ratio = 0.5
+    keep_ratio = 0.75
 
     while True:
         # Generate Next Generation
@@ -143,13 +143,16 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
             if keep_first_last:
                 if random.random() < keep_ratio:
                     sample[0] = max(qtypes)
+                if random.random() < keep_ratio:
                     sample[n_layers] = max(qtypes)
                 if random.random() < keep_ratio:
                     sample[n_layers - 1] = max(qtypes)
+                if random.random() < keep_ratio:
                     sample[-1] = max(qtypes)
             elif keep_first:
                 if random.random() < keep_ratio:
                     sample[0] = max(qtypes)
+                if random.random() < keep_ratio:
                     sample[n_layers] = max(qtypes)
 
             # Heuristic: Swap Activation and Weight Bitwidth

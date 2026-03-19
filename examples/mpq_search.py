@@ -3,6 +3,7 @@ import torch
 import argparse
 import random
 import numpy as np
+import os
 
 from matplotlib import pyplot as plt
 
@@ -27,6 +28,7 @@ argsparse.add_argument("-ctype", "--constraint", type=str, default="bops")
 argsparse.add_argument("-t", "--trails", type=int, default=5)
 argsparse.add_argument("-m", "--mode", type=str, default="ptq_acc")
 argsparse.add_argument("-e", "--epochs", type=int, default=1)
+argsparse.add_argument("--output-json", type=str, default=None)
 
 args = argsparse.parse_args()
 
@@ -39,6 +41,7 @@ METHODS = args.methods.split(",")
 TRAILS = args.trails
 MODE = args.mode
 EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
+OUTPUT_JSON = args.output_json or f"output/json/{model_name}_search.json"
 
 if __name__ == "__main__":
 
@@ -46,7 +49,7 @@ if __name__ == "__main__":
 
     evaluator = MiCoEval(model, EPOCHS, train_loader, test_loader, 
                          f"output/ckpt/{model_name}.pth",
-                         output_json=f"output/json/{model_name}_search.json")
+                         output_json=OUTPUT_JSON)
 
     dim = evaluator.n_layers * 2
 
@@ -73,6 +76,9 @@ if __name__ == "__main__":
 
             random.seed(seed)
             np.random.seed(seed)
+            torch.random.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.random.manual_seed(seed)
 
             print("Model Type:", method)
 
@@ -96,6 +102,10 @@ if __name__ == "__main__":
                     evaluator, n_inits=N_INIT, qtypes=bitwidths,
                     model_type=method)
 
+            if (method == "nlp") and (len(res_data[method]) > 0):
+                # NLP gives fixed solution
+                continue
+
             res_x, res_y = searcher.search(
                 N_SEARCH, MODE, CONSTR_TYPE, max_bops*CONSTR_RATIO)
 
@@ -103,7 +113,6 @@ if __name__ == "__main__":
             print(f"Best Accuracy: {res_y}")
             res = evaluator.eval_bops(res_x)
             print(f"MPQ Real Latency: {res} ({res / max_bops:.2%})")
-
             if MODE == "qat_acc":
                 # Final Fine-tuning and evaluation
                 print("Starting QAT fine-tuning...")
@@ -122,6 +131,9 @@ if __name__ == "__main__":
         plt.plot(avg_trace, label=method)
 
     plt.legend()
+    os.makedirs("output/figs", exist_ok=True)
+    os.makedirs("output/txt", exist_ok=True)
+    os.makedirs("output/json", exist_ok=True)
     plt.savefig(f"output/figs/{model_name}_search_{CONSTR_RATIO}_{MODE}.pdf")
 
     with open(f"output/txt/{model_name}_search_{CONSTR_RATIO}_{MODE}.txt", "w") as f:
