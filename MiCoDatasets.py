@@ -646,3 +646,151 @@ def hf_text_dataset(
     )
     
     return train_loader, test_loader
+
+def fineweb(
+    batch_size: int = 8,
+    max_seq_len: int = 1024,
+    tokenizer=None,
+    subset: str = "sample-10BT",
+    num_workers: int = 0,
+    shuffle: bool = False,
+    test_fraction: float = 0.05,
+    **kwargs,
+):
+    """
+    Load the FineWeb dataset as used in the OpenAI Parameter Golf challenge.
+
+    FineWeb is a large-scale web-text dataset released by HuggingFace
+    (``HuggingFaceFW/fineweb``).  This function downloads (and caches) a
+    subset, tokenises it into fixed-length chunks and returns DataLoaders
+    that yield ``(input_ids, labels)`` pairs suitable for next-token
+    prediction.
+
+    Args:
+        batch_size: Batch size for both loaders.
+        max_seq_len: Token sequence length per sample.
+        tokenizer: HuggingFace tokenizer.  When ``None`` a GPT-2 tokenizer is
+            used as a convenient default.  For the parameter golf evaluation
+            metric (bits-per-byte) you should pass the challenge's custom
+            1024-vocabulary SentencePiece model instead.
+        subset: FineWeb configuration name.  ``"sample-10BT"`` (≈ 10 B
+            tokens) is a good starting point; ``"sample-100BT"`` and the full
+            dataset are also available.
+        num_workers: DataLoader worker processes.
+        shuffle: Whether to shuffle training batches.
+        test_fraction: Fraction of the dataset reserved for the validation
+            loader (FineWeb only exposes a ``"train"`` split).
+        **kwargs: Additional arguments (for compatibility).
+
+    Returns:
+        train_loader, test_loader: ``DataLoader`` instances yielding
+        ``(input_ids, labels)`` tensors of shape ``(batch, max_seq_len)``.
+
+    Example::
+
+        train_loader, test_loader = fineweb(batch_size=16, max_seq_len=1024)
+        for x, y in train_loader:
+            # x: (batch, 1024) int64 – input tokens
+            # y: (batch, 1024) int64 – shifted target tokens
+            ...
+    """
+    try:
+        from datasets import load_dataset
+    except ImportError:
+        raise ImportError(
+            "HuggingFace datasets is required for FineWeb. "
+            "Install with: pip install datasets"
+        )
+
+    # Handle deprecated num_works argument
+    num_works = kwargs.pop("num_works", None)
+    if kwargs:
+        raise TypeError(f"Unexpected keyword arguments: {list(kwargs.keys())}")
+    if num_works is not None:
+        warnings.warn(
+            "`num_works` is deprecated and will be removed in version 0.2; "
+            "use `num_workers` instead.",
+            FutureWarning,
+        )
+        num_workers = num_works
+
+    if tokenizer is None:
+        try:
+            from transformers import AutoTokenizer
+        except ImportError:
+            raise ImportError(
+                "HuggingFace transformers is required for the default tokenizer. "
+                "Install with: pip install transformers"
+            )
+        tokenizer = AutoTokenizer.from_pretrained("gpt2")
+        if tokenizer.pad_token is None:
+            tokenizer.pad_token = tokenizer.eos_token
+
+    dataset = load_dataset("HuggingFaceFW/fineweb", name=subset, split="train")
+
+    def tokenize_and_chunk(examples):
+        texts = [t for t in examples["text"] if t and t.strip()]
+        if not texts:
+            return {"input_ids": [], "labels": []}
+
+        tokenized = tokenizer(
+            texts,
+            truncation=False,
+            padding=False,
+            return_attention_mask=False,
+        )
+
+        all_tokens = []
+        for tokens in tokenized["input_ids"]:
+            all_tokens.extend(tokens)
+
+        chunks = []
+        for i in range(0, len(all_tokens) - max_seq_len, max_seq_len):
+            chunk = all_tokens[i : i + max_seq_len + 1]
+            if len(chunk) == max_seq_len + 1:
+                chunks.append(chunk)
+
+        if not chunks:
+            return {"input_ids": [], "labels": []}
+
+        return {
+            "input_ids": [c[:-1] for c in chunks],
+            "labels": [c[1:] for c in chunks],
+        }
+
+    tokenized_dataset = dataset.map(
+        tokenize_and_chunk,
+        batched=True,
+        remove_columns=dataset.column_names,
+        desc="Tokenizing FineWeb",
+    )
+    tokenized_dataset.set_format(type="torch", columns=["input_ids", "labels"])
+
+    # FineWeb only has a "train" split – carve out a validation portion.
+    n_total = len(tokenized_dataset)
+    n_test = max(1, int(n_total * test_fraction))
+    n_train = n_total - n_test
+    train_dataset = tokenized_dataset.select(range(n_train))
+    test_dataset = tokenized_dataset.select(range(n_train, n_total))
+
+    def collate_fn(batch):
+        input_ids = torch.stack([item["input_ids"] for item in batch])
+        labels = torch.stack([item["labels"] for item in batch])
+        return input_ids, labels
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+    )
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        collate_fn=collate_fn,
+    )
+
+    return train_loader, test_loader
