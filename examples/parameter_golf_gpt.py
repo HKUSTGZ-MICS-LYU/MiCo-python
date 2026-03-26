@@ -99,7 +99,7 @@ if __name__ == "__main__":
     print("Loading FineWeb dataset …")
     train_loader, test_loader = fineweb(
         batch_size=batch_size,
-        max_seq_len=max_seq_len,
+        max_seq_len=model.config.max_seq_len,
         shuffle=True,
     )
     print(f"Train batches: {len(train_loader)}, Test batches: {len(test_loader)}")
