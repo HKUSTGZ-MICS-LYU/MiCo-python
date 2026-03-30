@@ -10,6 +10,8 @@ from models import (
     MobileNetV2,
     ViT,
     HARMLP,
+    ParameterGolfBaseline,
+    ParameterGolfSmall,
 )
 
 from MiCoDatasets import (
@@ -20,6 +22,7 @@ from MiCoDatasets import (
     tinystories,
     imagenet,
     uci_har,
+    fineweb,
 )
 
 import torch
@@ -104,6 +107,23 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS, 
             preprocess="mfcc")
+    # Parameter Golf GPT models with FineWeb dataset
+    elif name == "parameter_golf_gpt" or name == "parameter_golf_gpt_baseline":
+        model = ParameterGolfBaseline().to(device)
+        train_loader, test_loader = fineweb(
+            batch_size=batch_size,
+            max_seq_len=model.config.max_seq_len,
+            num_workers=NUM_WORKERS,
+            shuffle=shuffle,
+        )
+    elif name == "parameter_golf_gpt_small":
+        model = ParameterGolfSmall().to(device)
+        train_loader, test_loader = fineweb(
+            batch_size=batch_size,
+            max_seq_len=model.config.max_seq_len,
+            num_workers=NUM_WORKERS,
+            shuffle=shuffle,
+        )
     # HuggingFace pretrained models with WikiText dataset
     elif name.startswith("hf_") or name in _get_hf_model_names():
         from models import HuggingFaceModel, load_hf_model, HF_MODEL_REGISTRY
@@ -158,6 +178,9 @@ def list_zoo_models():
         "kws_conv1d",
         "m5_kws",
         "dscnn_kws",
+        "parameter_golf_gpt",
+        "parameter_golf_gpt_baseline",
+        "parameter_golf_gpt_small",
     ]
     
     # Add HuggingFace models
