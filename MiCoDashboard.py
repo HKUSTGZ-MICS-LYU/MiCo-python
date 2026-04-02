@@ -10,7 +10,10 @@ class MiCoDashboard:
         history = []
         eval_map = evaluator.eval_dict()
         if constraint_name not in eval_map:
-            raise ValueError(f"Unsupported constraint name '{constraint_name}' for dashboard history.")
+            valid_names = ", ".join(sorted(eval_map.keys()))
+            raise ValueError(
+                f"Unsupported constraint name '{constraint_name}'. Must be one of: {valid_names}"
+            )
         constr_eval = eval_map[constraint_name]
         for idx, best_acc in enumerate(searcher.best_trace):
             scheme = searcher.best_scheme_trace[idx] if idx < len(searcher.best_scheme_trace) else None
