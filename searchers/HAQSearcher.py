@@ -228,7 +228,7 @@ class HAQSearcher(QSearcher):
                constr_value = None):
         
         self.best_res = None
-        self.best_acc = 0.0
+        self.best_acc = -math.inf
         self.best_reward = -math.inf
         self.start_search(target, constr, constr_value)
 
