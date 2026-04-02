@@ -24,7 +24,7 @@ class MiCoDashboard:
             )
         if len(searcher.best_trace) != len(searcher.best_scheme_trace):
             raise ValueError(
-                "Mismatched trace lengths: "
+                f"{searcher.__class__.__name__}: mismatched trace lengths: "
                 f"len(best_trace)={len(searcher.best_trace)}, "
                 f"len(best_scheme_trace)={len(searcher.best_scheme_trace)}."
             )
