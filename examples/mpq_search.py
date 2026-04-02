@@ -121,7 +121,7 @@ if __name__ == "__main__":
                 print("Starting QAT fine-tuning...")
                 final_acc = evaluator.eval_qat(res_x, EPOCHS*2)
                 print(f"Final QAT Accuracy: {final_acc}")
-                searcher.best_trace.append(final_acc)
+                searcher.record_best(res_x, final_acc)
             res_data[method].append(searcher.best_trace)
             run_history = MiCoDashboard.build_run_history(searcher, evaluator, CONSTR_TYPE)
             history_runs.append(

@@ -43,12 +43,12 @@ class MiCoDashboard:
         output_dir = os.path.dirname(path)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        with open(path, "w") as f:
+        with open(path, "w", encoding="utf-8") as f:
             json.dump({"runs": runs}, f, indent=2)
 
     @staticmethod
     def load_runs(path: str):
-        with open(path, "r") as f:
+        with open(path, "r", encoding="utf-8") as f:
             data = json.load(f)
         if isinstance(data, dict) and "runs" in data:
             return data["runs"]
@@ -72,8 +72,9 @@ class MiCoDashboard:
         color_idx = 0
         for run in runs:
             points = run.get("history", [])
-            xs = [p.get("constraint") for p in points if p.get("constraint") is not None and p.get("accuracy") is not None]
-            ys = [p.get("accuracy") for p in points if p.get("constraint") is not None and p.get("accuracy") is not None]
+            valid_points = [p for p in points if p.get("constraint") is not None and p.get("accuracy") is not None]
+            xs = [p.get("constraint") for p in valid_points]
+            ys = [p.get("accuracy") for p in valid_points]
             if not xs:
                 continue
             has_data = True
