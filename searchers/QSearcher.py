@@ -29,6 +29,22 @@ class QSearcher(ABC):
         self.dim = evaluator.dim
         return
 
+    def start_search(self, target: str, constr: str = None, constr_value=None):
+        self.target = target
+        self.constr_name = constr
+        self.constr_value = constr_value
+        self.best_trace = []
+        self.best_scheme_trace = []
+        self.evaluator.set_eval(target)
+        if constr:
+            self.evaluator.set_constraint(constr)
+
+    def record_best(self, best_scheme, best_value):
+        self.best_trace.append(best_value)
+        self.best_scheme_trace.append(
+            list(best_scheme) if best_scheme is not None else None
+        )
+
 
     @abstractmethod
     def search(self, n_iter: int, target: str, 

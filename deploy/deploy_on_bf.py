@@ -1,12 +1,11 @@
 import random
 import argparse
 import numpy as np
-import os
-import json
 
 from matplotlib import pyplot as plt
 
 from MiCoEval import MiCoEval
+from MiCoDashboard import MiCoDashboard
 from MiCoProxy import get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy
 
 from models import model_zoo
@@ -65,30 +64,19 @@ if __name__ == "__main__":
     res_x, res_y = searcher.search(
         args.n_iter, 'ptq_acc', mode, max_real*target_ratio)
 
-    history = []
-    for idx, best_acc in enumerate(searcher.best_trace):
-        scheme = searcher.best_scheme_trace[idx] if idx < len(searcher.best_scheme_trace) else None
-        constr_val = evaluator.eval_dict()[mode](scheme) if scheme is not None else None
-        history.append({
-            "iter": idx + 1,
-            "accuracy": float(best_acc) if best_acc is not None else None,
-            "constraint": float(constr_val) if constr_val is not None else None,
-            "scheme": scheme
-        })
-
-    os.makedirs("output/json", exist_ok=True)
+    history = MiCoDashboard.build_run_history(searcher, evaluator, mode)
     dashboard_json = f"output/json/{args.model}_deploy_bf_dashboard.json"
-    with open(dashboard_json, "w") as f:
-        json.dump({
-            "runs": [{
-                "method": "bitfusion",
-                "seed": args.seed,
-                "objective": "ptq_acc",
-                "constraint_name": mode,
-                "constraint_limit": float(max_real * target_ratio),
-                "history": history
-            }]
-        }, f, indent=2)
+    MiCoDashboard.save_runs(
+        dashboard_json,
+        [MiCoDashboard.build_run_entry(
+            method="bitfusion",
+            seed=args.seed,
+            objective="ptq_acc",
+            constraint_name=mode,
+            constraint_limit=max_real * target_ratio,
+            history=history
+        )]
+    )
     print(f"Dashboard history JSON saved to {dashboard_json}")
         
     print(f"Best Scheme: {res_x}")

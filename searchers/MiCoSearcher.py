@@ -182,14 +182,8 @@ class MiCoSearcher(QSearcher):
                constr: str = None, 
                constr_value = None):
 
-        self.target = target
-        self.constr_name = constr
-        self.constr_value = constr_value
-        self.best_trace = []
-        self.best_scheme_trace = []
-        self.evaluator.set_eval(target)
+        self.start_search(target, constr, constr_value)
         if constr:
-            self.evaluator.set_constraint(constr)
             self.constr_value = constr_value
         
         # Initialize the search space
@@ -231,8 +225,7 @@ class MiCoSearcher(QSearcher):
             self.sampled_X = np.vstack([self.sampled_X, best_x])
             self.sampled_y = np.append(self.sampled_y, eval_y)
             
-            self.best_trace.append(final_y)
-            self.best_scheme_trace.append(list(final_x) if final_x is not None else None)
+            self.record_best(final_x, final_y)
 
         print("Optimization Ends...")
         print("Best Scheme:", final_x)

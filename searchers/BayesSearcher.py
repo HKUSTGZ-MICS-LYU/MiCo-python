@@ -72,14 +72,7 @@ class BayesSearcher(QSearcher):
                constr: str = None, 
                constr_value = None):
         
-        self.target = target
-        self.constr_name = constr
-        self.constr_value = constr_value
-        self.best_trace = []
-        self.best_scheme_trace = []
-        self.evaluator.set_eval(target)
-        if constr:
-            self.evaluator.set_constraint(constr)
+        self.start_search(target, constr, constr_value)
         
         # Initialize the search space
         sampled_X = self.initial(self.n_inits)
@@ -140,8 +133,7 @@ class BayesSearcher(QSearcher):
             sampled_X = np.vstack([sampled_X, best_x])
             sampled_y = np.append(sampled_y, eval_y)
             
-            self.best_trace.append(final_y)
-            self.best_scheme_trace.append(list(final_x) if final_x is not None else None)
+            self.record_best(final_x, final_y)
 
         print("Optimization Ends...")
         print("Best Scheme:", final_x)
