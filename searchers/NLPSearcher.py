@@ -73,7 +73,9 @@ class NLPSearcher(QSearcher):
                constr_value = None):
         
         assert constr == 'bops', "Only BOPS constraint is supported"
-        self.start_search(target, constr, constr_value)
+        self.start_search(target, None, constr_value)
+        self.constr_name = constr
+        self.evaluator.set_constraint(constr)
         if constr_value is None:
             raise ValueError("constr_value must be provided for bops-constrained NLP search.")
 
