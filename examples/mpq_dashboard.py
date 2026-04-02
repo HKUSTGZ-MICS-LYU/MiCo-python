@@ -5,7 +5,7 @@ import os
 import matplotlib.pyplot as plt
 
 
-def _load_history(path: str):
+def load_history(path: str):
     with open(path, "r") as f:
         data = json.load(f)
     if isinstance(data, dict) and "runs" in data:
@@ -15,7 +15,7 @@ def _load_history(path: str):
     raise ValueError(f"Unsupported dashboard data format in {path}")
 
 
-def _run_label(run: dict):
+def run_label(run: dict):
     method = run.get("method", "unknown")
     seed = run.get("seed")
     if seed is None:
@@ -23,7 +23,7 @@ def _run_label(run: dict):
     return f"{method} (seed={seed})"
 
 
-def _plot_acc_vs_constr(runs: list, objective: str, constraint: str, output_path: str):
+def plot_acc_vs_constr(runs: list, objective: str, constraint: str, output_path: str):
     plt.figure(figsize=(8, 5))
     has_data = False
     cmap = plt.cm.tab10
@@ -39,7 +39,7 @@ def _plot_acc_vs_constr(runs: list, objective: str, constraint: str, output_path
         color_idx += 1
         plt.plot(
             xs, ys, marker="o", linewidth=1.2, markersize=3,
-            label=_run_label(run), color=color, alpha=0.8
+            label=run_label(run), color=color, alpha=0.8
         )
 
     if not has_data:
@@ -59,7 +59,7 @@ def _plot_acc_vs_constr(runs: list, objective: str, constraint: str, output_path
     print(f"Saved plot to {output_path}")
 
 
-def _print_top_configs(runs: list, topk: int):
+def print_top_configs(runs: list, topk: int):
     rows = []
     for run in runs:
         for p in run.get("history", []):
@@ -94,6 +94,6 @@ if __name__ == "__main__":
     parser.add_argument("--topk", type=int, default=10)
     args = parser.parse_args()
 
-    runs = _load_history(args.input_json)
-    _plot_acc_vs_constr(runs, args.objective, args.constraint, args.output)
-    _print_top_configs(runs, args.topk)
+    runs = load_history(args.input_json)
+    plot_acc_vs_constr(runs, args.objective, args.constraint, args.output)
+    print_top_configs(runs, args.topk)
