@@ -1,5 +1,4 @@
 import torch
-from torchao import autoquant
 from torch import nn
 import numpy as np
 
@@ -47,9 +46,7 @@ class MiCoModel(nn.Module):
         return
     
     def torchao_autoquant(self, example_input: torch.Tensor):
-        autoquant(self)
-        self(example_input)
-        return
+        raise NotImplementedError("autoquant was removed in torchao 0.17.0. Use set_qscheme_torchao() instead.")
 
     def test(self, test_loader):
         self.eval()
