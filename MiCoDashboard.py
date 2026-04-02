@@ -6,6 +6,35 @@ from matplotlib import pyplot as plt
 
 class MiCoDashboard:
     @staticmethod
+    def default_live_plot_path(model_name: str, method: str, seed: int, output_dir: str = "output/figs"):
+        return os.path.join(output_dir, f"{model_name}_{method}_seed{seed}_live.png")
+
+    @staticmethod
+    def make_live_plot_hook(evaluator, constraint_name: str, objective_label: str,
+                            constraint_label: str, output_path: str, every: int = 1):
+        if every <= 0:
+            every = 1
+
+        def _hook(searcher, _, __):
+            n = len(searcher.best_trace)
+            if n == 0 or (n % every) != 0:
+                return
+            history = MiCoDashboard.build_run_history(searcher, evaluator, constraint_name)
+            run = MiCoDashboard.build_run_entry(
+                method=getattr(searcher, "__class__", type(searcher)).__name__,
+                seed=None,
+                objective=objective_label,
+                constraint_name=constraint_label,
+                constraint_limit=getattr(searcher, "constr_value", 0.0) or 0.0,
+                history=history
+            )
+            MiCoDashboard.plot_acc_vs_constr(
+                [run], objective_label, constraint_label, output_path, close_figure=True
+            )
+
+        return _hook
+
+    @staticmethod
     def build_run_history(searcher, evaluator, constraint_name: str):
         history = []
         eval_map = evaluator.eval_dict()

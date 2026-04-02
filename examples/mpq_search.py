@@ -30,6 +30,10 @@ argsparse.add_argument("-t", "--trails", type=int, default=5)
 argsparse.add_argument("-m", "--mode", type=str, default="ptq_acc")
 argsparse.add_argument("-e", "--epochs", type=int, default=1)
 argsparse.add_argument("--output-json", type=str, default=None)
+argsparse.add_argument("--live-plot", action="store_true",
+                       help="Save a live-updated dashboard plot during search.")
+argsparse.add_argument("--live-plot-every", type=int, default=1,
+                       help="Update live plot every N iterations (default: 1).")
 
 args = argsparse.parse_args()
 
@@ -44,6 +48,8 @@ MODE = args.mode
 EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
 OUTPUT_JSON = args.output_json or f"output/json/{model_name}_search.json"
 HISTORY_JSON = f"output/json/{model_name}_search_{CONSTR_RATIO}_{MODE}_history.json"
+LIVE_PLOT = args.live_plot
+LIVE_PLOT_EVERY = args.live_plot_every
 
 if __name__ == "__main__":
 
@@ -108,6 +114,22 @@ if __name__ == "__main__":
             if (method == "nlp") and (len(res_data[method]) > 0):
                 # NLP gives fixed solution
                 continue
+            
+            if LIVE_PLOT:
+                live_plot_path = MiCoDashboard.default_live_plot_path(
+                    model_name, method, seed
+                )
+                searcher.set_record_hook(
+                    MiCoDashboard.make_live_plot_hook(
+                        evaluator=evaluator,
+                        constraint_name=CONSTR_TYPE,
+                        objective_label=MODE,
+                        constraint_label=CONSTR_TYPE,
+                        output_path=live_plot_path,
+                        every=LIVE_PLOT_EVERY,
+                    )
+                )
+                print(f"Live dashboard enabled: {live_plot_path}")
 
             res_x, res_y = searcher.search(
                 N_SEARCH, MODE, CONSTR_TYPE, max_bops*CONSTR_RATIO)

@@ -42,6 +42,8 @@ python examples/mpq_search.py -h
 ```shell
 # 1) Run search or deploy flow to generate dashboard JSON
 python examples/mpq_search.py lenet_mnist
+# optional: write live-updating curve/scatter image during search
+python examples/mpq_search.py lenet_mnist --live-plot --live-plot-every 1
 # or:
 python deploy/deploy_on_mico.py lenet_mnist
 python deploy/deploy_on_bf.py lenet_mnist

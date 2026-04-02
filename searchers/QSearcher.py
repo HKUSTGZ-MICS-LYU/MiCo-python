@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple, Optional
+from typing import Callable, List, Tuple, Optional
 
 from MiCoEval import MiCoEval
 
@@ -10,6 +10,7 @@ class QSearcher(ABC):
     qtypes: list
     best_trace: list
     best_scheme_trace: list
+    record_hook: Optional[Callable]
     target: Optional[str]
     constr_name: Optional[str]
     constr_value: Optional[float]
@@ -22,6 +23,7 @@ class QSearcher(ABC):
         self.qtypes = qtypes
         self.best_trace = []
         self.best_scheme_trace = []
+        self.record_hook = None
         self.target = None
         self.constr_name = None
         self.constr_value = None
@@ -44,6 +46,11 @@ class QSearcher(ABC):
         self.best_scheme_trace.append(
             list(best_scheme) if best_scheme is not None else None
         )
+        if callable(self.record_hook):
+            self.record_hook(self, best_scheme, best_value)
+
+    def set_record_hook(self, hook):
+        self.record_hook = hook
 
 
     @abstractmethod
