@@ -18,7 +18,7 @@ if __name__ == "__main__":
 
     runs = MiCoDashboard.load_runs(args.input_json)
     if not runs:
-        parser.error("No runs loaded from input JSON; cannot build dashboard.")
+        parser.error(f"No runs loaded from '{args.input_json}'; cannot build dashboard.")
 
     default_objective = runs[0].get("objective", DEFAULT_OBJECTIVE_LABEL)
     default_constraint = runs[0].get("constraint_name", DEFAULT_CONSTRAINT_LABEL)
