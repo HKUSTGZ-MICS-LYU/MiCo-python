@@ -183,8 +183,6 @@ class MiCoSearcher(QSearcher):
                constr_value = None):
 
         self.start_search(target, constr, constr_value)
-        if constr:
-            self.constr_value = constr_value
         
         # Initialize the search space
         self.sampled_X = self.initial(self.n_inits)
