@@ -12,7 +12,7 @@ class MiCoDashboard:
     @staticmethod
     def make_live_plot_hook(evaluator, constraint_name: str, objective_label: str,
                             constraint_label: str, output_path: str, every: int = 1):
-        if every <= 0:
+        if (not isinstance(every, int)) or (every <= 0):
             raise ValueError("every must be a positive integer")
 
         def _hook(searcher, best_scheme, best_value):

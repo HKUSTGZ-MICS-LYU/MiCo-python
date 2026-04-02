@@ -47,7 +47,12 @@ class QSearcher(ABC):
             list(best_scheme) if best_scheme is not None else None
         )
         if callable(self.record_hook):
-            self.record_hook(self, best_scheme, best_value)
+            try:
+                self.record_hook(self, best_scheme, best_value)
+            except Exception as e:
+                raise RuntimeError(
+                    f"record_hook failed in {self.__class__.__name__}.record_best: {e}"
+                ) from e
 
     def set_record_hook(self, hook):
         self.record_hook = hook
