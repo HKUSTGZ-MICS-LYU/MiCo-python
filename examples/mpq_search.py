@@ -33,7 +33,7 @@ argsparse.add_argument("--output-json", type=str, default=None)
 argsparse.add_argument("--live-plot", action="store_true",
                        help="Save a live-updated dashboard plot during search.")
 argsparse.add_argument("--live-plot-every", type=int, default=1,
-                       help="Update live plot every N iterations (default: 1).")
+                       help="Update live plot every N recorded-best updates (default: 1).")
 
 args = argsparse.parse_args()
 

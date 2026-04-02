@@ -46,7 +46,7 @@ class QSearcher(ABC):
         self.best_scheme_trace.append(
             list(best_scheme) if best_scheme is not None else None
         )
-        if (self.record_hook is not None) and callable(self.record_hook):
+        if callable(self.record_hook):
             self.record_hook(self, best_scheme, best_value)
 
     def set_record_hook(self, hook):

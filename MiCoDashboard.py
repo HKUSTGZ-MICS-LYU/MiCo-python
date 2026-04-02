@@ -17,14 +17,14 @@ class MiCoDashboard:
 
         def _hook(searcher, best_scheme, best_value):
             n = len(searcher.best_trace)
-            if n == 0 or (n % every) != 0:
+            if (n % every) != 0:
                 return
             history = MiCoDashboard.build_run_history(searcher, evaluator, constraint_name)
             constraint_limit = getattr(searcher, "constr_value", None)
             if constraint_limit is None:
                 constraint_limit = 0.0
             run = MiCoDashboard.build_run_entry(
-                method=getattr(searcher, "__class__", type(searcher)).__name__,
+                method=searcher.__class__.__name__,
                 seed=None,
                 objective=objective_label,
                 constraint_name=constraint_label,
