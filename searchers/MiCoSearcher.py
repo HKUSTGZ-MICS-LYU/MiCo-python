@@ -38,7 +38,7 @@ class MiCoSearcher(QSearcher):
     def __init__(self, evaluator: MiCoEval, 
                  n_inits: int = 10, 
                  qtypes: list = [4,5,6,7,8],
-                 regressor: str = "ensmble",
+                 regressor: str = "rf",
                  initial_method: str = "orth",
                  sample_method: str = "near-constr",
                  feature_en: bool = True,
@@ -96,8 +96,6 @@ class MiCoSearcher(QSearcher):
         self.sampled_X = None
         self.sampled_y = None
 
-        self.max_value = self.constr([max(qtypes)] * self.dims)
-
         return
     
     def constr(self, scheme: list):
@@ -126,7 +124,6 @@ class MiCoSearcher(QSearcher):
                                      dims=self.dims,
                                      constr_func=self.constr,
                                      constr_value=self.constr_value,
-                                     max_value=self.max_value,
                                      roi=self.roi,
                                      initial_pop=initial_pop)
         else:
@@ -283,25 +280,54 @@ class MiCoSearcher(QSearcher):
 
     def get_regressor(self):
         if self.regressor == "xgb":
+            model = XGBRegressor()
             if self.dims > 20:
                 # Prevent overfitting for high-dimensional data
                 model = XGBRegressor(
-                    n_estimators=250, max_depth=15, colsample_bytree=0.5
+                    n_estimators=250, max_depth=10, colsample_bytree=0.5
                 )
-            else:
-                # Use constrained parameters for low-dimensional data to prevent overfitting
-                model = XGBRegressor()
+            if self.dims > 40:
+                model = XGBRegressor(
+                    n_estimators=450, max_depth=5
+                )
             return model
         elif self.regressor == "svr":
             model = SVR()
             return model
         elif self.regressor == "ltr":
             # Learn to Rank model
+            ranker_kwargs = {
+                "learning_rate": 0.05,  # Slow learning rate to prevent early overfitting
+                "subsample": 0.8,       # Row subsampling adds randomness
+                "tree_method": "hist"   # Efficient histogram-based splitting
+            }
+            if self.dims > 20:
+                ranker_kwargs.update({
+                    "n_estimators": 250,
+                    "max_depth": 2,          # Shallower trees
+                    "colsample_bytree": 0.6,
+                    "reg_lambda": 5.0        # Increased penalty on weights
+                })
+            if self.dims > 40:
+                ranker_kwargs.update({
+                        "n_estimators": 350,
+                        "max_depth": 1,          # Decision Stumps ONLY (1 split per tree)
+                        "colsample_bytree": 0.4, # Trees only see 40% of the layers
+                        "reg_lambda": 10.0       # Heavy L2 penalty to shrink non-critical layer weights
+                    })
+
+            if self.dims > 60:
+                ranker_kwargs.update({
+                    "n_estimators": 500,     # More estimators to compensate for extreme weakness of individual trees
+                    "max_depth": 1,
+                    "colsample_bytree": 0.2, # Extreme feature subsampling (trees see very few layers at once)
+                    "reg_lambda": 20.0       # Draconian L2 penalty
+                })
+
             model = XGBRanker(
                 objective="rank:pairwise",
-                n_estimators=200,
-                learning_rate=0.05,
                 random_state=42,
+                **ranker_kwargs
             )
             return model
         elif self.regressor == "rf":
@@ -310,7 +336,17 @@ class MiCoSearcher(QSearcher):
             if self.dims > 20:
                 rf_kwargs["max_features"] = "sqrt"
                 rf_kwargs["n_estimators"] = 250
-                rf_kwargs["max_depth"] = 15
+                rf_kwargs["max_depth"] = 5
+
+            if self.dims > 40:
+                rf_kwargs["max_features"] = "log2"
+                rf_kwargs["n_estimators"] = 350
+                rf_kwargs["max_depth"] = 3
+
+            if self.dims > 60:
+                rf_kwargs["max_features"] = "log2"
+                rf_kwargs["n_estimators"] = 450
+                rf_kwargs["max_depth"] = 2
 
             rf_kwargs["random_state"] = 42
             rf_kwargs["oob_score"] = True

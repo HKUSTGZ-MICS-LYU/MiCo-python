@@ -82,8 +82,7 @@ def dist_to_roi(x, constr_func, roi_lb, roi_ub):
         return lb - constr # Valid but too efficient (too small), penalize slightly
 
 def near_constr_sample(n_samples: int, qtypes: list, dims: int,
-                       constr_func=None, constr_value=None, max_value=None,
-                       roi=0.2, initial_pop=None):
+                       constr_func=None, constr_value=None, roi=0.2, initial_pop=None):
     if constr_func is None:
         return random_sample(n_samples, qtypes)
     
@@ -93,9 +92,9 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
         pop.append([q] * dims)
     if initial_pop is not None:
         pop += initial_pop
-
+    max_value = constr_func([max(qtypes)] * dims)
     cur_ratio = constr_value / max_value
-    assert cur_ratio > roi
+    assert cur_ratio > roi, f"ROI is too large! Current Ratio: {cur_ratio}, ROI: {roi}"
     roi_lb = (cur_ratio - roi) * max_value
     roi_ub = constr_value
 
