@@ -26,6 +26,8 @@ def _run_label(run: dict):
 def _plot_acc_vs_constr(runs: list, objective: str, constraint: str, output_path: str):
     plt.figure(figsize=(8, 5))
     has_data = False
+    cmap = plt.cm.tab10
+    color_idx = 0
     for run in runs:
         points = run.get("history", [])
         xs = [p.get("constraint") for p in points if p.get("constraint") is not None and p.get("accuracy") is not None]
@@ -33,7 +35,12 @@ def _plot_acc_vs_constr(runs: list, objective: str, constraint: str, output_path
         if not xs:
             continue
         has_data = True
-        plt.plot(xs, ys, marker="o", linewidth=1.2, markersize=3, label=_run_label(run))
+        color = cmap(color_idx % 10)
+        color_idx += 1
+        plt.plot(
+            xs, ys, marker="o", linewidth=1.2, markersize=3,
+            label=_run_label(run), color=color, alpha=0.8
+        )
 
     if not has_data:
         raise ValueError("No valid history points with both constraint and accuracy.")

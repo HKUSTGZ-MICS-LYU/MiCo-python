@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 
 from MiCoEval import MiCoEval
 
@@ -10,9 +10,9 @@ class QSearcher(ABC):
     qtypes: list
     best_trace: list
     best_scheme_trace: list
-    target: str | None
-    constr_name: str | None
-    constr_value: float | None
+    target: Optional[str]
+    constr_name: Optional[str]
+    constr_value: Optional[float]
 
     def __init__(self, evaluator: MiCoEval,
                  n_inits: int = 10, 
