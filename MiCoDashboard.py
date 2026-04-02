@@ -15,17 +15,20 @@ class MiCoDashboard:
         if every <= 0:
             every = 1
 
-        def _hook(searcher, _, __):
+        def _hook(searcher, best_scheme, best_value):
             n = len(searcher.best_trace)
             if n == 0 or (n % every) != 0:
                 return
             history = MiCoDashboard.build_run_history(searcher, evaluator, constraint_name)
+            constraint_limit = getattr(searcher, "constr_value", None)
+            if constraint_limit is None:
+                constraint_limit = 0.0
             run = MiCoDashboard.build_run_entry(
                 method=getattr(searcher, "__class__", type(searcher)).__name__,
                 seed=None,
                 objective=objective_label,
                 constraint_name=constraint_label,
-                constraint_limit=getattr(searcher, "constr_value", 0.0) or 0.0,
+                constraint_limit=constraint_limit,
                 history=history
             )
             MiCoDashboard.plot_acc_vs_constr(
