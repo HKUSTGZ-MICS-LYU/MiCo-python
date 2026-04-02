@@ -81,7 +81,7 @@ if __name__ == "__main__":
     with open(dashboard_json, "w") as f:
         json.dump({
             "runs": [{
-                "method": "mico",
+                "method": "bitfusion",
                 "seed": args.seed,
                 "objective": "ptq_acc",
                 "constraint_name": mode,
