@@ -81,7 +81,7 @@ class MiCoDashboard:
     @staticmethod
     def plot_acc_vs_constr(runs: list, objective: str, constraint: str, output_path: str,
                            close_figure: bool = True):
-        plt.figure(figsize=(8, 5))
+        fig = plt.figure(figsize=(8, 5))
         has_data = False
         cmap = plt.cm.tab10
         color_idx = 0
@@ -113,9 +113,9 @@ class MiCoDashboard:
         output_dir = os.path.dirname(output_path)
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
-        plt.savefig(output_path)
+        fig.savefig(output_path)
         if close_figure:
-            plt.close()
+            plt.close(fig)
         print(f"Saved plot to {output_path}")
 
     @staticmethod

@@ -1,6 +1,9 @@
 import argparse
 from MiCoDashboard import MiCoDashboard
 
+DEFAULT_OBJECTIVE_LABEL = "accuracy"
+DEFAULT_CONSTRAINT_LABEL = "constraint"
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Simple dashboard for MPQ search histories.")
@@ -17,8 +20,8 @@ if __name__ == "__main__":
     if not runs:
         parser.error("No runs loaded from input JSON; cannot build dashboard.")
 
-    default_objective = runs[0].get("objective", "accuracy")
-    default_constraint = runs[0].get("constraint_name", "constraint")
+    default_objective = runs[0].get("objective", DEFAULT_OBJECTIVE_LABEL)
+    default_constraint = runs[0].get("constraint_name", DEFAULT_CONSTRAINT_LABEL)
     objective_label = args.objective or default_objective
     constraint_label = args.constraint or default_constraint
 
