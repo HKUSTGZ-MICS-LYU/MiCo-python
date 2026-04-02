@@ -227,8 +227,8 @@ class HAQSearcher(QSearcher):
                constr: str = None, 
                constr_value = None):
         
-        self.start_search(target, constr, constr_value)
         self.best_res = None
+        self.start_search(target, constr, constr_value)
 
         num_episode = n_iter + self.n_inits
         warm_up = self.n_inits

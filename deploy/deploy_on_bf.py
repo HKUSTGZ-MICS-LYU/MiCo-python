@@ -66,16 +66,17 @@ if __name__ == "__main__":
 
     history = MiCoDashboard.build_run_history(searcher, evaluator, mode)
     dashboard_json = f"output/json/{args.model}_deploy_bf_dashboard.json"
+    run_entry = MiCoDashboard.build_run_entry(
+        method="bitfusion",
+        seed=args.seed,
+        objective="ptq_acc",
+        constraint_name=mode,
+        constraint_limit=max_real * target_ratio,
+        history=history
+    )
     MiCoDashboard.save_runs(
         dashboard_json,
-        [MiCoDashboard.build_run_entry(
-            method="bitfusion",
-            seed=args.seed,
-            objective="ptq_acc",
-            constraint_name=mode,
-            constraint_limit=max_real * target_ratio,
-            history=history
-        )]
+        [run_entry]
     )
     print(f"Dashboard history JSON saved to {dashboard_json}")
         
