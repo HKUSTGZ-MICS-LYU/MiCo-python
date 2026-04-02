@@ -8,7 +8,10 @@ class MiCoDashboard:
     @staticmethod
     def build_run_history(searcher, evaluator, constraint_name: str):
         history = []
-        constr_eval = evaluator.eval_dict()[constraint_name]
+        eval_map = evaluator.eval_dict()
+        if constraint_name not in eval_map:
+            raise ValueError(f"Unsupported constraint name '{constraint_name}' for dashboard history.")
+        constr_eval = eval_map[constraint_name]
         for idx, best_acc in enumerate(searcher.best_trace):
             scheme = searcher.best_scheme_trace[idx] if idx < len(searcher.best_scheme_trace) else None
             constr_val = constr_eval(scheme) if scheme is not None else None

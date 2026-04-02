@@ -76,7 +76,6 @@ class NLPSearcher(QSearcher):
         self.start_search(target, constr, constr_value)
         if constr_value is None:
             raise ValueError("constr_value must be provided for bops-constrained NLP search.")
-        self.evaluator.set_constraint(constr)
 
         print("Calculating Layer-wise W...")
         self.calculate_w(qbits=min(self.qbits))
