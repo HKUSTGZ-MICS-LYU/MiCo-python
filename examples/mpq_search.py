@@ -42,6 +42,7 @@ TRAILS = args.trails
 MODE = args.mode
 EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
 OUTPUT_JSON = args.output_json or f"output/json/{model_name}_search.json"
+HISTORY_JSON = f"output/json/{model_name}_search_{CONSTR_RATIO}_{MODE}_history.json"
 
 if __name__ == "__main__":
 
@@ -64,6 +65,7 @@ if __name__ == "__main__":
     print("INT1 Predicted Latency:", min_bops)
 
     res_data = {}
+    history_runs = []
 
     methods = METHODS
 
@@ -120,6 +122,25 @@ if __name__ == "__main__":
                 print(f"Final QAT Accuracy: {final_acc}")
                 searcher.best_trace.append(final_acc)
             res_data[method].append(searcher.best_trace)
+            run_history = []
+            best_schemes = getattr(searcher, "best_scheme_trace", [])
+            for idx, best_acc in enumerate(searcher.best_trace):
+                scheme = best_schemes[idx] if idx < len(best_schemes) else None
+                constr_val = evaluator.eval_dict()[CONSTR_TYPE](scheme) if scheme is not None else None
+                run_history.append({
+                    "iter": idx + 1,
+                    "accuracy": float(best_acc) if best_acc is not None else None,
+                    "constraint": float(constr_val) if constr_val is not None else None,
+                    "scheme": scheme
+                })
+            history_runs.append({
+                "method": method,
+                "seed": seed,
+                "objective": MODE,
+                "constraint_name": CONSTR_TYPE,
+                "constraint_limit": float(max_bops * CONSTR_RATIO),
+                "history": run_history
+            })
 
     final_res = {}
     final_trace = {}
@@ -142,5 +163,9 @@ if __name__ == "__main__":
 
     with open(f"output/json/{model_name}_search_{CONSTR_RATIO}_{MODE}_trace.json", "w") as f:
         json.dump(final_trace, f)
+
+    with open(HISTORY_JSON, "w") as f:
+        json.dump({"runs": history_runs}, f, indent=2)
+    print(f"Dashboard history JSON saved to {HISTORY_JSON}")
 
     # plt.show()

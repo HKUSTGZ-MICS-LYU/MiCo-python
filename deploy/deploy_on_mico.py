@@ -1,6 +1,8 @@
 import random
 import argparse
 import numpy as np
+import os
+import json
 
 from matplotlib import pyplot as plt
 
@@ -69,6 +71,32 @@ if __name__ == "__main__":
 
     res_x, res_y = searcher.search(
         args.n_iter, method, mode, max_real*target_ratio)
+
+    history = []
+    for idx, best_acc in enumerate(searcher.best_trace):
+        scheme = searcher.best_scheme_trace[idx] if idx < len(searcher.best_scheme_trace) else None
+        constr_val = evaluator.eval_dict()[mode](scheme) if scheme is not None else None
+        history.append({
+            "iter": idx + 1,
+            "accuracy": float(best_acc) if best_acc is not None else None,
+            "constraint": float(constr_val) if constr_val is not None else None,
+            "scheme": scheme
+        })
+
+    os.makedirs("output/json", exist_ok=True)
+    dashboard_json = f"output/json/{args.model}_deploy_mico_dashboard.json"
+    with open(dashboard_json, "w") as f:
+        json.dump({
+            "runs": [{
+                "method": "mico",
+                "seed": args.seed,
+                "objective": method,
+                "constraint_name": mode,
+                "constraint_limit": float(max_real * target_ratio),
+                "history": history
+            }]
+        }, f, indent=2)
+    print(f"Dashboard history JSON saved to {dashboard_json}")
         
     print(f"Best Scheme: {res_x}")
     print(f"Best Accuracy: {res_y}")
