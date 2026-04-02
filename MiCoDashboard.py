@@ -14,9 +14,13 @@ class MiCoDashboard:
             raise ValueError(
                 f"Unsupported constraint name '{constraint_name}'. Must be one of: {valid_names}"
             )
-        if not hasattr(searcher, "best_trace") or not hasattr(searcher, "best_scheme_trace"):
+        if not hasattr(searcher, "best_trace"):
             raise AttributeError(
-                "Searcher must define both 'best_trace' and 'best_scheme_trace' for dashboard history export."
+                f"{searcher.__class__.__name__} is missing required attribute 'best_trace'."
+            )
+        if not hasattr(searcher, "best_scheme_trace"):
+            raise AttributeError(
+                f"{searcher.__class__.__name__} is missing required attribute 'best_scheme_trace'."
             )
         if len(searcher.best_trace) != len(searcher.best_scheme_trace):
             raise ValueError(

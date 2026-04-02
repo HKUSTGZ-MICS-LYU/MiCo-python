@@ -228,6 +228,8 @@ class HAQSearcher(QSearcher):
                constr_value = None):
         
         self.best_res = None
+        self.best_acc = 0.0
+        self.best_reward = -math.inf
         self.start_search(target, constr, constr_value)
 
         num_episode = n_iter + self.n_inits
