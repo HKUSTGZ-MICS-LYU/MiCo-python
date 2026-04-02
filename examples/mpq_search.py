@@ -31,7 +31,7 @@ argsparse.add_argument("-m", "--mode", type=str, default="ptq_acc")
 argsparse.add_argument("-e", "--epochs", type=int, default=1)
 argsparse.add_argument("--output-json", type=str, default=None)
 argsparse.add_argument("--live-plot", action="store_true",
-                       help="Save a live-updated dashboard plot during search.")
+                       help="Save a live-updated accuracy-vs-constraint plot to output/figs during search.")
 argsparse.add_argument("--live-plot-every", type=int, default=1,
                        help="Update live plot every N record-best updates (default: 1).")
 
@@ -114,7 +114,7 @@ if __name__ == "__main__":
             if (method == "nlp") and (len(res_data[method]) > 0):
                 # NLP gives fixed solution
                 continue
-            
+
             if LIVE_PLOT:
                 live_plot_path = MiCoDashboard.default_live_plot_path(
                     model_name, method, seed

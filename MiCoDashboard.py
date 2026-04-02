@@ -13,7 +13,9 @@ class MiCoDashboard:
     def make_live_plot_hook(evaluator, constraint_name: str, objective_label: str,
                             constraint_label: str, output_path: str, every: int = 1):
         if (not isinstance(every, int)) or (every <= 0):
-            raise ValueError(f"every must be a positive integer, got: {every}")
+            raise ValueError(
+                f"'every' parameter must be a positive integer, got {type(every).__name__}: {every}"
+            )
 
         def _hook(searcher, best_scheme, best_value):
             n = len(searcher.best_trace)
