@@ -46,7 +46,7 @@ class MiCoModel(nn.Module):
         return
     
     def torchao_autoquant(self, example_input: torch.Tensor):
-        raise NotImplementedError("autoquant was removed in torchao 0.9.0. Use set_qscheme_torchao() instead.")
+        raise NotImplementedError("autoquant was removed in torchao 0.17.0. Use set_qscheme_torchao() instead.")
 
     def test(self, test_loader):
         self.eval()
