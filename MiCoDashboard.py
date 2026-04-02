@@ -14,9 +14,19 @@ class MiCoDashboard:
             raise ValueError(
                 f"Unsupported constraint name '{constraint_name}'. Must be one of: {valid_names}"
             )
+        if not hasattr(searcher, "best_trace") or not hasattr(searcher, "best_scheme_trace"):
+            raise AttributeError(
+                "Searcher must define both 'best_trace' and 'best_scheme_trace' for dashboard history export."
+            )
+        if len(searcher.best_trace) != len(searcher.best_scheme_trace):
+            raise ValueError(
+                "Mismatched trace lengths: "
+                f"len(best_trace)={len(searcher.best_trace)}, "
+                f"len(best_scheme_trace)={len(searcher.best_scheme_trace)}."
+            )
         constr_eval = eval_map[constraint_name]
         for idx, best_acc in enumerate(searcher.best_trace):
-            scheme = searcher.best_scheme_trace[idx] if idx < len(searcher.best_scheme_trace) else None
+            scheme = searcher.best_scheme_trace[idx]
             constr_val = constr_eval(scheme) if scheme is not None else None
             history.append({
                 "iter": idx + 1,
@@ -99,6 +109,7 @@ class MiCoDashboard:
         if output_dir:
             os.makedirs(output_dir, exist_ok=True)
         plt.savefig(output_path)
+        plt.close()
         print(f"Saved plot to {output_path}")
 
     @staticmethod
