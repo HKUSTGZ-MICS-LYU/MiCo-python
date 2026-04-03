@@ -5,6 +5,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 from MiCoEval import MiCoEval
+from MiCoDashboard import MiCoDashboard
 from MiCoProxy import get_mico_matmul_proxy, get_mico_conv2d_proxy, get_mico_misc_kernel_proxy
 
 from models import model_zoo
@@ -69,6 +70,22 @@ if __name__ == "__main__":
 
     res_x, res_y = searcher.search(
         args.n_iter, method, mode, max_real*target_ratio)
+
+    history = MiCoDashboard.build_run_history(searcher, evaluator, mode)
+    dashboard_json = f"output/json/{args.model}_deploy_mico_dashboard.json"
+    run_entry = MiCoDashboard.build_run_entry(
+        method="mico",
+        seed=args.seed,
+        objective=method,
+        constraint_name=mode,
+        constraint_limit=max_real * target_ratio,
+        history=history
+    )
+    MiCoDashboard.save_runs(
+        dashboard_json,
+        [run_entry]
+    )
+    print(f"Dashboard history JSON saved to {dashboard_json}")
         
     print(f"Best Scheme: {res_x}")
     print(f"Best Accuracy: {res_y}")

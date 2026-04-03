@@ -38,6 +38,22 @@ python examples/mpq_train.py -h
 python examples/mpq_search.py -h
 ```
 
+**MPQ Dashboard (Accuracy vs Constraint)**:
+```shell
+# 1) Run search or deploy flow to generate dashboard JSON
+python examples/mpq_search.py lenet_mnist
+# optional: write live-updating curve/scatter image during search
+python examples/mpq_search.py lenet_mnist --live-plot --live-plot-every 1
+# or:
+python deploy/deploy_on_mico.py lenet_mnist
+python deploy/deploy_on_bf.py lenet_mnist
+
+# 2) Render dashboard figure + print top configurations
+python examples/mpq_dashboard.py output/json/lenet_mnist_search_0.5_ptq_acc_history.json \
+  --output output/figs/lenet_mnist_dashboard.png
+```
+This visualizes accuracy versus constraint points collected during search iterations.
+
 **To use the CodeGen**, check the code to change the models/datasets/precisions:
 ```shell
 python MiCoCodeGen.py

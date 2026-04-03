@@ -8,6 +8,7 @@ import os
 from matplotlib import pyplot as plt
 
 from MiCoEval import MiCoEval
+from MiCoDashboard import MiCoDashboard
 
 from models import model_zoo
 
@@ -29,6 +30,10 @@ argsparse.add_argument("-t", "--trails", type=int, default=5)
 argsparse.add_argument("-m", "--mode", type=str, default="ptq_acc")
 argsparse.add_argument("-e", "--epochs", type=int, default=1)
 argsparse.add_argument("--output-json", type=str, default=None)
+argsparse.add_argument("--live-plot", action="store_true",
+                       help="Save a live-updated accuracy-vs-constraint plot to output/figs during search.")
+argsparse.add_argument("--live-plot-every", type=int, default=1,
+                       help="Update live plot every N record-best updates (default: 1).")
 
 args = argsparse.parse_args()
 
@@ -42,6 +47,9 @@ TRAILS = args.trails
 MODE = args.mode
 EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
 OUTPUT_JSON = args.output_json or f"output/json/{model_name}_search.json"
+HISTORY_JSON = f"output/json/{model_name}_search_{CONSTR_RATIO}_{MODE}_history.json"
+LIVE_PLOT = args.live_plot
+LIVE_PLOT_EVERY = args.live_plot_every
 
 if __name__ == "__main__":
 
@@ -64,6 +72,7 @@ if __name__ == "__main__":
     print("INT1 Predicted Latency:", min_bops)
 
     res_data = {}
+    history_runs = []
 
     methods = METHODS
 
@@ -106,6 +115,22 @@ if __name__ == "__main__":
                 # NLP gives fixed solution
                 continue
 
+            if LIVE_PLOT:
+                live_plot_path = MiCoDashboard.default_live_plot_path(
+                    model_name, method, seed
+                )
+                searcher.set_record_hook(
+                    MiCoDashboard.make_live_plot_hook(
+                        evaluator=evaluator,
+                        constraint_name=CONSTR_TYPE,
+                        objective_label=MODE,
+                        constraint_label=CONSTR_TYPE,
+                        output_path=live_plot_path,
+                        every=LIVE_PLOT_EVERY,
+                    )
+                )
+                print(f"Live dashboard enabled: {live_plot_path}")
+
             res_x, res_y = searcher.search(
                 N_SEARCH, MODE, CONSTR_TYPE, max_bops*CONSTR_RATIO)
 
@@ -118,8 +143,19 @@ if __name__ == "__main__":
                 print("Starting QAT fine-tuning...")
                 final_acc = evaluator.eval_qat(res_x, EPOCHS*2)
                 print(f"Final QAT Accuracy: {final_acc}")
-                searcher.best_trace.append(final_acc)
+                searcher.record_best(res_x, final_acc)
             res_data[method].append(searcher.best_trace)
+            run_history = MiCoDashboard.build_run_history(searcher, evaluator, CONSTR_TYPE)
+            history_runs.append(
+                MiCoDashboard.build_run_entry(
+                    method=method,
+                    seed=seed,
+                    objective=MODE,
+                    constraint_name=CONSTR_TYPE,
+                    constraint_limit=max_bops * CONSTR_RATIO,
+                    history=run_history
+                )
+            )
 
     final_res = {}
     final_trace = {}
@@ -142,5 +178,8 @@ if __name__ == "__main__":
 
     with open(f"output/json/{model_name}_search_{CONSTR_RATIO}_{MODE}_trace.json", "w") as f:
         json.dump(final_trace, f)
+
+    MiCoDashboard.save_runs(HISTORY_JSON, history_runs)
+    print(f"Dashboard history JSON saved to {HISTORY_JSON}")
 
     # plt.show()

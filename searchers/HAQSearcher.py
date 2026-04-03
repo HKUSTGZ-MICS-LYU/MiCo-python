@@ -42,6 +42,7 @@ class HAQSearcher(QSearcher):
                           n_layers=self.n_layers)
         self.best_trace = []
         self.best_acc = 0.0
+        self.best_res = None
         return
     
     def build_embedding(self):
@@ -226,9 +227,10 @@ class HAQSearcher(QSearcher):
                constr: str = None, 
                constr_value = None):
         
-        self.mpq.set_eval(target)
-        if constr:
-            self.mpq.set_constraint(constr)
+        self.best_res = None
+        self.best_acc = -math.inf
+        self.best_reward = -math.inf
+        self.start_search(target, constr, constr_value)
 
         num_episode = n_iter + self.n_inits
         warm_up = self.n_inits
@@ -292,7 +294,7 @@ class HAQSearcher(QSearcher):
                     best_reward = final_reward
                     best_policy = self.strategy
                 if episode > warm_up:
-                    self.best_trace.append(self.best_acc)
+                    self.record_best(self.best_res, self.best_acc)
 
                 value_loss = self.agent.get_value_loss()
                 policy_loss = self.agent.get_policy_loss()
