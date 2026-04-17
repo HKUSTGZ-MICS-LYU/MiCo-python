@@ -202,13 +202,28 @@ class SimpleRMSNorm(nn.Module):
         """Forward method of SimpleRMSNorm"""
         return F.normalize(x, dim=-1) * self.scale
 
+class HadamardTransform(nn.Module):
+    # https://github.com/Dao-AILab/fast-hadamard-transform
+    def __init__(self, *args, **kwargs):
+        self.func = None
+        try:
+            from fast_hadamard_transform import hadamard_transform
+            self.func = hadamard_transform
+        except:
+            assert "Please install fast hardamard transform from https://github.com/Dao-AILab/fast-hadamard-transform"
+        super().__init__(*args, **kwargs)
+    def forward(self, x, scale=1.0):
+        return self.func(x, scale)
+
 class BitQLayer:
-    def __init__(self, qtype=DEFAULT_W_Q, act_q=DEFAULT_ACT_Q, qat=False, use_norm=False, group_size=1):
+    def __init__(self, qtype=DEFAULT_W_Q, act_q=DEFAULT_ACT_Q, qat=False, 
+                 use_norm=False, hadamard=False, group_size=1):
         super().__init__()
         self.qtype = qtype
         self.act_q = act_q
         self.qat = qat
         self.use_norm = use_norm
+        self.haramard = hadamard
         self.group_size = group_size
         
         self.qforward = False
@@ -255,12 +270,13 @@ class BitLinear(nn.Linear, BitQLayer):
                  device=None, dtype=None,
                  qat = False,
                  use_norm = False,
+                 hadamard = False,
                  group_size = 1,
                  qtype = DEFAULT_W_Q,
                  act_q = DEFAULT_ACT_Q) -> None:
         
         nn.Linear.__init__(self, in_features, out_features, bias, device, dtype)
-        BitQLayer.__init__(self, qtype, act_q, qat, use_norm, group_size)
+        BitQLayer.__init__(self, qtype, act_q, qat, use_norm, hadamard, group_size)
 
         self.in_w = in_features
         self.in_h = 1
@@ -288,6 +304,7 @@ class BitLinear(nn.Linear, BitQLayer):
             # Forward with Quantization Aware Training (QAT)
             # Using Straight-Through-Estimator (STE)
             x_norm = SimpleRMSNorm(self.in_features)(x) if self.use_norm else x
+            x_norm = HadamardTransform()(x) if self.haramard else x_norm
             x_quant = x_norm + (self.act_quant(x_norm) - x_norm).detach()
             w_quant = w + (self.weight_quant(w) - w).detach()
             y = F.linear(x_quant, w_quant, bias=self.bias)

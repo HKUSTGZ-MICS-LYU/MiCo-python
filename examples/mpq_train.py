@@ -24,8 +24,15 @@ if __name__ == "__main__":
 
     model, train_loader, test_loader = model_zoo.from_zoo(
         model_name, shuffle=True, batch_size=batch_size)
-
-    res = model.train_loop(n_epoch=int(epoches),
+    if "llama" in model_name:
+        res = model.train_loop(n_iter=int(epoches),
+                train_loader=train_loader, 
+                test_loader=test_loader,
+                lr = lr, 
+                eval_interval = epoches // 2,
+                verbose=True)
+    else:
+        res = model.train_loop(n_epoch=int(epoches),
                         train_loader=train_loader, 
                         test_loader=test_loader,
                         lr = lr, 

@@ -117,6 +117,8 @@ class ViT(MiCoModel):
             nn.Linear(hidden, num_classes) # for cls_token
         )
 
+        self.n_layers = len(self.get_qlayers())
+
     def forward(self, x):
         out = self.im2word(x)  # (b, n, f)
         out = self.emb(out)

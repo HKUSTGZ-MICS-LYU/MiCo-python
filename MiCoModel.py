@@ -75,6 +75,10 @@ class MiCoModel(nn.Module):
             scheduler = None
         elif scheduler == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epoch)
+        elif scheduler == "step":
+            scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
+                                                        step_size=n_epoch // 10, 
+                                                        gamma = 0.75)
         elif scheduler == "cifar100-step":
             scheduler = torch.optim.lr_scheduler.MultiStepLR(
                 optimizer, milestones=[60, 120, 160, 200], gamma=0.2)

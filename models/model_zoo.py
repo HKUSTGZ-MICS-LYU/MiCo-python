@@ -64,11 +64,12 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         }
         model = model_dict[model_name].to(device)
     elif "tinyllama" in name:
-        from models.LLaMa import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa11M, TinyLLaMa2c110M
+        from models.LLaMa import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa11M, TinyLLaMa28M, TinyLLaMa2c110M
         model_dict = {
             "tinyllama_1m": TinyLLaMa1M,
             "tinyllama_3m": TinyLLaMa3M,
             "tinyllama_11m": TinyLLaMa11M,
+            "tinyllama_28m": TinyLLaMa28M,
             "tinyllama_110m": TinyLLaMa2c110M,
         }
         model = model_dict[name]().to(device)
