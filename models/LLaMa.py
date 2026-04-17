@@ -469,6 +469,15 @@ def TinyLLaMa28M():
     args = ModelArgs(dim=512, n_layers=8, n_heads=8)
     return Transformer(args)
 
+def TinyLLaMa88M():
+    args = ModelArgs(
+        dim=768,
+        n_layers=12,
+        n_heads=12,
+        n_kv_heads=12,
+        max_seq_len=1024)
+    return Transformer(args)
+
 def TinyLLaMaNAS(args : dict):
     """
     args: {
@@ -495,11 +504,11 @@ def TinyLLaMa2c110M():
     return Transformer(args)
 
 # if __name__ == "__main__":
-    # model = TinyLLaMa3M()
+#     # model = TinyLLaMa3M()
 
-    # # Get Model Param Size
-    # param_size = sum(p.numel() for p in model.parameters())
-    # print(f"Model Param Size: {param_size / 1e6:.2f} M")
+#     # Get Model Param Size
+#     param_size = sum(p.numel() for p in model.parameters())
+#     print(f"Model Param Size: {param_size / 1e6:.2f} M")
 
     # model = TinyLLaMa2c110M()
     # ckpt = torch.load("output/ckpt/stories110M.pt", map_location='cpu', weights_only=False)

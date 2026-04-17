@@ -26,6 +26,21 @@ class Im2Word(nn.Module):
         out = out.reshape(x.size(0), self.patch**2 ,-1)
         return out
 
+
+class AttentionScore(nn.Module):
+    def __init__(self, scale: float):
+        super(AttentionScore, self).__init__()
+        self.scale = float(scale)
+        self.MiCo_func = MiCoFunc(
+            "MiCo_ViT_attention_{dtype}",
+            params=[self.scale]
+        )
+
+    def forward(self, q, k, v):
+        score = F.softmax(torch.einsum("bhif, bhjf->bhij", q, k) / self.scale, dim=-1)
+        out = torch.einsum("bhij, bhjf->bihf", score, v)
+        return out
+
 '''
 Modified from https://github.com/omihub777/ViT-CIFAR
 '''
@@ -42,6 +57,7 @@ class MultiHeadSelfAttention(nn.Module):
 
         self.o = nn.Linear(feats, feats)
         self.dropout = nn.Dropout(dropout)
+        self.attn_score = AttentionScore(self.sqrt_d)
 
     def forward(self, x):
         b, n, f = x.size()
@@ -49,8 +65,7 @@ class MultiHeadSelfAttention(nn.Module):
         k = self.k(x).view(b, n, self.head, self.feats//self.head).transpose(1,2)
         v = self.v(x).view(b, n, self.head, self.feats//self.head).transpose(1,2)
 
-        score = F.softmax(torch.einsum("bhif, bhjf->bhij", q, k)/self.sqrt_d, dim=-1) #(b,h,n,n)
-        attn = torch.einsum("bhij, bhjf->bihf", score, v) #(b,n,h,f//h)
+        attn = self.attn_score(q, k, v) #(b,n,h,f//h)
         o = self.dropout(self.o(attn.flatten(2)))
         return o
 

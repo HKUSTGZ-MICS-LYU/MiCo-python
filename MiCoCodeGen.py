@@ -159,6 +159,7 @@ void model_forward(Model* model) {{
 
         # dictionaries to hold the tensor data
         self.tensors = {}
+        self.scalar_values = {}
 
         # this is sooooo hacky
         self.placeholder_counter: Dict[str, int] = {}
@@ -288,10 +289,24 @@ void model_forward(Model* model) {{
             if isinstance(node, (int, float, bool, str, type(None))):
                 pass
             elif type(node) is torch.fx.immutable_collections.immutable_list:
-                input_names += [i.name for i in node]
+                input_names += [i.name for i in node if i.name in self.tensors]
             elif hasattr(node, 'name'):
-                input_names.append(node.name)
+                if node.name in self.tensors:
+                    input_names.append(node.name)
         return input_names
+
+    def _resolve_arg_value(self, arg):
+        if isinstance(arg, torch.fx.node.Node):
+            if arg.name in self.scalar_values:
+                return self.scalar_values[arg.name]
+            return None
+        return arg
+
+    def _get_attr_value(self, target: str):
+        value = self.model
+        for name in target.split("."):
+            value = getattr(value, name)
+        return value
     
 
     def handle_placeholder(self, n: torch.fx.node.Node, out: torch.Tensor):
@@ -299,8 +314,11 @@ void model_forward(Model* model) {{
         self.add_uninitialized_tensor(n.name, out)
 
     def handle_get_attr(self, n: torch.fx.node.Node, out: torch.Tensor):
-        # print("get attr:", n.name, n.target)
-        pass
+        value = self._get_attr_value(str(n.target))
+        if isinstance(value, torch.Tensor):
+            self.add_initialized_tensor(n.name, value)
+        else:
+            self.scalar_values[n.name] = value
 
     def handle_call_function(self, n: torch.fx.node.Node, out: torch.Tensor):
         """
@@ -330,14 +348,57 @@ void model_forward(Model* model) {{
     def handle_call_method(self, n: torch.fx.node.Node, out: torch.Tensor):
         self.logger.log(logging.DEBUG, f"call method:  {n.name} {n.target}")
         method = n.target
+        input_names = self._extract_input_names(n)
+
         if method == "size":
+            self.scalar_values[n.name] = out
+            return
+
+        if not isinstance(out, torch.Tensor):
+            self.scalar_values[n.name] = out
+            return
+
+        if len(input_names) == 0:
+            raise ValueError(f"Method '{method}' has no tensor input names for node {n.name}")
+
+        if method == "view":
+            src_name = input_names[0]
+            src_tensor = self.tensors[src_name]["tensor"]
+            src_dim = src_tensor.dim()
+            dst_dim = out.dim()
             self.add_connect_tensor(n.name, out)
-            self.add_forward_call("MiCo_CONNECT", out, n.name, [n.name])
-        elif method == "view":
+            if src_dim == dst_dim:
+                self.add_forward_call("MiCo_CONNECT", out, n.name, [src_name])
+            elif src_dim == 3 and dst_dim == 4:
+                self.add_forward_call("MiCo_view3d4d_{dtype}", out, n.name, [src_name])
+            else:
+                raise NotImplementedError(f"Unsupported view rank change: {src_dim}D -> {dst_dim}D")
+        elif method == "flatten":
+            src_name = input_names[0]
+            start_dim = self._resolve_arg_value(n.args[1]) if len(n.args) > 1 else 0
+            end_dim = self._resolve_arg_value(n.args[2]) if len(n.args) > 2 else -1
             self.add_connect_tensor(n.name, out)
-            self.add_forward_call("MiCo_CONNECT", out, n.name, [n.name])
+            if out.dim() == 3 and start_dim == 2 and end_dim == -1:
+                self.add_forward_call("MiCo_flatten3d_{dtype}", out, n.name, [src_name])
+            else:
+                raise NotImplementedError(f"Unsupported flatten: start_dim={start_dim}, end_dim={end_dim}, out_dim={out.dim()}")
+        elif method == "transpose":
+            src_name = input_names[0]
+            dim0 = self._resolve_arg_value(n.args[1])
+            dim1 = self._resolve_arg_value(n.args[2])
+            self.add_uninitialized_tensor(n.name, out)
+            self.add_forward_call(f"MiCo_transpose{out.dim()}d_{{dtype}}", out, n.name, [src_name], [dim0, dim1])
+        elif method == "repeat":
+            src_name = input_names[0]
+            repeats = [self._resolve_arg_value(arg) for arg in n.args[1:]]
+            self.add_uninitialized_tensor(n.name, out)
+            self.add_forward_call(f"MiCo_repeat{out.dim()}d_{{dtype}}", out, n.name, [src_name], repeats)
+        elif method == "contiguous":
+            src_name = input_names[0]
+            self.add_connect_tensor(n.name, out)
+            self.add_forward_call("MiCo_CONNECT", out, n.name, [src_name])
         else:
-            raise NotImplementedError()
+            raise NotImplementedError(f"Unsupported method '{method}'")
 
     def handle_call_module(self, n: torch.fx.node.Node, out: torch.Tensor):
         """
@@ -348,7 +409,7 @@ void model_forward(Model* model) {{
 
         module = self.get_module(n.target)
         layer_name = n.name
-        input_names = [n.name for n in self.node_info[n.name][0]]
+        input_names = self._extract_input_names(n)
 
         # Try to get a registered handler for this module type
         handler = MiCoOpRegistry.get_module_handler(module)
@@ -529,7 +590,7 @@ void model_forward(Model* model) {{
         model_bin_path = os.path.join(output_directory, f"{model_name}.bin")
 
         if hasattr(self.model, "default_dataset"):
-            model_dataset = self.model.default_dataset
+            model_dataset = str(self.model.default_dataset).upper()
         else:
             model_dataset = "DEFAULT_DATASET"
 
@@ -944,8 +1005,8 @@ if __name__ == "__main__":
     # m = CmsisCNN(in_channels=3)
     # ckpt = torch.load("output/ckpt/cmsiscnn_cifar10.pth")
 
-    m = VGG(in_channels=3, num_class=10)
-    ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
+    # m = VGG(in_channels=3, num_class=10)
+    # ckpt = torch.load("output/ckpt/vgg_cifar10.pth")
 
     # m = MobileNetV2(100)
     # ckpt = torch.load("output/ckpt/mobilenetv2_cifar100.pth")
@@ -971,6 +1032,9 @@ if __name__ == "__main__":
     # m = KWSConv1d(35)
     # ckpt = torch.load("output/ckpt/kws_conv1d.pth", map_location="cpu")
     
+    from models import ViT
+    m = ViT(num_classes=100)
+    ckpt = torch.load("output/ckpt/vit_cifar100.pth")
     # m = from_torch(
     #     mobilenet_v2(
     #     weights=MobileNet_V2_Weights.IMAGENET1K_V1)
@@ -987,7 +1051,7 @@ if __name__ == "__main__":
     m = MiCoCodeGen(m, align_to=32, gemmini_mode = False)
     m.forward(example_input)
     # m.visualize_dag("model_full.png")
-    # m.visualize_dag("model_simplified.png", simplified=True)
+    m.visualize_dag("model_simplified.png", simplified=True)
     m.convert("project", "model", verbose = False, mem_pool = True)
     # m.tensor_lifetime()
     # m.build("project", "mico_fpu", "TEST_NUM=1")

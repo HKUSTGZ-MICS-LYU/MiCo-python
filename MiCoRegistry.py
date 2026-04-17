@@ -138,6 +138,60 @@ def handle_mul(codegen, n, out, input_names, input_args):
     codegen.add_uninitialized_tensor(n.name, out)
     codegen.add_forward_call("MiCo_mul{dim}d_{dtype}", out, n.name, input_names)
 
+@MiCoOpRegistry.register_function(operator.getitem)
+def handle_getitem(codegen, n, out, input_names, input_args):
+    """Handler for getitem operations (tensor slicing and shape metadata indexing)."""
+    if not isinstance(out, torch.Tensor):
+        codegen.scalar_values[n.name] = out
+        return
+
+    index = input_args[1]
+    if out.dim() == 2 and isinstance(index, tuple) and len(index) == 2 and isinstance(index[1], int):
+        # ViT class-token extraction: x[:, idx, :]
+        codegen.add_uninitialized_tensor(n.name, out)
+        codegen.add_forward_call("MiCo_getitem3d_to2d_{dtype}", out, n.name, input_names, [index[1]])
+        return
+
+    raise NotImplementedError(f"Unsupported tensor getitem pattern: index={index}, out_dim={out.dim()}")
+
+
+@MiCoOpRegistry.register_function(operator.__truediv__)
+@MiCoOpRegistry.register_function(operator.truediv)
+def handle_truediv(codegen, n, out, input_names, input_args):
+    """Handler for tensor/scalar true division."""
+    if len(input_args) != 2:
+        raise ValueError(f"Unsupported truediv arguments: {input_args}")
+    scalar = input_args[1]
+    if isinstance(scalar, torch.fx.node.Node):
+        scalar = codegen.scalar_values.get(scalar.name, None)
+    if not isinstance(scalar, (int, float)):
+        raise NotImplementedError(f"Only tensor/scalar truediv is supported, got scalar={scalar}")
+    codegen.add_uninitialized_tensor(n.name, out)
+    codegen.add_forward_call("MiCo_div{dim}d_scalar_{dtype}", out, n.name, input_names, [float(scalar)])
+
+
+@MiCoOpRegistry.register_function(torch.nn.functional.softmax)
+@MiCoOpRegistry.register_function(torch.softmax)
+def handle_softmax(codegen, n, out, input_names, input_args):
+    """Handler for softmax."""
+    dim = n.kwargs.get("dim", -1)
+    codegen.add_uninitialized_tensor(n.name, out)
+    codegen.add_forward_call("MiCo_softmax{dim}d_{dtype}", out, n.name, input_names, [dim])
+
+
+@MiCoOpRegistry.register_function(torch.einsum)
+@MiCoOpRegistry.register_function(torch.functional.einsum)
+def handle_einsum(codegen, n, out, input_names, input_args):
+    """Handler for ViT attention einsum patterns."""
+    equation = input_args[0].replace(" ", "")
+    codegen.add_uninitialized_tensor(n.name, out)
+    if equation == "bhif,bhjf->bhij":
+        codegen.add_forward_call("MiCo_einsum_bhif_bhjf_bhij_{dtype}", out, n.name, input_names)
+    elif equation == "bhij,bhjf->bihf":
+        codegen.add_forward_call("MiCo_einsum_bhij_bhjf_bihf_{dtype}", out, n.name, input_names)
+    else:
+        raise NotImplementedError(f"Unsupported einsum equation: {equation}")
+
 
 @MiCoOpRegistry.register_function(torch.nn.functional.relu)
 def handle_relu(codegen, n, out, input_names, input_args):
@@ -349,7 +403,8 @@ def handle_bitlinear_module(codegen, n, out, module, input_names):
                                     quant=module.qtype, scale=module.qw_scale)
     codegen.add_initialized_tensor(f"{layer_name}_bias", bias)
 
-    codegen.add_forward_call("MiCo_bitlinear_{dtype}", out, layer_name, input_names, [
+    bitlinear_name = "MiCo_bitlinear_{dtype}" if out.dim() == 2 else "MiCo_bitlinear3d_{dtype}"
+    codegen.add_forward_call(bitlinear_name, out, layer_name, input_names, [
         round(module.qtype),
         round(module.act_q),
         codegen.align_to])
@@ -535,7 +590,44 @@ def handle_linear_module(codegen, n, out, module, input_names):
     codegen.add_uninitialized_tensor(layer_name, out)
     codegen.add_initialized_tensor(f"{layer_name}_weight", weight)
     codegen.add_initialized_tensor(f"{layer_name}_bias", bias)
-    codegen.add_forward_call("MiCo_linear_{dtype}", out, layer_name, input_names)
+    linear_name = "MiCo_linear_{dtype}" if out.dim() == 2 else "MiCo_linear3d_{dtype}"
+    codegen.add_forward_call(linear_name, out, layer_name, input_names)
+
+
+@MiCoOpRegistry.register_module(torch.nn.LayerNorm)
+def handle_layernorm_module(codegen, n, out, module, input_names):
+    """Handler for LayerNorm module."""
+    layer_name = n.name
+    input_names.append(f"{layer_name}_weight")
+    input_names.append(f"{layer_name}_bias")
+
+    codegen.add_uninitialized_tensor(layer_name, out)
+    codegen.add_initialized_tensor(f"{layer_name}_weight", module.weight)
+    codegen.add_initialized_tensor(f"{layer_name}_bias", module.bias)
+
+    if out.dim() == 2:
+        codegen.add_forward_call("MiCo_layernorm2d_{dtype}", out, layer_name, input_names, [
+            module.normalized_shape[0], module.eps
+        ])
+    elif out.dim() == 3:
+        codegen.add_forward_call("MiCo_layernorm3d_{dtype}", out, layer_name, input_names, [
+            module.normalized_shape[0], module.eps
+        ])
+    else:
+        raise NotImplementedError(f"LayerNorm only supports 2D/3D outputs, got {out.dim()}D")
+
+
+@MiCoOpRegistry.register_module(torch.nn.GELU)
+def handle_gelu_module(codegen, n, out, module, input_names):
+    """Handler for GELU activation module."""
+    layer_name = n.name
+    codegen.add_uninitialized_tensor(layer_name, out)
+    if out.dim() == 2:
+        codegen.add_forward_call("MiCo_gelu2d_{dtype}", out, layer_name, input_names)
+    elif out.dim() == 3:
+        codegen.add_forward_call("MiCo_gelu3d_{dtype}", out, layer_name, input_names)
+    else:
+        raise NotImplementedError(f"GELU only supports 2D/3D outputs, got {out.dim()}D")
 
 
 @MiCoOpRegistry.register_module(torch.nn.Identity)
