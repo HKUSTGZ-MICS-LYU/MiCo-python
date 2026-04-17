@@ -4,6 +4,7 @@ import argparse
 import random
 import numpy as np
 import os
+import time
 
 from matplotlib import pyplot as plt
 
@@ -58,11 +59,14 @@ if __name__ == "__main__":
     elif MODE == "qat_acc":
         bitwidths = [1, 2, 4, 8]
 
-    max_bops = evaluator.eval_bops([8] * dim)
-    print("INT8 Predicted Latency:", max_bops)
-    min_bops = evaluator.eval_bops([1] * dim)
-    print("INT1 Predicted Latency:", min_bops)
+    evaluator.set_constraint(CONSTR_TYPE)
 
+    max_c = evaluator.constr([max(bitwidths)] * dim)
+    print("Maximum Constraints:", max_c)
+    min_c = evaluator.constr([min(bitwidths)] * dim)
+    print("Minimum Constraints:", min_c)
+
+    print(f"Target Constraints: {max_c*CONSTR_RATIO} ({CONSTR_RATIO:.2%} of max)")
     res_data = {}
 
     methods = METHODS
@@ -81,7 +85,7 @@ if __name__ == "__main__":
                 torch.cuda.random.manual_seed(seed)
 
             print("Model Type:", method)
-
+            search_start = time.time()
             if method == "bo":
                 searcher = BayesSearcher(
                     evaluator, n_inits=N_INIT, qtypes=bitwidths)
@@ -107,12 +111,14 @@ if __name__ == "__main__":
                 continue
 
             res_x, res_y = searcher.search(
-                N_SEARCH, MODE, CONSTR_TYPE, max_bops*CONSTR_RATIO)
+                N_SEARCH, MODE, CONSTR_TYPE, max_c*CONSTR_RATIO)
 
             print(f"Best Scheme: {res_x}")
             print(f"Best Accuracy: {res_y}")
-            res = evaluator.eval_bops(res_x)
-            print(f"MPQ Real Latency: {res} ({res / max_bops:.2%})")
+            print(f"Accuracy Drop: {evaluator.baseline_acc - res_y:.4f}" )
+            print(f"Search Time:", time.time() - search_start)
+            res = evaluator.constr(res_x)
+            print(f"MPQ Real Constraint: {res} ({res / max_c:.2%})")
             if MODE == "qat_acc":
                 # Final Fine-tuning and evaluation
                 print("Starting QAT fine-tuning...")

@@ -1,3 +1,4 @@
+import tqdm
 import random
 import itertools
 import numpy as np
@@ -82,7 +83,9 @@ def dist_to_roi(x, constr_func, roi_lb, roi_ub):
         return lb - constr # Valid but too efficient (too small), penalize slightly
 
 def near_constr_sample(n_samples: int, qtypes: list, dims: int,
-                       constr_func=None, constr_value=None, roi=0.2, initial_pop=None):
+                       constr_func=None, constr_value=None, roi=0.2, 
+                       initial_pop=None,
+                       pbar=False):
     if constr_func is None:
         return random_sample(n_samples, qtypes)
     
@@ -123,6 +126,8 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
     crossover_ratio = 0.25
     mutation_ratio = 0.1
     keep_ratio = 0.75
+
+    pop_bar = tqdm.tqdm(total=n_samples, disable=not pbar)
 
     while True:
         # Generate Next Generation
@@ -168,6 +173,12 @@ def near_constr_sample(n_samples: int, qtypes: list, dims: int,
 
             pop.append(sample)
             score.append(dist_to_roi(sample, constr_func, roi_lb, roi_ub))
+            # Count how many samples are within ROI
+            in_roi_count = sum(1 for s in score if s == 0.0)
+            pop_bar.n = in_roi_count
+            pop_bar.refresh()
+            if in_roi_count >= n_samples:
+                break
 
         # rank to get near to constraint
         sorted_pairs = sorted(zip(score, pop), key=lambda pair: pair[0])
