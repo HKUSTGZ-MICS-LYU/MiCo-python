@@ -93,11 +93,12 @@ def main():
     parser.add_argument("--skip-ckpt", action="store_true")
 
     parser.add_argument("--weight-q", type=str, default="8")
-    parser.add_argument("--act-q", type=str, default=None)
+    parser.add_argument("--act-q", type=str, default="8")
     parser.add_argument("--group-size", type=int, default=1)
     parser.add_argument("--skip-qscheme", action="store_true")
     parser.add_argument("--keep-last", action="store_true")
-
+    parser.add_argument("--keep-first", action="store_true")
+    parser.add_argument("--test", action="store_true")
 
     parser.add_argument("--fuse", action="store_true")
     parser.add_argument("--fuse-seq", action="store_true")
@@ -159,6 +160,9 @@ def main():
         if args.keep_last:
             weight_q[-1] = 8
             act_q[-1] = 8
+        if args.keep_first:
+            weight_q[0] = 8
+            act_q[0] = 8
         model.set_qscheme([weight_q, act_q], group_size=args.group_size)
 
     if args.fuse:
