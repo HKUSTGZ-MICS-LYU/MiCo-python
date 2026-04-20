@@ -19,7 +19,7 @@ from models.ParameterGolfGPT import (
     ParameterGolfBaseline,
     ParameterGolfSmall,
 )
-from models.ViT import ViT, ViT1M_cifar10, ViT1M_cifar100, ViTNAS
+from models.ViT import ViT, ViT1M_cifar10, ViT1M_cifar100, ViTNAS, TinyViT1M
 
 # HuggingFace pretrained models for edge deployment
 from models.HuggingFaceModel import (

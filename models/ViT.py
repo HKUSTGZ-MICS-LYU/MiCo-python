@@ -149,6 +149,14 @@ class ViT(MiCoModel):
         return out
     
     
+def TinyViT1M(n_classes=10):
+    return ViT(in_c=3, 
+               num_classes=n_classes, 
+               img_size=32, patch=8, dropout=0.1, 
+               num_layers=7, hidden=128, 
+               mlp_hidden=128*4, head=8, 
+               is_cls_token=True)
+
 def ViT1M_cifar10():
 
     return ViT(in_c=3, 

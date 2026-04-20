@@ -8,7 +8,7 @@ from models import (
     SqueezeNet,
     shufflenet,
     MobileNetV2,
-    ViT,
+    ViT, TinyViT1M,
     HARMLP,
     ParameterGolfBaseline,
     ParameterGolfSmall,
@@ -54,6 +54,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
         model_dict = {
             "vit": ViT(3,n_classes),
+            "vit1m": TinyViT1M(n_classes),
             "cmsiscnn": CmsisCNN(3),
             "vgg": VGG(3, n_classes),
             "resnet8": resnet_alt_8(n_classes),
