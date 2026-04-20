@@ -64,6 +64,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             "shufflenet": shufflenet(n_classes),
         }
         model = model_dict[model_name].to(device)
+        model.default_dataset = dataset_name.capitalize()
     elif "tinyllama" in name:
         from models.LLaMa import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa11M, TinyLLaMa28M, TinyLLaMa2c110M
         model_dict = {
