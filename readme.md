@@ -36,11 +36,14 @@ python examples/lenet_mnist_search.py # MPQ Search on trained LeNet
 # For General Script Usage
 python examples/mpq_train.py -h
 python examples/mpq_search.py -h
+python examples/mpq_gen.py -h
 ```
 
 **To use the CodeGen**, check the code to change the models/datasets/precisions:
 ```shell
 python MiCoCodeGen.py
+# or use model_zoo directly
+python examples/mpq_gen.py lenet_mnist --output-dir project --output-name model
 ```
 
 **To compile the inference code** after generating the model header with the CodeGen:
