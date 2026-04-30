@@ -430,7 +430,7 @@ best_config, best_acc = searcher.search(40, 'ptq_acc', 'latency_proxy', max_late
 | SqueezeNet | Linear, Conv2D | ✅ | ✅ | ✅ |
 | ShuffleNet | Linear, Conv2D | ✅ | ✅ | ⏳ Not Yet |
 | LLaMa | Transformers | ✅ | ✅ | ⏳ Not Yet |
-| ViT | Transformers | ✅ | ⏳ Not Yet | ⏳ Not Yet |
+| ViT | Transformers | ✅ | ✅ | ⏳ Not Yet |
 | HuggingFace Models | Transformers | ✅ | ⏳ Not Yet | ⏳ Not Yet |
 | M5 | Linear, Conv1D | ✅ | ✅ | ⏳ Not Yet |
 | KWSConv1d | Linear, Conv1D | ✅ | ✅ | ⏳ Not Yet |

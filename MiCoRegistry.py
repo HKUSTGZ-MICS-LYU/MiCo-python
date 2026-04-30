@@ -329,12 +329,30 @@ def handle_cat(codegen, n, out, input_names, input_args):
 # Module Handlers
 # ============================================================================
 
+def _maybe_insert_simple_rmsnorm(codegen, layer_name, module, input_names):
+    """Insert simple RMSNorm before quantized layer input when requested."""
+    if not getattr(module, "use_norm", False):
+        return input_names
+    if len(input_names) == 0:
+        raise ValueError(f"BitQLayer '{layer_name}' has no input tensor for RMSNorm")
+
+    norm_name = f"{layer_name}_rmsnorm"
+    input_name = input_names[0]
+    input_tensor = codegen.tensors[input_name]["tensor"]
+
+    codegen.add_uninitialized_tensor(norm_name, input_tensor)
+    codegen.add_forward_call("MiCo_simple_rmsnorm{dim}d_{dtype}", input_tensor, norm_name, [input_name])
+
+    return [norm_name] + input_names[1:]
+
+
 @MiCoOpRegistry.register_module(BitConv1d)
 def handle_bitconv1d_module(codegen, n, out, module, input_names):
     """Handler for BitConv1d quantized convolution module."""
     layer_name = n.name
     weight = module.weight
     bias = module.bias
+    input_names = _maybe_insert_simple_rmsnorm(codegen, layer_name, module, input_names)
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
 
@@ -362,6 +380,7 @@ def handle_bitconv2d_module(codegen, n, out, module, input_names):
     layer_name = n.name
     weight = module.weight
     bias = module.bias
+    input_names = _maybe_insert_simple_rmsnorm(codegen, layer_name, module, input_names)
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
 
@@ -391,6 +410,7 @@ def handle_bitlinear_module(codegen, n, out, module, input_names):
     layer_name = n.name
     weight = module.weight
     bias = module.bias
+    input_names = _maybe_insert_simple_rmsnorm(codegen, layer_name, module, input_names)
     input_names.append(f"{layer_name}_weight")
     input_names.append(f"{layer_name}_bias")
 

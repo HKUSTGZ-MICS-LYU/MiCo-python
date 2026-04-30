@@ -4,6 +4,7 @@ import sys
 import json
 import torch
 import subprocess
+import numpy as np
 
 from MiCoModel import MiCoModel
 
@@ -374,7 +375,7 @@ def benchmark_host_linear(N: int, M: int, K: int,
             res.append((N, M, K, qa, qb, cycles))
     return res
 
-def benchmark_host_conv2d(H, W, C, K, KS,
+def benchmark_host_conv2d(H, W, C, K, KS, S,
                    main="bitconv2d_test",
                    opt=""):
         
@@ -388,6 +389,7 @@ def benchmark_host_conv2d(H, W, C, K, KS,
         f.write(f"#define INW {W}\n")
         f.write(f"#define K {KS}\n")
         f.write(f"#define M {K}\n")
+        f.write(f"#define S {S}\n")
 
     # Compile the benchmark
     make_cmd = f'make recompile MAIN=tests/{main} OPT=\"{opt}\"'
@@ -421,6 +423,32 @@ def benchmark_host_conv2d(H, W, C, K, KS,
             cycles = int(line.split(': ')[1])
             res.append((H, W, C, K, KS, qa, qb, cycles))
     return res
+
+def run_host():
+
+    # Run the benchmark
+    cmd = f'{PWD}/project/main.elf'
+    print("Running Host simulation...")
+    proc = subprocess.Popen(cmd, shell=True, stdout=subprocess.PIPE)
+    proc.wait()
+    output = proc.stdout.readlines()
+    if proc.stderr:
+        print("Error in simulating the benchmark:")
+        print(proc.stderr.readlines())
+        return None
+
+    exe_time = []
+
+    for line in output:
+        line_str = str(line.decode())
+        if 'Execution Time:' in line_str:
+            pat = r'Execution Time: (\d+)'
+            match = re.search(pat, line_str)
+            cycles = int(match.group(1))
+            exe_time.append(cycles)
+    if len(exe_time) > 0:
+        return np.mean(exe_time)
+    return None
 
 # Test
 if __name__ == "__main__":

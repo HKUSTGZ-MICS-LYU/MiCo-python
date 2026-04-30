@@ -94,6 +94,7 @@ def main():
 
     parser.add_argument("--weight-q", type=str, default="8")
     parser.add_argument("--act-q", type=str, default="8")
+    parser.add_argument("--use-norm", action="store_true")
     parser.add_argument("--group-size", type=int, default=1)
     parser.add_argument("--skip-qscheme", action="store_true")
     parser.add_argument("--keep-last", action="store_true")
@@ -163,7 +164,7 @@ def main():
         if args.keep_first:
             weight_q[0] = 8
             act_q[0] = 8
-        model.set_qscheme([weight_q, act_q], group_size=args.group_size)
+        model.set_qscheme([weight_q, act_q], group_size=args.group_size, use_norm=args.use_norm)
 
     if args.fuse:
         model = fuse_model(model)
