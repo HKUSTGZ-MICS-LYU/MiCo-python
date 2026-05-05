@@ -173,6 +173,23 @@ class TestMiCoCodeGenForward(unittest.TestCase):
         
         self.assertIsNotNone(output)
         self.assertEqual(output.shape, (1, 10))
+
+    def test_forward_mlp_with_qnorm_emits_rmsnorm(self):
+        """Test QLayer use_norm emits RMSNorm before the quantized layer."""
+        model = MLP(in_features=32, config={"Layers": [16]})
+        weight_q = [8] * model.n_layers
+        activation_q = [8] * model.n_layers
+        model.set_qscheme([weight_q, activation_q], qat=True, use_norm=True)
+        model = fuse_model(model)
+        model.eval()
+
+        codegen = MiCoCodeGen(model)
+        codegen.forward(torch.randn(1, 32))
+
+        forward_code = "\n".join(codegen.model_forward)
+        self.assertIn("MiCo_simple_rmsnorm2d_f32", forward_code)
+        self.assertIn("layers_0_rmsnorm", codegen.tensors)
+        self.assertIn("&model->layers_0_rmsnorm, &model->layers_0_weight", forward_code)
     
     def test_forward_lenet(self):
         """Test forward pass with LeNet model."""
@@ -291,6 +308,20 @@ class TestMiCoCodeGenConversion(unittest.TestCase):
         # Check that test_mlp.bin was generated
         model_bin_path = os.path.join(output_dir, "test_mlp.bin")
         self.assertTrue(os.path.exists(model_bin_path))
+
+        # Check generated quantization buffer config.
+        model_config_path = os.path.join(output_dir, "mico_model_config.h")
+        self.assertTrue(os.path.exists(model_config_path))
+        with open(model_h_path) as f:
+            model_h = f.read()
+        with open(model_config_path) as f:
+            model_config = f.read()
+        self.assertIn("#define QUANTIZE_BUFFER_SIZE", model_h)
+        self.assertIn("#define QUANTIZE_BUFFER_SIZE", model_config)
+        self.assertIn("QUANTIZE_BUFFER_SIZE estimate sorted", model_config)
+        requirements = codegen.get_quantize_buffer_requirements()
+        self.assertGreater(len(requirements), 0)
+        self.assertEqual(requirements, sorted(requirements, key=lambda item: (item["bytes"], item["bits"], item["layer"]), reverse=True))
     
     def test_convert_with_mem_pool(self):
         """Test that convert works with memory pooling enabled."""
@@ -313,6 +344,69 @@ class TestMiCoCodeGenConversion(unittest.TestCase):
         # Check that files were generated (correct filenames)
         model_h_path = os.path.join(output_dir, "test_mlp_pool.h")
         self.assertTrue(os.path.exists(model_h_path))
+
+    def test_benchmark_groups_dedupe_same_shape_calls(self):
+        """Test benchmark grouping merges same-shape kernels with different layer names."""
+        model = nn.Sequential(
+            nn.Linear(8, 8),
+            nn.ReLU(),
+            nn.Linear(8, 8),
+            nn.ReLU(),
+        )
+        model.eval()
+
+        codegen = MiCoCodeGen(model)
+        codegen.forward(torch.randn(1, 8))
+        groups = codegen.get_benchmark_call_groups()
+
+        group_counts = {group["function_name"]: group["count"] for group in groups}
+        self.assertEqual(group_counts["MiCo_linear_f32"], 2)
+        self.assertEqual(group_counts["MiCo_relu2d_f32"], 2)
+        self.assertEqual(len(groups), 2)
+
+    def test_benchmark_groups_split_different_shape_calls(self):
+        """Test benchmark grouping keeps kernels with different shapes separate."""
+        model = nn.Sequential(
+            nn.Linear(8, 8),
+            nn.ReLU(),
+            nn.Linear(8, 4),
+        )
+        model.eval()
+
+        codegen = MiCoCodeGen(model)
+        codegen.forward(torch.randn(1, 8))
+        groups = codegen.get_benchmark_call_groups()
+
+        linear_groups = [group for group in groups if group["function_name"] == "MiCo_linear_f32"]
+        self.assertEqual(len(linear_groups), 2)
+        self.assertEqual([group["count"] for group in linear_groups], [1, 1])
+
+    def test_convert_with_benchmark_mode_generates_estimate(self):
+        """Test benchmark mode emits unique-kernel timing and estimated runtime."""
+        model = nn.Sequential(
+            nn.Linear(8, 8),
+            nn.ReLU(),
+            nn.Linear(8, 8),
+            nn.ReLU(),
+        )
+        model.eval()
+
+        codegen = MiCoCodeGen(model)
+        codegen.forward(torch.randn(1, 8))
+
+        output_dir = os.path.join(self.temp_dir, "benchmark_output")
+        os.makedirs(output_dir, exist_ok=True)
+        codegen.convert(output_dir, "benchmark_model", verbose=False, mem_pool=False, benchmark_mode=True)
+
+        model_h_path = os.path.join(output_dir, "benchmark_model.h")
+        self.assertTrue(os.path.exists(model_h_path))
+        with open(model_h_path) as f:
+            model_h = f.read()
+
+        self.assertIn('printf("Benchmark Mode: %d unique kernels, %d total occurrences\\n", 2, 4);', model_h)
+        self.assertIn("occurrences=2", model_h)
+        self.assertIn("Estimated Execution Time: %ld", model_h)
+        self.assertNotIn('printf("Execution Time: %ld\\n", profile_time);', model_h)
 
 
 class TestMiCoCodeGenModuleAccess(unittest.TestCase):

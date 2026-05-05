@@ -155,6 +155,7 @@ void model_forward(Model* model) {{
         self.model_struct = []
         self.model_init = []
         self.model_forward = []
+        self.forward_calls = []
         self.weight_content = b""
 
         # dictionaries to hold the tensor data
@@ -244,6 +245,38 @@ void model_forward(Model* model) {{
             "bypass": True
         }
 
+    @staticmethod
+    def _normalize_benchmark_param(param):
+        if isinstance(param, torch.Size):
+            return tuple(param)
+        if isinstance(param, (list, tuple)):
+            return tuple(MiCoCodeGen._normalize_benchmark_param(x) for x in param)
+        if isinstance(param, np.generic):
+            return param.item()
+        return param
+
+    def _benchmark_tensor_signature(self, name: str):
+        tensor_info = self.tensors.get(name)
+        if tensor_info is None:
+            return (None, None, None, None)
+        tensor = tensor_info.get("tensor")
+        shape = tuple(tensor.shape) if tensor is not None else None
+        dtype = str(tensor.dtype) if tensor is not None else None
+        return (
+            shape,
+            dtype,
+            tensor_info.get("quantized", 0),
+            tensor_info.get("bypass", False),
+        )
+
+    def _benchmark_call_key(self, function_name: str, layer_name: str, input_names: List[str], parameters: List[str] = None):
+        return (
+            function_name,
+            self._benchmark_tensor_signature(layer_name),
+            tuple(self._benchmark_tensor_signature(name) for name in input_names),
+            tuple(self._normalize_benchmark_param(param) for param in (parameters or [])),
+        )
+
     def add_forward_call(self, function_name: str, out: torch.Tensor, layer_name: str, input_names: List[str], parameters: List[str] = None):
         """
         This method creates the C code for the forward call.
@@ -270,8 +303,70 @@ void model_forward(Model* model) {{
         if parameters:
             args_list += [str(param) for param in parameters]
         arg_list_str = ", ".join(args_list)
-    
-        self.model_forward.append(f"{function_name}({arg_list_str});")
+
+        call = f"{function_name}({arg_list_str});"
+        self.model_forward.append(call)
+        self.forward_calls.append({
+            "call": call,
+            "function_name": function_name,
+            "layer_name": layer_name,
+            "input_names": list(input_names),
+            "parameters": list(parameters or []),
+            "key": self._benchmark_call_key(function_name, layer_name, input_names, parameters),
+        })
+
+    def get_benchmark_call_groups(self):
+        """
+        Group generated forward calls by shape/parameter-equivalent kernels.
+
+        The grouping intentionally ignores tensor names and weight values, so
+        repeated layers with the same function, tensor signatures, and scalar
+        parameters are profiled once and weighted by occurrence count.
+        """
+        groups = []
+        key_to_group = {}
+        for call_info in self.forward_calls:
+            key = call_info["key"]
+            if key not in key_to_group:
+                group = {
+                    "call": call_info["call"],
+                    "function_name": call_info["function_name"],
+                    "count": 0,
+                }
+                key_to_group[key] = group
+                groups.append(group)
+            key_to_group[key]["count"] += 1
+        return groups
+
+    def _get_benchmark_bypass_sources(self):
+        dag = self.extract_tensor_dag()
+        bypass_sources = {}
+        for name, tensor_info in self.tensors.items():
+            if tensor_info.get("bypass", False):
+                deps = dag.get(name, [])
+                if deps:
+                    bypass_sources[name] = deps[0]
+        return bypass_sources
+
+    def _format_benchmark_forward(self, indent: str):
+        groups = self.get_benchmark_call_groups()
+        total_occurrences = sum(group["count"] for group in groups)
+        lines = [
+            f"{indent}long benchmark_total_time = 0;",
+            f"{indent}printf(\"Benchmark Mode: %d unique kernels, %d total occurrences\\n\", {len(groups)}, {total_occurrences});",
+        ]
+        for idx, group in enumerate(groups):
+            escaped_name = group["function_name"].replace("\\", "\\\\").replace('"', '\\"')
+            lines += [
+                f"{indent}long benchmark_kernel_time_{idx} = MiCo_time();",
+                f"{indent}{group['call']}",
+                f"{indent}benchmark_kernel_time_{idx} = MiCo_time() - benchmark_kernel_time_{idx};",
+                f"{indent}long benchmark_kernel_estimate_{idx} = benchmark_kernel_time_{idx} * {group['count']};",
+                f"{indent}benchmark_total_time += benchmark_kernel_estimate_{idx};",
+                f"{indent}printf(\"Benchmark Kernel {idx}: {escaped_name} occurrences={group['count']} time=%ld estimated=%ld\\n\", benchmark_kernel_time_{idx}, benchmark_kernel_estimate_{idx});",
+            ]
+        lines.append(f"{indent}printf(\"Estimated Execution Time: %ld\\n\", benchmark_total_time);")
+        return lines
     
     def _extract_input_names(self, n: torch.fx.node.Node) -> List[str]:
         """
@@ -456,7 +551,8 @@ void model_forward(Model* model) {{
         return out
 
     def convert(self, output_directory: str = "project", 
-                model_name: str = "model", verbose = False, mem_pool = True):
+                model_name: str = "model", verbose = False, mem_pool = True,
+                benchmark_mode = False):
         """
         Convert the model to a C model.
 
@@ -478,6 +574,7 @@ void model_forward(Model* model) {{
         tensor_to_pool = {}
         if mem_pool:
             memory_pools, tensor_to_pool = self.allocate_memory_pools()
+        benchmark_bypass_sources = self._get_benchmark_bypass_sources() if benchmark_mode else {}
         
         # Calculate total memory savings
         total_without_pooling = 0
@@ -536,6 +633,9 @@ void model_forward(Model* model) {{
                         self.model_init.append(f"model->{name}.scale = {scale};")
                 else:
                     if tensor_dict["bypass"]:
+                        if benchmark_mode and name in benchmark_bypass_sources:
+                            source_name = benchmark_bypass_sources[name]
+                            self.model_init.append(f"model->{name}.data = model->{source_name}.data;")
                         continue
                     # Use memory pool instead of individual malloc
                     if name in tensor_to_pool:
@@ -563,16 +663,19 @@ void model_forward(Model* model) {{
         INDENT = "    "
         model_struct = [f"{INDENT}{line}" for line in self.model_struct]
         model_init = [f"{INDENT}{line}" for line in self.model_init]
-        model_forward = [f"{INDENT}{line}" for line in self.model_forward]
-        
-        # Insert Profiler
-        start_profiler = [f"{INDENT}long profile_time = MiCo_time();"]
-        end_profiler = [f"{INDENT}profile_time = MiCo_time() - profile_time;",
-                        f"{INDENT}printf(\"Execution Time: %ld\\n\", profile_time);",
-                        f"{INDENT}printf(\"QMatMul Time: %ld\\n\", QMATMUL_TIMER);",
-                        f"{INDENT}printf(\"Quantization Time: %ld\\n\", QUANT_TIMER);",
-                        f"{INDENT}printf(\"Im2Col Time: %ld\\n\", IM2COL_TIMER);"]
-        model_forward = start_profiler + model_forward + end_profiler
+        if benchmark_mode:
+            model_forward = self._format_benchmark_forward(INDENT)
+        else:
+            model_forward = [f"{INDENT}{line}" for line in self.model_forward]
+            
+            # Insert Profiler
+            start_profiler = [f"{INDENT}long profile_time = MiCo_time();"]
+            end_profiler = [f"{INDENT}profile_time = MiCo_time() - profile_time;",
+                            f"{INDENT}printf(\"Execution Time: %ld\\n\", profile_time);",
+                            f"{INDENT}printf(\"QMatMul Time: %ld\\n\", QMATMUL_TIMER);",
+                            f"{INDENT}printf(\"Quantization Time: %ld\\n\", QUANT_TIMER);",
+                            f"{INDENT}printf(\"Im2Col Time: %ld\\n\", IM2COL_TIMER);"]
+            model_forward = start_profiler + model_forward + end_profiler
 
         model_struct_str = "\n".join(model_struct)
         model_init_str = "\n".join(model_init)

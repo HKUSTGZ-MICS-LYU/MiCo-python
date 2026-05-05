@@ -113,6 +113,7 @@ def main():
         action=argparse.BooleanOptionalAction,
         default=True,
     )
+    parser.add_argument("--benchmark-mode", action="store_true")
     parser.add_argument("--verbose", action="store_true")
 
     parser.add_argument("--example-shape", type=str, default=None)
@@ -204,6 +205,7 @@ def main():
         model_name=args.output_name,
         verbose=args.verbose,
         mem_pool=args.mem_pool,
+        benchmark_mode=args.benchmark_mode,
     )
 
 
