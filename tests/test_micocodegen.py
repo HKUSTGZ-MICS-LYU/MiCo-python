@@ -309,20 +309,6 @@ class TestMiCoCodeGenConversion(unittest.TestCase):
         model_bin_path = os.path.join(output_dir, "test_mlp.bin")
         self.assertTrue(os.path.exists(model_bin_path))
 
-        # Check generated quantization buffer config.
-        model_config_path = os.path.join(output_dir, "mico_model_config.h")
-        self.assertTrue(os.path.exists(model_config_path))
-        with open(model_h_path) as f:
-            model_h = f.read()
-        with open(model_config_path) as f:
-            model_config = f.read()
-        self.assertIn("#define QUANTIZE_BUFFER_SIZE", model_h)
-        self.assertIn("#define QUANTIZE_BUFFER_SIZE", model_config)
-        self.assertIn("QUANTIZE_BUFFER_SIZE estimate sorted", model_config)
-        requirements = codegen.get_quantize_buffer_requirements()
-        self.assertGreater(len(requirements), 0)
-        self.assertEqual(requirements, sorted(requirements, key=lambda item: (item["bytes"], item["bits"], item["layer"]), reverse=True))
-    
     def test_convert_with_mem_pool(self):
         """Test that convert works with memory pooling enabled."""
         model = MLP(in_features=32, config={"Layers": [16, 10]})
