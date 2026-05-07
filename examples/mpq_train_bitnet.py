@@ -2,6 +2,7 @@ import torch
 import numpy as np
 
 import sys
+import os
 import argparse
 
 from models import model_zoo
@@ -10,7 +11,7 @@ argsparse = argparse.ArgumentParser()
 argsparse.add_argument("model_name", type=str)
 argsparse.add_argument("epoches", type=int, default=10000)
 argsparse.add_argument("--batch-size", type=int, default=32)
-argsparse.add_argument("--lr", type=float, default=0.005)
+argsparse.add_argument("--lr", type=float, default=0.001)
 argsparse.add_argument("-q", "--weight_quant", type=float, choices=[1,1.5,2], default=1)
 argsparse.add_argument("-aq", "--act_quant", type=int, choices=[4,8], default=8)
 argsparse.add_argument("--keep-last", action="store_true", default=False)
@@ -47,7 +48,13 @@ if __name__ == "__main__":
         qscheme[0][-1] = 8
         qscheme[1][-1] = 8
 
-    model.set_qscheme(qscheme, qat=True)
+    model.set_qscheme(qscheme, qat=True, use_norm=True)
+    print("Model Param Size:", sum(p.numel() for p in model.parameters()))
+    # Detect if there is a full precision checkpoint
+    # if os.path.exists(f"output/ckpt/{model_name}.pth"):
+    #     print("Full Precision Checkpoint Loaded.")
+    #     ckpt = torch.load(f"output/ckpt/{model_name}.pth")
+    #     model.load_state_dict(ckpt)
 
     if "llama" in model_name:
         res = model.train_loop(n_iter=int(epoches),
@@ -68,7 +75,7 @@ if __name__ == "__main__":
     torch.save(model.state_dict(), f"output/ckpt/{model_name}_bitnet.pth")
     print("Model Train Results: ", res)
 
-    model.set_qscheme(qscheme)
+    model.set_qscheme(qscheme, qat=True, use_norm=True)
 
     res = model.test(test_loader)
 

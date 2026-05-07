@@ -12,6 +12,8 @@ from models import (
     HARMLP,
     ParameterGolfBaseline,
     ParameterGolfSmall,
+    TinyBERTLocal,
+    MicroBERTLocal,
 )
 
 from MiCoDatasets import (
@@ -23,6 +25,7 @@ from MiCoDatasets import (
     imagenet,
     uci_har,
     fineweb,
+    local_mlm_text,
 )
 
 import torch
@@ -127,6 +130,18 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             num_workers=NUM_WORKERS,
             shuffle=shuffle,
         )
+    elif name in ["bert_micro_local", "bert_tiny_local"]:
+        model_dict = {
+            "bert_micro_local": MicroBERTLocal,
+            "bert_tiny_local": TinyBERTLocal,
+        }
+        model = model_dict[name]().to(device)
+        train_loader, test_loader = local_mlm_text(
+            batch_size=batch_size,
+            max_seq_len=model.params.max_seq_len,
+            num_works=0,
+            shuffle=shuffle,
+        )
     # HuggingFace pretrained models with WikiText dataset
     elif name.startswith("hf_") or name in _get_hf_model_names():
         from models import HuggingFaceModel, load_hf_model, HF_MODEL_REGISTRY
@@ -184,6 +199,8 @@ def list_zoo_models():
         "parameter_golf_gpt",
         "parameter_golf_gpt_baseline",
         "parameter_golf_gpt_small",
+        "bert_micro_local",
+        "bert_tiny_local",
     ]
     
     # Add HuggingFace models

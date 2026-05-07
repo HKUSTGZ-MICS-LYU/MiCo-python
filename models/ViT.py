@@ -153,27 +153,10 @@ def TinyViT1M(n_classes=10):
     return ViT(in_c=3, 
                num_classes=n_classes, 
                img_size=32, patch=8, dropout=0.1, 
-               num_layers=7, hidden=128, 
-               mlp_hidden=128*4, head=8, 
-               is_cls_token=True)
+               num_layers=8, hidden=128, 
+               mlp_hidden=256, head=4, 
+               is_cls_token=False)
 
-def ViT1M_cifar10():
-
-    return ViT(in_c=3, 
-               num_classes=10, 
-               img_size=32, patch=8, dropout=0.1, 
-               num_layers=7, hidden=128, 
-               mlp_hidden=128*4, head=8, 
-               is_cls_token=True)
-
-def ViT1M_cifar100():
-
-        return ViT(in_c=3, 
-               num_classes=100, 
-               img_size=32, patch=8, dropout=0.1, 
-               num_layers=7, hidden=128, 
-               mlp_hidden=128*4, head=8, 
-               is_cls_token=True)
 
 def ViTNAS(args: dict):
     '''
