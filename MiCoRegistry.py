@@ -128,6 +128,9 @@ class MiCoOpRegistry:
 @MiCoOpRegistry.register_function(torch.add)
 def handle_add(codegen, n, out, input_names, input_args):
     """Handler for addition operations."""
+    if not isinstance(out, torch.Tensor):
+        codegen.scalar_values[n.name] = out
+        return
     codegen.add_uninitialized_tensor(n.name, out)
     codegen.add_forward_call("MiCo_add{dim}d_{dtype}", out, n.name, input_names)
 
@@ -135,8 +138,24 @@ def handle_add(codegen, n, out, input_names, input_args):
 @MiCoOpRegistry.register_function(operator.__mul__)
 def handle_mul(codegen, n, out, input_names, input_args):
     """Handler for multiplication operations."""
+    if not isinstance(out, torch.Tensor):
+        codegen.scalar_values[n.name] = out
+        return
     codegen.add_uninitialized_tensor(n.name, out)
     codegen.add_forward_call("MiCo_mul{dim}d_{dtype}", out, n.name, input_names)
+
+
+@MiCoOpRegistry.register_function(getattr)
+def handle_getattr(codegen, n, out, input_names, input_args):
+    """Handler for tensor metadata getattr calls such as x.shape."""
+    codegen.scalar_values[n.name] = out
+
+
+@MiCoOpRegistry.register_function(operator.floordiv)
+@MiCoOpRegistry.register_function(operator.__floordiv__)
+def handle_floordiv(codegen, n, out, input_names, input_args):
+    """Handler for scalar floor division used by traced shape expressions."""
+    codegen.scalar_values[n.name] = out
 
 @MiCoOpRegistry.register_function(operator.getitem)
 def handle_getitem(codegen, n, out, input_names, input_args):

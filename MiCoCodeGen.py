@@ -456,7 +456,7 @@ void model_forward(Model* model) {{
         if len(input_names) == 0:
             raise ValueError(f"Method '{method}' has no tensor input names for node {n.name}")
 
-        if method == "view":
+        if method in ("view", "reshape"):
             src_name = input_names[0]
             src_tensor = self.tensors[src_name]["tensor"]
             src_dim = src_tensor.dim()
@@ -467,7 +467,7 @@ void model_forward(Model* model) {{
             elif src_dim == 3 and dst_dim == 4:
                 self.add_forward_call("MiCo_view3d4d_{dtype}", out, n.name, [src_name])
             else:
-                raise NotImplementedError(f"Unsupported view rank change: {src_dim}D -> {dst_dim}D")
+                raise NotImplementedError(f"Unsupported {method} rank change: {src_dim}D -> {dst_dim}D")
         elif method == "flatten":
             src_name = input_names[0]
             start_dim = self._resolve_arg_value(n.args[1]) if len(n.args) > 1 else 0
@@ -479,8 +479,11 @@ void model_forward(Model* model) {{
                 raise NotImplementedError(f"Unsupported flatten: start_dim={start_dim}, end_dim={end_dim}, out_dim={out.dim()}")
         elif method == "transpose":
             src_name = input_names[0]
+            src_dim = self.tensors[src_name]["tensor"].dim()
             dim0 = self._resolve_arg_value(n.args[1])
             dim1 = self._resolve_arg_value(n.args[2])
+            dim0 = dim0 + src_dim if dim0 < 0 else dim0
+            dim1 = dim1 + src_dim if dim1 < 0 else dim1
             self.add_uninitialized_tensor(n.name, out)
             self.add_forward_call(f"MiCo_transpose{out.dim()}d_{{dtype}}", out, n.name, [src_name], [dim0, dim1])
         elif method == "repeat":
@@ -492,6 +495,20 @@ void model_forward(Model* model) {{
             src_name = input_names[0]
             self.add_connect_tensor(n.name, out)
             self.add_forward_call("MiCo_CONNECT", out, n.name, [src_name])
+        elif method == "mean":
+            src_name = input_names[0]
+            dim = self._resolve_arg_value(n.args[1])
+            keepdim = self._resolve_arg_value(n.args[2]) if len(n.args) > 2 else False
+            self.add_uninitialized_tensor(n.name, out)
+            if keepdim:
+                self.add_forward_call(f"MiCo_meankp{out.dim()}d_{{dtype}}", out, n.name, [src_name], [dim])
+            else:
+                self.add_forward_call(f"MiCo_mean{out.dim()}d_{{dtype}}", out, n.name, [src_name], [dim])
+        elif method == "softmax":
+            src_name = input_names[0]
+            dim = self._resolve_arg_value(n.kwargs.get("dim", -1))
+            self.add_uninitialized_tensor(n.name, out)
+            self.add_forward_call("MiCo_softmax{dim}d_{dtype}", out, n.name, [src_name], [dim])
         else:
             raise NotImplementedError(f"Unsupported method '{method}'")
 
@@ -1135,18 +1152,21 @@ if __name__ == "__main__":
     # m = KWSConv1d(35)
     # ckpt = torch.load("output/ckpt/kws_conv1d.pth", map_location="cpu")
     
-    from models import ViT
-    m = ViT(num_classes=100)
-    ckpt = torch.load("output/ckpt/vit_cifar100.pth")
+    # from models import ViT
+    # m = ViT(num_classes=100)
+    # ckpt = torch.load("output/ckpt/vit_cifar100.pth")
     # m = from_torch(
     #     mobilenet_v2(
     #     weights=MobileNet_V2_Weights.IMAGENET1K_V1)
     # )
 
+    from models import cct_2
+    m = cct_2(n_classes=10)
+
     weight_q = [8] * m.n_layers
     activation_q = [8] * m.n_layers
 
-    m.load_state_dict(ckpt)
+    # m.load_state_dict(ckpt)
     m.set_qscheme([weight_q, activation_q])
     # m=fuse_model(m)
     m.eval()

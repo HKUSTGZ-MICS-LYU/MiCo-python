@@ -21,6 +21,7 @@ from models.ParameterGolfGPT import (
 )
 from models.BERT import MiCoBERT, BertArgs, TinyBERTLocal, MicroBERTLocal, BertNAS
 from models.ViT import ViT, TinyViT1M
+from models.CCT import CCT, cct_2, cct_7
 
 # HuggingFace pretrained models for edge deployment
 from models.HuggingFaceModel import (

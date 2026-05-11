@@ -6,7 +6,7 @@ import urllib.request
 import numpy as np
 import torch
 
-from torch.utils.data import DataLoader, TensorDataset
+from torch.utils.data import DataLoader, Dataset, TensorDataset
 from torchvision import datasets, transforms
 from torch.utils.data import ConcatDataset
 
@@ -78,9 +78,14 @@ def cifar10(batch_size=32, num_works = 0, shuffle = True, augment = True):
 
     if augment:
         # Data Augmentation
+        # augmented_transform = transforms.Compose([
+        #     transforms.RandomRotation(degrees=10),  
+        #     transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+        #     transforms.ToTensor(),
+        #     normalize
+        # ])
         augmented_transform = transforms.Compose([
-            transforms.RandomRotation(degrees=10),  
-            transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+            transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
             transforms.ToTensor(),
             normalize
         ])
@@ -115,9 +120,14 @@ def cifar100(batch_size=32, num_works = 0, shuffle = True, augment = True):
 
     if augment:
         # Data Augmentation
+        # augmented_transform = transforms.Compose([
+        #     transforms.RandomRotation(degrees=10),  
+        #     transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+        #     transforms.ToTensor(),
+        #     transforms.Normalize(mean, std)
+        # ])
         augmented_transform = transforms.Compose([
-            transforms.RandomRotation(degrees=10),  
-            transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
+            transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
             transforms.ToTensor(),
             transforms.Normalize(mean, std)
         ])
@@ -177,6 +187,136 @@ def tinystories(max_seq_len, vocab_size, device, batch_size=32, num_works=0):
         vocab_source="data/tinystories",
         split="val")
     
+    return train_loader, test_loader
+
+
+class ByteMLMDataset(Dataset):
+    """
+    Byte-level masked-language-model dataset.
+
+    Token ids:
+      0=PAD, 1=MASK, 2=UNK, 3=CLS, 4=SEP, 5..260=UTF-8 byte values.
+    """
+
+    pad_token_id = 0
+    mask_token_id = 1
+    unk_token_id = 2
+    cls_token_id = 3
+    sep_token_id = 4
+    byte_offset = 5
+    vocab_size = 261
+
+    def __init__(
+        self,
+        text: str,
+        max_seq_len: int = 128,
+        mlm_probability: float = 0.15,
+        stride: int = None,
+        seed: int = 42,
+    ):
+        if max_seq_len < 4:
+            raise ValueError("max_seq_len must be at least 4 for CLS/content/SEP tokens")
+        self.max_seq_len = max_seq_len
+        self.content_len = max_seq_len - 2
+        self.mlm_probability = mlm_probability
+        self.stride = stride or self.content_len
+        self.seed = seed
+
+        byte_ids = [self.byte_offset + b for b in text.encode("utf-8", errors="replace")]
+        if not byte_ids:
+            byte_ids = [self.byte_offset + ord(" ")]
+        min_tokens = self.content_len * 2
+        while len(byte_ids) < min_tokens:
+            byte_ids = byte_ids + [self.byte_offset + ord("\n")] + byte_ids
+        self.token_ids = torch.tensor(byte_ids, dtype=torch.long)
+        self.n_samples = max(1, (len(self.token_ids) - 1) // self.stride)
+
+    def __len__(self):
+        return self.n_samples
+
+    def __getitem__(self, idx):
+        start = (idx * self.stride) % max(1, len(self.token_ids) - 1)
+        chunk = self.token_ids[start:start + self.content_len]
+        if chunk.numel() < self.content_len:
+            pad = torch.full((self.content_len - chunk.numel(),), self.pad_token_id, dtype=torch.long)
+            chunk = torch.cat([chunk, pad])
+
+        input_ids = torch.full((self.max_seq_len,), self.pad_token_id, dtype=torch.long)
+        input_ids[0] = self.cls_token_id
+        input_ids[1:1 + self.content_len] = chunk
+        input_ids[1 + self.content_len] = self.sep_token_id
+
+        labels = torch.full((self.max_seq_len,), -100, dtype=torch.long)
+        candidate = input_ids.ge(self.byte_offset)
+
+        generator = torch.Generator()
+        generator.manual_seed(self.seed + idx)
+        masked = torch.rand(self.max_seq_len, generator=generator).lt(self.mlm_probability) & candidate
+        if not masked.any():
+            candidate_idx = candidate.nonzero(as_tuple=False).flatten()
+            if candidate_idx.numel() > 0:
+                pick = torch.randint(candidate_idx.numel(), (1,), generator=generator).item()
+                masked[candidate_idx[pick]] = True
+
+        labels[masked] = input_ids[masked]
+        replace_prob = torch.rand(self.max_seq_len, generator=generator)
+        random_tokens = torch.randint(self.byte_offset, self.vocab_size, (self.max_seq_len,), generator=generator)
+
+        input_ids = input_ids.clone()
+        input_ids[masked & replace_prob.lt(0.8)] = self.mask_token_id
+        input_ids[masked & replace_prob.ge(0.8) & replace_prob.lt(0.9)] = random_tokens[
+            masked & replace_prob.ge(0.8) & replace_prob.lt(0.9)
+        ]
+        return input_ids, labels
+
+
+def local_mlm_text(
+    batch_size=32,
+    max_seq_len=128,
+    num_works=0,
+    shuffle=True,
+    root="data/local_mlm.txt",
+    text=None,
+    mlm_probability=0.15,
+    train_split=0.9,
+    seed=42,
+):
+    """
+    Load a local byte-level masked-language-modeling dataset.
+
+    If ``text`` is not provided and ``root`` does not exist, a tiny built-in
+    corpus is used so the model can run smoke tests without network access.
+    """
+    if text is None:
+        if os.path.exists(root):
+            with open(root, "r", encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        else:
+            text = (
+                "MiCo explores mixed precision neural networks for edge AI. "
+                "Small encoder models can learn local text with masked tokens. "
+                "This fallback corpus is only for quick smoke tests.\n"
+            ) * 128
+
+    split_idx = max(1, min(len(text) - 1, int(len(text) * train_split)))
+    train_text = text[:split_idx]
+    test_text = text[split_idx:] if split_idx < len(text) else text
+
+    train_data = ByteMLMDataset(
+        train_text,
+        max_seq_len=max_seq_len,
+        mlm_probability=mlm_probability,
+        seed=seed,
+    )
+    test_data = ByteMLMDataset(
+        test_text,
+        max_seq_len=max_seq_len,
+        mlm_probability=mlm_probability,
+        seed=seed + 100000,
+    )
+
+    train_loader = DataLoader(train_data, batch_size=batch_size, shuffle=shuffle, num_workers=num_works)
+    test_loader = DataLoader(test_data, batch_size=batch_size, shuffle=False, num_workers=num_works)
     return train_loader, test_loader
 
 
