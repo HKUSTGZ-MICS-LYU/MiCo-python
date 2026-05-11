@@ -966,6 +966,31 @@ void model_forward(Model* model) {{
                 if dep_name in tensor_lifetimes:
                     # Update the last use of the dependency
                     tensor_lifetimes[dep_name][1] = max(tensor_lifetimes[dep_name][1], node_idx)
+
+        # Bypass tensors, such as dropout/identity/flatten connectors, do not own
+        # storage. They alias their input tensor's data pointer at runtime, so the
+        # source tensor must stay alive for every use of the alias.
+        bypass_source = {}
+        for name, tensor_info in self.tensors.items():
+            if tensor_info.get("bypass", False):
+                deps = dag.get(name, [])
+                if deps:
+                    bypass_source[name] = deps[0]
+
+        def resolve_storage_source(name):
+            seen = set()
+            while name in bypass_source and name not in seen:
+                seen.add(name)
+                name = bypass_source[name]
+            return name
+
+        for alias_name, source_name in bypass_source.items():
+            real_source = resolve_storage_source(source_name)
+            if alias_name in tensor_lifetimes and real_source in tensor_lifetimes:
+                tensor_lifetimes[real_source][1] = max(
+                    tensor_lifetimes[real_source][1],
+                    tensor_lifetimes[alias_name][1],
+                )
         
         # Handle output tensors - they must remain alive until the end
         if output_node_idx is not None:
@@ -1021,7 +1046,7 @@ void model_forward(Model* model) {{
         tensors_to_allocate = []
         for name, tensor_info in self.tensors.items():
             # Only allocate memory for uninitialized tensors (activations/intermediates)
-            if not tensor_info.get("initialized", False):
+            if not tensor_info.get("initialized", False) and not tensor_info.get("bypass", False):
                 if tensor_info["tensor"] is not None:
                     size = tensor_info["tensor"].nelement() * tensor_info["tensor"].element_size()
                     if name in lifetimes:

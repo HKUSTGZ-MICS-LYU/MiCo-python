@@ -4,6 +4,7 @@ import torch.nn.functional as F
 from torch.nn import Module, ModuleList, Linear, Dropout, LayerNorm, Identity, Parameter, init
 
 from MiCoModel import MiCoModel, MiCoFunc
+from models.utils import AttentionScore, LinearAttention
 
 """
 https://github.com/SHI-Labs/Compact-Transformers
@@ -73,21 +74,6 @@ class Attention(Module):
         x = self.proj(x)
         x = self.proj_drop(x)
         return x
-
-
-class AttentionScore(nn.Module):
-    def __init__(self, scale: float):
-        super().__init__()
-        self.scale = float(scale)
-        self.MiCo_func = MiCoFunc(
-            "MiCo_ViT_attention_{dtype}",
-            params=[self.scale]
-        )
-
-    def forward(self, q, k, v):
-        score = F.softmax(torch.einsum("bhif, bhjf->bhij", q, k) / self.scale, dim=-1)
-        return torch.einsum("bhij, bhjf->bihf", score, v)
-
 
 class TransformerEncoderLayer(Module):
     """
