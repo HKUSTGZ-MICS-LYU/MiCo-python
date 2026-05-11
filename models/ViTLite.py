@@ -1,7 +1,8 @@
 
 from models.CCT import Tokenizer, TransformerClassifier
+from MiCoModel import MiCoModel
 
-class ViTLite(nn.Module):
+class ViTLite(MiCoModel):
     def __init__(self,
                  img_size=224,
                  embedding_dim=768,
