@@ -3,5 +3,5 @@ temp
 data
 
 .vscode
-
+*.log
 output/

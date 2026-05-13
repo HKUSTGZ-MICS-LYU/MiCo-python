@@ -10,6 +10,8 @@ from models import (
     MobileNetV2,
     ViT, TinyViT1M, CCT, cct_2, cct_7,
     HARMLP,
+    tiny_kws_transformer,
+    tiny_waveformer,
     ParameterGolfBaseline,
     ParameterGolfSmall,
     TinyBERTLocal,
@@ -115,6 +117,20 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS, 
             preprocess="mfcc")
+    elif name == "kws_transformer":
+        from MiCoDatasets import speechcommands
+
+        model = tiny_kws_transformer(n_classes=35).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS,
+            preprocess="mfcc")
+    elif name == "waveformer":
+        from MiCoDatasets import speechcommands
+
+        model = tiny_waveformer(n_classes=35).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS,
+            preprocess="raw")
     # Parameter Golf GPT models with FineWeb dataset
     elif name == "parameter_golf_gpt" or name == "parameter_golf_gpt_baseline":
         model = ParameterGolfBaseline().to(device)
@@ -198,6 +214,7 @@ def list_zoo_models():
         "kws_conv1d",
         "m5_kws",
         "dscnn_kws",
+        "kws_transformer",
         "parameter_golf_gpt",
         "parameter_golf_gpt_baseline",
         "parameter_golf_gpt_small",

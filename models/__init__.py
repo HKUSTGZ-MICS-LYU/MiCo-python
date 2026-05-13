@@ -9,6 +9,8 @@ from models.SqueezeNet import SqueezeNet
 from models.ShuffleNet import shufflenet
 from models.HARMLP import HARMLP
 from models.KWSConv1d import KWSConv1d
+from models.KWSTransformer import KWSTransformer, tiny_kws_transformer
+from models.WaveFormer import WaveFormer, tiny_waveformer
 from models.DSCNN import DSCNN
 from models.M5 import M5
 

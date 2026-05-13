@@ -497,8 +497,14 @@ void model_forward(Model* model) {{
             self.add_forward_call("MiCo_CONNECT", out, n.name, [src_name])
         elif method == "mean":
             src_name = input_names[0]
-            dim = self._resolve_arg_value(n.args[1])
-            keepdim = self._resolve_arg_value(n.args[2]) if len(n.args) > 2 else False
+            dim = self._resolve_arg_value(n.args[1]) if len(n.args) > 1 else self._resolve_arg_value(n.kwargs.get("dim", None))
+            keepdim = (
+                self._resolve_arg_value(n.args[2])
+                if len(n.args) > 2
+                else self._resolve_arg_value(n.kwargs.get("keepdim", False))
+            )
+            if dim is None:
+                raise NotImplementedError("Mean over all elements is not supported")
             self.add_uninitialized_tensor(n.name, out)
             if keepdim:
                 self.add_forward_call(f"MiCo_meankp{out.dim()}d_{{dtype}}", out, n.name, [src_name], [dim])

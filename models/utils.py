@@ -20,32 +20,60 @@ class AttentionScore(nn.Module):
         return torch.einsum("bhij, bhjf->bihf", score, v)
     
 
-
-class LinearAttention(nn.Module):
-
+class LinearAttentionScore(nn.Module):
     def __init__(self, eps=1e-6):
         super().__init__()
         self.eps = eps
         self.MiCo_func = MiCoFunc(
             "MiCo_linear_attention_{dtype}",
+            params=[self.eps]
         )
-        
+
     def forward(self, q, k, v):
-        # Apply a non-negative feature map (e.g., ELU + 1)
         q = F.elu(q) + 1
         k = F.elu(k) + 1
-        
-        # Compute the "context" matrix (K^T * V)
-        # k: [B, H, N, D_k], v: [B, H, N, D_v]
-        # context: [B, H, D_k, D_v]
+
         context = torch.einsum('bhnd,bhnm->bhdm', k, v)
-        
-        # Compute the denominator (normalizer)
-        k_sum = k.sum(dim=2) # [B, H, D_k]
-        
-        # Compute the final attention output
-        # q: [B, H, N, D_k]
-        num = torch.einsum('bhnd,bhdm->bhnm', q, context)
-        den = torch.einsum('bhnd,bhd->bhn', q, k_sum).unsqueeze(-1)
-        
+        k_sum = k.sum(dim=2)
+
+        num = torch.einsum('bhnd,bhdm->bnhm', q, context)
+        den = torch.einsum('bhnd,bhd->bnh', q, k_sum).unsqueeze(-1)
+
         return num / (den + self.eps)
+
+
+class LinearAttention(nn.Module):
+    """
+    Drop-in linear-attention replacement for CCT.Attention.
+
+    Input/output contract:
+      x: [batch, tokens, dim] -> [batch, tokens, dim]
+    """
+
+    def __init__(self, dim, num_heads=8, attention_dropout=0.1,
+                 projection_dropout=0.1, eps=1e-6):
+        super().__init__()
+        assert dim % num_heads == 0, "dim must be divisible by num_heads"
+
+        self.num_heads = num_heads
+        self.head_dim = dim // self.num_heads
+
+        self.q = nn.Linear(dim, dim, bias=False)
+        self.k = nn.Linear(dim, dim, bias=False)
+        self.v = nn.Linear(dim, dim, bias=False)
+        self.attn_score = LinearAttentionScore(eps=eps)
+        self.attn_drop = nn.Dropout(attention_dropout)
+        self.proj = nn.Linear(dim, dim)
+        self.proj_drop = nn.Dropout(projection_dropout)
+
+    def forward(self, x):
+        B, N, C = x.shape
+        q = self.q(x).view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
+        k = self.k(x).view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
+        v = self.v(x).view(B, N, self.num_heads, self.head_dim).transpose(1, 2)
+
+        x = self.attn_score(q, k, v).flatten(2)
+        x = self.attn_drop(x)
+        x = self.proj(x)
+        x = self.proj_drop(x)
+        return x

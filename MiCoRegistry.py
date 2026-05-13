@@ -233,24 +233,51 @@ def handle_tanh(codegen, n, out, input_names, input_args):
     codegen.add_forward_call("MiCo_tanh{dim}d_{dtype}", out, n.name, input_names)
 
 
+def _extract_scalar_param(param, param_name, default=None):
+    """Extract a scalar C API parameter from PyTorch int/tuple pooling args."""
+    if param is None:
+        if default is None:
+            raise ValueError(f"{param_name} cannot be None")
+        param = default
+
+    if isinstance(param, torch.fx.node.Node):
+        raise ValueError(f"Unresolved FX node for {param_name}: {param}")
+
+    if isinstance(param, torch.Size):
+        param = tuple(param)
+
+    if isinstance(param, (tuple, list)):
+        if len(param) == 0:
+            raise ValueError(f"{param_name} cannot be empty")
+        first = param[0]
+        if any(value != first for value in param):
+            raise NotImplementedError(
+                f"MiCo C pooling kernels only support scalar/symmetric {param_name}, got {param}"
+            )
+        param = first
+
+    if isinstance(param, bool) or not isinstance(param, int):
+        raise ValueError(f"Unexpected {param_name} type: {type(param)}")
+    return param
+
+
 def _extract_kernel_size(param):
-    """Helper to extract kernel size from tuple or int parameter."""
-    if isinstance(param, Tuple):
-        return param[0]
-    elif isinstance(param, int):
-        return param
-    else:
-        raise ValueError(f"Unexpected kernel_size type: {type(param)}")
+    """Helper to extract scalar kernel size for the C pooling API."""
+    return _extract_scalar_param(param, "kernel_size")
 
 
 def _extract_output_size(param):
-    """Helper to extract output size from tuple or int parameter."""
-    if isinstance(param, Tuple):
-        return param[0]
-    elif isinstance(param, int):
-        return param
+    """Helper to extract scalar output size for the C adaptive pooling API."""
+    return _extract_scalar_param(param, "output_size")
+
+
+def _pool_arg(n, input_args, index, name, default=None):
+    """Read pooling arg from positional or keyword FX args and normalize it."""
+    if len(input_args) > index:
+        value = input_args[index]
     else:
-        raise ValueError(f"Unexpected output_size type: {type(param)}")
+        value = n.kwargs.get(name, default)
+    return _extract_scalar_param(value, name, default)
 
 
 @MiCoOpRegistry.register_function(torch.nn.functional.linear)
@@ -275,20 +302,22 @@ def handle_linear(codegen, n, out, input_names, input_args):
 def handle_avg_pool2d(codegen, n, out, input_names, input_args):
     """Handler for 2D average pooling function."""
     codegen.add_uninitialized_tensor(n.name, out)
-    kernel_size = _extract_kernel_size(input_args[1])
-    stride = input_args[2] if len(input_args) > 2 else 1
+    kernel_size = _pool_arg(n, input_args, 1, "kernel_size")
+    stride = _pool_arg(n, input_args, 2, "stride", kernel_size)
+    padding = _pool_arg(n, input_args, 3, "padding", 0)
     codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, n.name, input_names, 
-                             [kernel_size, stride])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_function(torch.nn.functional.max_pool2d)
 def handle_max_pool2d(codegen, n, out, input_names, input_args):
     """Handler for 2D max pooling function."""
     codegen.add_uninitialized_tensor(n.name, out)
-    kernel_size = _extract_kernel_size(input_args[1])
-    stride = input_args[2] if len(input_args) > 2 else 1
+    kernel_size = _pool_arg(n, input_args, 1, "kernel_size")
+    stride = _pool_arg(n, input_args, 2, "stride", kernel_size)
+    padding = _pool_arg(n, input_args, 3, "padding", 0)
     codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, n.name, input_names,
-                             [kernel_size, stride])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_function(torch.nn.functional.adaptive_avg_pool2d)
@@ -303,20 +332,22 @@ def handle_adaptive_avg_pool2d(codegen, n, out, input_names, input_args):
 def handle_avg_pool1d(codegen, n, out, input_names, input_args):
     """Handler for 1D average pooling function."""
     codegen.add_uninitialized_tensor(n.name, out)
-    kernel_size = _extract_kernel_size(input_args[1])
-    stride = input_args[2] if len(input_args) > 2 else 1
+    kernel_size = _pool_arg(n, input_args, 1, "kernel_size")
+    stride = _pool_arg(n, input_args, 2, "stride", kernel_size)
+    padding = _pool_arg(n, input_args, 3, "padding", 0)
     codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, n.name, input_names, 
-                             [kernel_size, stride])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_function(torch.nn.functional.max_pool1d)
 def handle_max_pool1d(codegen, n, out, input_names, input_args):
     """Handler for 1D max pooling function."""
     codegen.add_uninitialized_tensor(n.name, out)
-    kernel_size = _extract_kernel_size(input_args[1])
-    stride = input_args[2] if len(input_args) > 2 else 1
+    kernel_size = _pool_arg(n, input_args, 1, "kernel_size")
+    stride = _pool_arg(n, input_args, 2, "stride", kernel_size)
+    padding = _pool_arg(n, input_args, 3, "padding", 0)
     codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, n.name, input_names,
-                             [kernel_size, stride])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_function(torch.nn.functional.adaptive_avg_pool1d)
@@ -550,8 +581,10 @@ def handle_avgpool2d_module(codegen, n, out, module, input_names):
     layer_name = n.name
     codegen.add_uninitialized_tensor(layer_name, out)
     kernel_size = _extract_kernel_size(module.kernel_size)
+    stride = _extract_scalar_param(module.stride, "stride", kernel_size)
+    padding = _extract_scalar_param(module.padding, "padding", 0)
     codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
-                             [kernel_size, module.stride, module.padding])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_module(torch.nn.MaxPool2d)
@@ -560,8 +593,10 @@ def handle_maxpool2d_module(codegen, n, out, module, input_names):
     layer_name = n.name
     codegen.add_uninitialized_tensor(layer_name, out)
     kernel_size = _extract_kernel_size(module.kernel_size)
+    stride = _extract_scalar_param(module.stride, "stride", kernel_size)
+    padding = _extract_scalar_param(module.padding, "padding", 0)
     codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
-                             [kernel_size, module.stride, module.padding])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_module(torch.nn.AdaptiveAvgPool2d)
@@ -579,8 +614,10 @@ def handle_avgpool1d_module(codegen, n, out, module, input_names):
     layer_name = n.name
     codegen.add_uninitialized_tensor(layer_name, out)
     kernel_size = _extract_kernel_size(module.kernel_size)
+    stride = _extract_scalar_param(module.stride, "stride", kernel_size)
+    padding = _extract_scalar_param(module.padding, "padding", 0)
     codegen.add_forward_call("MiCo_avgpool{dim}d_{dtype}", out, layer_name, input_names, 
-                             [kernel_size, module.stride, module.padding])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_module(torch.nn.MaxPool1d)
@@ -589,8 +626,10 @@ def handle_maxpool1d_module(codegen, n, out, module, input_names):
     layer_name = n.name
     codegen.add_uninitialized_tensor(layer_name, out)
     kernel_size = _extract_kernel_size(module.kernel_size)
+    stride = _extract_scalar_param(module.stride, "stride", kernel_size)
+    padding = _extract_scalar_param(module.padding, "padding", 0)
     codegen.add_forward_call("MiCo_maxpool{dim}d_{dtype}", out, layer_name, input_names, 
-                             [kernel_size, module.stride, module.padding])
+                             [kernel_size, stride, padding])
 
 
 @MiCoOpRegistry.register_module(torch.nn.AdaptiveAvgPool1d)
