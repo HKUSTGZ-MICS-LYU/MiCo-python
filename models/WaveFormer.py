@@ -109,7 +109,7 @@ class WaveFormer(MiCoModel):
     """
     WaveFormer: Linear Transformer for TinyML keyword spotting.
     """
-    def __init__(self, encoders_config, num_classes, in_channels=1):
+    def __init__(self, encoders_config, num_classes, in_channels=1, dropout=0.1):
         super().__init__()
         self.default_dataset = "SPEECHCOMMANDS"
         self.num_classes = num_classes
@@ -129,6 +129,7 @@ class WaveFormer(MiCoModel):
             prev_dim = cfg['dim']
 
         self.final_dim = prev_dim
+        self.dropout = nn.Dropout(dropout)
         self.classifier = nn.Linear(self.final_dim, num_classes)
         self.n_layers = len(self.get_qlayers())
 
@@ -139,6 +140,7 @@ class WaveFormer(MiCoModel):
 
         # Global average pooling over the sequence dimension
         x = x.mean(dim=-1)                 # (B, dim)
+        x = self.dropout(x)
         x = self.classifier(x)
         return x
 

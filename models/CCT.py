@@ -380,7 +380,7 @@ def cct_2(n_classes=10):
 def cct_7(n_classes=100):
     model = CCT(
         img_size=32, embedding_dim=256, kernel_size=3, n_conv_layers=1,
-        num_layers=2, num_heads=4, mlp_ratio=2, num_classes=n_classes
+        num_layers=7, num_heads=4, mlp_ratio=2, num_classes=n_classes
     )
     model.default_dataset = "CIFAR100"
     return model
