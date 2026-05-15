@@ -208,6 +208,8 @@ def handle_einsum(codegen, n, out, input_names, input_args):
         codegen.add_forward_call("MiCo_einsum_bhif_bhjf_bhij_{dtype}", out, n.name, input_names)
     elif equation == "bhij,bhjf->bihf":
         codegen.add_forward_call("MiCo_einsum_bhij_bhjf_bihf_{dtype}", out, n.name, input_names)
+    elif equation == "bkn,bnd->bd":
+        codegen.add_forward_call("MiCo_einsum_bkn_bnd_bd_{dtype}", out, n.name, input_names)
     else:
         raise NotImplementedError(f"Unsupported einsum equation: {equation}")
 

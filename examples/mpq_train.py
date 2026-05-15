@@ -12,6 +12,8 @@ argsparse.add_argument("epoches", type=int, default=40)
 argsparse.add_argument("--batch-size", type=int, default=32)
 argsparse.add_argument("--lr", type=float, default=0.001)
 argsparse.add_argument("--scheduler", type=str, default="none")
+argsparse.add_argument("--warmup-epochs", type=int, default=3)
+argsparse.add_argument("--warmup-lr", type=float, default=1e-6)
 
 args = argsparse.parse_args()
 batch_size = args.batch_size
@@ -19,6 +21,8 @@ model_name = args.model_name
 epoches = args.epoches
 lr = args.lr
 scheduler = args.scheduler
+warmup_epochs = args.warmup_epochs
+warmup_lr = args.warmup_lr
 
 if __name__ == "__main__":
 
@@ -37,6 +41,8 @@ if __name__ == "__main__":
                         test_loader=test_loader,
                         lr = lr, 
                         scheduler = scheduler,
+                        warmup_epochs = warmup_epochs,
+                        warmup_lr = warmup_lr,
                         early_stopping = False,
                         verbose=True)
     

@@ -66,15 +66,21 @@ class MiCoModel(nn.Module):
         test_acc = test_correct / test_total
         return {"TestLoss": test_loss_mean, "TestAcc": test_acc}
 
-    def train_loop(self, n_epoch, train_loader, test_loader, verbose = False, 
-                   lr = 0.001, scheduler = "none", early_stopping = True):
+    def train_loop(self, n_epoch, train_loader, test_loader, verbose = False,
+                   lr = 0.001, scheduler = "none", early_stopping = True,
+                   warmup_epochs = 0, warmup_lr = 1e-6):
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         criterion = torch.nn.CrossEntropyLoss()
+        warmup_epochs = max(0, int(warmup_epochs))
+        warmup_epochs = min(warmup_epochs, max(0, n_epoch - 1))
+        use_warmup = scheduler == "cosine" and warmup_epochs > 0
 
         if scheduler == "none":
             scheduler = None
         elif scheduler == "cosine":
-            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_epoch)
+            scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                optimizer, max(1, n_epoch - warmup_epochs)
+            )
         elif scheduler == "step":
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
                                                         step_size=n_epoch // 10, 
@@ -87,6 +93,14 @@ class MiCoModel(nn.Module):
 
         last_loss = np.inf
         for epoch in range(n_epoch):
+            if use_warmup:
+                if epoch < warmup_epochs:
+                    for param_group in optimizer.param_groups:
+                        param_group["lr"] = warmup_lr
+                elif epoch == warmup_epochs:
+                    for param_group in optimizer.param_groups:
+                        param_group["lr"] = lr
+
             train_loss = []
             train_total, train_correct = 0, 0
             loss = torch.tensor(np.inf)
@@ -110,7 +124,7 @@ class MiCoModel(nn.Module):
                     f"[Epoch {epoch+1}/{n_epoch} Loss: {loss.item():.3f}]")
             train_acc = train_correct / train_total
 
-            if scheduler is not None:
+            if scheduler is not None and (not use_warmup or epoch >= warmup_epochs):
                 scheduler.step()
             # Testing
             self.eval()
