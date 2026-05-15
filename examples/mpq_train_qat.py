@@ -12,12 +12,15 @@ argsparse.add_argument("model_name", type=str)
 argsparse.add_argument("epoches", type=int, default=10000)
 argsparse.add_argument("--batch-size", type=int, default=32)
 argsparse.add_argument("--lr", type=float, default=0.001)
-argsparse.add_argument("-q", "--weight_quant", type=float, choices=[1,1.5,2], default=1)
-argsparse.add_argument("-aq", "--act_quant", type=int, choices=[4,8], default=8)
+argsparse.add_argument("-q", "--weight_quant", type=float, choices=[1,1.5,2,4,8], default=1)
+argsparse.add_argument("-aq", "--act_quant", type=int, choices=[1,1.5,2,4,8], default=8)
 argsparse.add_argument("--use-norm", action="store_true", default=False)
+argsparse.add_argument("--pretrained", action="store_true", default=False)
 argsparse.add_argument("--keep-last", action="store_true", default=False)
 argsparse.add_argument("--keep-first", action="store_true", default=False)
 argsparse.add_argument("--scheduler", type=str, default="none")
+argsparse.add_argument("--warmup-epochs", type=int, default=3)
+argsparse.add_argument("--warmup-lr", type=float, default=1e-6)
 
 args = argsparse.parse_args()
 batch_size = args.batch_size
@@ -25,9 +28,12 @@ model_name = args.model_name
 epoches = args.epoches
 lr = args.lr
 scheduler = args.scheduler
+warmup_epochs = args.warmup_epochs
+warmup_lr = args.warmup_lr
 weight_quant = args.weight_quant
 act_quant = args.act_quant
 use_norm = args.use_norm
+pretrained = args.pretrained
 keep_last = args.keep_last
 keep_first = args.keep_first
 
@@ -53,10 +59,11 @@ if __name__ == "__main__":
     model.set_qscheme(qscheme, qat=True, use_norm=use_norm)
     print("Model Param Size:", sum(p.numel() for p in model.parameters()))
     # Detect if there is a full precision checkpoint
-    # if os.path.exists(f"output/ckpt/{model_name}.pth"):
-    #     print("Full Precision Checkpoint Loaded.")
-    #     ckpt = torch.load(f"output/ckpt/{model_name}.pth")
-    #     model.load_state_dict(ckpt)
+    if pretrained:
+        if os.path.exists(f"output/ckpt/{model_name}.pth"):
+            print("Full Precision Checkpoint Loaded.")
+            ckpt = torch.load(f"output/ckpt/{model_name}.pth")
+            model.load_state_dict(ckpt)
 
     if "llama" in model_name:
         res = model.train_loop(n_iter=int(epoches),
@@ -71,6 +78,8 @@ if __name__ == "__main__":
                         test_loader=test_loader,
                         lr = lr, 
                         scheduler = scheduler,
+                        warmup_epochs = warmup_epochs,
+                        warmup_lr = warmup_lr,
                         early_stopping = False,
                         verbose=True)
         

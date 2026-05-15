@@ -47,7 +47,7 @@ def groupwise_mixed_quant_w4w8(tensor: torch.Tensor, gsize: int):
 
     return qweight_list, scale_list, qbits
 
-def mico_export(model: Transformer, filepath: str, 
+def mico_llama_export(model: Transformer, filepath: str, 
                 quantize_final_classifier: bool = True,
                 int8_outliner: bool = False):
     version = 1
@@ -147,18 +147,20 @@ def mico_export(model: Transformer, filepath: str,
 if __name__ == "__main__":
     from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa7M, TinyLLaMa28M
 
-    model_path = "output/ckpt/llama_tiny_3M.pth"
+    model_path = "output/ckpt/tinyllama_28m.pth"
     # bin_path = "project/llama2/llama_3M_W8A8_1layer.bin"
-    bin_path = "project/llama2/llama_3M_W8A8.bin"
+    bin_path = "project/llama2/llama_28M_W8A8.bin"
 
     ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
-    model = TinyLLaMa3M()
-    model.load_state_dict(ckpt["model"])
+    model = TinyLLaMa28M()
+    model.load_state_dict(ckpt)
     model.eval()
     qscheme = [
         [8] * model.n_layers, # weight qscheme
         [8] * model.n_layers, # activation qscheme
     ]
+    qscheme[0][-1] = 8
+    qscheme[1][-1] = 8
 
     model.set_qscheme(qscheme)
 
@@ -166,4 +168,4 @@ if __name__ == "__main__":
     # model.layers = torch.nn.ModuleList([model.layers[0]])
     # model.params.n_layers = 1
 
-    mico_export(model, bin_path)
+    mico_llama_export(model, bin_path)

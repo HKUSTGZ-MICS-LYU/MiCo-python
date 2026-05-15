@@ -179,7 +179,7 @@ class TransformerClassifier(Module):
         x = self.norm(x)
 
         if self.seq_pool:
-            attn = F.softmax(self.attention_pool(x), dim=1).transpose(-1, -2)
+            attn = F.softmax(self.attention_pool(x).transpose(-1, -2), dim=-1)
             x = torch.einsum("bkn,bnd->bd", attn, x)
         else:
             x = x[:, 0]
