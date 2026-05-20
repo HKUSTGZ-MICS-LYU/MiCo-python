@@ -8,6 +8,7 @@ from MiCoModel import MiCoModel, MiCoFunc
 
 ATTENTION_QUANT_NONE = "none"
 ATTENTION_QUANT_INT8 = "int8"
+ATTENTION_QUANT_BITNET = "int1.58"
 ATTENTION_QUANT_FP8 = "fp8"
 
 
@@ -21,6 +22,7 @@ def _normalize_attention_quant(quant):
         "none": ATTENTION_QUANT_NONE,
         "fp32": ATTENTION_QUANT_NONE,
         "float32": ATTENTION_QUANT_NONE,
+        "bitnet": ATTENTION_QUANT_BITNET,
         "int8": ATTENTION_QUANT_INT8,
         "i8": ATTENTION_QUANT_INT8,
         "fp8": ATTENTION_QUANT_FP8,
@@ -66,6 +68,19 @@ def fake_quant_int8(x, dim=None, eps=1e-8):
     q = torch.round(x / scale).clamp(-128, 127)
     return q * scale
 
+def fake_quant_bitnet(x, dim=None, eps=1e-8):
+    reduce_dims = dim
+    if dim is None:
+        max_abs = x.detach().abs().amax()
+    else:
+        if isinstance(dim, int):
+            reduce_dims = (dim,)
+        max_abs = x.detach().abs().amax(dim=reduce_dims, keepdim=True)
+
+    scale = max_abs.clamp(min=eps) / 1.0
+    q = torch.round(x / scale).clamp(-1, 1)
+    return q * scale
+
 
 def fake_quant_fp8(x, fp8_dtype="e4m3fn"):
     """
@@ -82,15 +97,23 @@ class AttentionQuantMixin:
         self,
         quant=ATTENTION_QUANT_NONE,
         fp8_dtype="e4m3fn",
-        int8_dim=None,
-        quantize_qkv=True,
+        int_dim=None,
+        int_dim_q=None,
+        int_dim_k=None,
+        int_dim_v=None,
+        quantize_q=True,
+        quantize_kv=True,
         quantize_score=False,
         quantize_output=True,
     ):
         self.attention_quant = _normalize_attention_quant(quant)
         self.fp8_dtype = fp8_dtype
-        self.int8_dim = int8_dim
-        self.quantize_qkv = quantize_qkv
+        self.int_dim = int_dim
+        self.int_dim_q = int_dim_q if int_dim_q is not None else int_dim
+        self.int_dim_k = int_dim_k if int_dim_k is not None else int_dim
+        self.int_dim_v = int_dim_v if int_dim_v is not None else int_dim
+        self.quantize_q = quantize_q
+        self.quantize_kv = quantize_kv
         self.quantize_score = quantize_score
         self.quantize_output = quantize_output
 
@@ -98,44 +121,67 @@ class AttentionQuantMixin:
         self,
         quant=ATTENTION_QUANT_NONE,
         fp8_dtype=None,
-        int8_dim=None,
-        quantize_qkv=None,
+        int_dim=None,
+        int_dim_q=None,
+        int_dim_k=None,
+        int_dim_v=None,
+        quantize_q=None,
+        quantize_kv=None,
         quantize_score=None,
         quantize_output=None,
     ):
         self.attention_quant = _normalize_attention_quant(quant)
         if fp8_dtype is not None:
             self.fp8_dtype = fp8_dtype
-        if int8_dim is not None:
-            self.int8_dim = int8_dim
-        if quantize_qkv is not None:
-            self.quantize_qkv = quantize_qkv
+        if int_dim is not None:
+            self.int_dim = int_dim
+            self.int_dim_q = int_dim
+            self.int_dim_k = int_dim
+            self.int_dim_v = int_dim
+        if int_dim_q is not None:
+            self.int_dim_q = int_dim_q
+        if int_dim_k is not None:
+            self.int_dim_k = int_dim_k
+        if int_dim_v is not None:
+            self.int_dim_v = int_dim_v
+        if quantize_q is not None:
+            self.quantize_q = quantize_q
+        if quantize_kv is not None:
+            self.quantize_kv = quantize_kv
         if quantize_score is not None:
             self.quantize_score = quantize_score
         if quantize_output is not None:
             self.quantize_output = quantize_output
 
-    def _quantize_attention_tensor(self, x):
+    def _quantize_attention_tensor(self, x, int_dim=None):
+        dim = int_dim
         if self.attention_quant == ATTENTION_QUANT_INT8:
-            return fake_quant_int8(x, dim=self.int8_dim)
+            return fake_quant_int8(x, dim=dim)
+        if self.attention_quant == ATTENTION_QUANT_BITNET:
+            return fake_quant_bitnet(x, dim=dim)
         if self.attention_quant == ATTENTION_QUANT_FP8:
             return fake_quant_fp8(x, self.fp8_dtype)
         return x
 
-    def _quantize_qkv(self, q, k, v):
-        if not self.quantize_qkv or self.attention_quant == ATTENTION_QUANT_NONE:
-            return q, k, v
+    def _quantize_q(self, q):
+        if not self.quantize_q or self.attention_quant == ATTENTION_QUANT_NONE:
+            return q
+        return self._quantize_attention_tensor(q, int_dim=self.int_dim_q)
+
+    def _quantize_kv(self, k, v):
+        if not self.quantize_kv or self.attention_quant == ATTENTION_QUANT_NONE:
+            return k, v
         return (
-            self._quantize_attention_tensor(q),
-            self._quantize_attention_tensor(k),
-            self._quantize_attention_tensor(v),
+            self._quantize_attention_tensor(k, int_dim=self.int_dim_k),
+            self._quantize_attention_tensor(v, int_dim=self.int_dim_v),
         )
 
 
 class AttentionScore(nn.Module, AttentionQuantMixin):
     def __init__(self, scale: float, quant=ATTENTION_QUANT_NONE, fp8_dtype="e4m3fn",
-                 int8_dim=None, quantize_qkv=True, quantize_score=False,
-                 quantize_output=True):
+                 int_dim=None, int_dim_q=None, int_dim_k=None, int_dim_v=None,
+                 quantize_q=True, quantize_kv=True,
+                 quantize_score=False, quantize_output=True):
         super().__init__()
         self.scale = float(scale)
         self.MiCo_func = MiCoFunc(
@@ -145,14 +191,19 @@ class AttentionScore(nn.Module, AttentionQuantMixin):
         self._init_attention_quant(
             quant=quant,
             fp8_dtype=fp8_dtype,
-            int8_dim=int8_dim,
-            quantize_qkv=quantize_qkv,
+            int_dim=int_dim,
+            int_dim_q=int_dim_q,
+            int_dim_k=int_dim_k,
+            int_dim_v=int_dim_v,
+            quantize_q=quantize_q,
+            quantize_kv=quantize_kv,
             quantize_score=quantize_score,
             quantize_output=quantize_output,
         )
 
     def forward(self, q, k, v):
-        q, k, v = self._quantize_qkv(q, k, v)
+        q = self._quantize_q(q)
+        k, v = self._quantize_kv(k, v)
         score = torch.einsum("bhif, bhjf->bhij", q, k) / self.scale
         if self.quantize_score and self.attention_quant != ATTENTION_QUANT_NONE:
             score = self._quantize_attention_tensor(score)
@@ -165,8 +216,9 @@ class AttentionScore(nn.Module, AttentionQuantMixin):
 
 class LinearAttentionScore(nn.Module, AttentionQuantMixin):
     def __init__(self, eps=1e-6, quant=ATTENTION_QUANT_NONE, fp8_dtype="e4m3fn",
-                 int8_dim=None, quantize_qkv=True, quantize_score=False,
-                 quantize_output=True):
+                 int_dim=None, int_dim_q=None, int_dim_k=None, int_dim_v=None,
+                 quantize_q=True, quantize_kv=True,
+                 quantize_score=False, quantize_output=True):
         super().__init__()
         self.eps = eps
         self.MiCo_func = MiCoFunc(
@@ -176,8 +228,12 @@ class LinearAttentionScore(nn.Module, AttentionQuantMixin):
         self._init_attention_quant(
             quant=quant,
             fp8_dtype=fp8_dtype,
-            int8_dim=int8_dim,
-            quantize_qkv=quantize_qkv,
+            int_dim=int_dim,
+            int_dim_q=int_dim_q,
+            int_dim_k=int_dim_k,
+            int_dim_v=int_dim_v,
+            quantize_q=quantize_q,
+            quantize_kv=quantize_kv,
             quantize_score=quantize_score,
             quantize_output=quantize_output,
         )
@@ -185,7 +241,8 @@ class LinearAttentionScore(nn.Module, AttentionQuantMixin):
     def forward(self, q, k, v):
         q = F.elu(q) + 1
         k = F.elu(k) + 1
-        q, k, v = self._quantize_qkv(q, k, v)
+        q = self._quantize_q(q)
+        k, v = self._quantize_kv(k, v)
 
         context = torch.einsum('bhnd,bhnm->bhdm', k, v)
         if self.quantize_score and self.attention_quant != ATTENTION_QUANT_NONE:
@@ -212,8 +269,9 @@ class LinearAttention(nn.Module):
     def __init__(self, dim, num_heads=8, attention_dropout=0.1,
                  projection_dropout=0.1, eps=1e-6,
                  quant=ATTENTION_QUANT_NONE, fp8_dtype="e4m3fn",
-                 int8_dim=None, quantize_qkv=True, quantize_score=False,
-                 quantize_output=True):
+                 int_dim=None, int_dim_q=None, int_dim_k=None, int_dim_v=None,
+                 quantize_q=True, quantize_kv=True,
+                 quantize_score=False, quantize_output=True):
         super().__init__()
         assert dim % num_heads == 0, "dim must be divisible by num_heads"
 
@@ -227,8 +285,12 @@ class LinearAttention(nn.Module):
             eps=eps,
             quant=quant,
             fp8_dtype=fp8_dtype,
-            int8_dim=int8_dim,
-            quantize_qkv=quantize_qkv,
+            int_dim=int_dim,
+            int_dim_q=int_dim_q,
+            int_dim_k=int_dim_k,
+            int_dim_v=int_dim_v,
+            quantize_q=quantize_q,
+            quantize_kv=quantize_kv,
             quantize_score=quantize_score,
             quantize_output=quantize_output,
         )
@@ -250,7 +312,8 @@ class LinearAttention(nn.Module):
 
 
 def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8, fp8_dtype="e4m3fn",
-                               int8_dim=None, quantize_qkv=True,
+                               int_dim=None, int_dim_q=None, int_dim_k=None,
+                               int_dim_v=None, quantize_q=True, quantize_kv=True,
                                quantize_score=False, quantize_output=True):
     """
     Enable fake quantization for all MiCo attention score modules in a model.
@@ -259,8 +322,12 @@ def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8, fp8_dtype="e4m
         model: PyTorch module containing AttentionScore or LinearAttentionScore.
         quant: "none", "int8", or "fp8".
         fp8_dtype: "e4m3fn" or "e5m2" for FP8 fake quantization.
-        int8_dim: optional reduction dim(s) for INT8 scales. None means per-tensor.
-        quantize_qkv: quantize Q/K/V before attention math.
+        int_dim: default reduction dim(s) for INT8/BitNet scales. None means per-tensor.
+        int_dim_q: override reduction dim for Q.
+        int_dim_k: override reduction dim for K.
+        int_dim_v: override reduction dim for V.
+        quantize_q: quantize Q before attention math.
+        quantize_kv: quantize K/V before attention math.
         quantize_score: quantize attention logits for softmax attention or context for linear attention.
         quantize_output: quantize attention output before returning.
     """
@@ -269,8 +336,12 @@ def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8, fp8_dtype="e4m
             module.set_quantization(
                 quant=quant,
                 fp8_dtype=fp8_dtype,
-                int8_dim=int8_dim,
-                quantize_qkv=quantize_qkv,
+                int_dim=int_dim,
+                int_dim_q=int_dim_q,
+                int_dim_k=int_dim_k,
+                int_dim_v=int_dim_v,
+                quantize_q=quantize_q,
+                quantize_kv=quantize_kv,
                 quantize_score=quantize_score,
                 quantize_output=quantize_output,
             )

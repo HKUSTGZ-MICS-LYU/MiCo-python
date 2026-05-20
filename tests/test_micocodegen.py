@@ -21,6 +21,31 @@ from MiCoCodeGen import MiCoCodeGen, MiCoTrace
 from MiCoUtils import fuse_model
 
 
+class Pooling1dModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.avg1d = nn.AvgPool1d(kernel_size=5, stride=(4,), padding=(2,))
+
+    def forward(self, x):
+        return self.avg1d(x)
+
+
+class Pooling2dModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.max2d = nn.MaxPool2d(kernel_size=(3, 3), stride=(2, 2), padding=(1, 1))
+
+    def forward(self, x):
+        y2 = torch.nn.functional.avg_pool2d(
+            x,
+            kernel_size=(3, 3),
+            stride=(2, 2),
+            padding=(1, 1),
+        )
+        y3 = self.max2d(x)
+        return y2 + y3
+
+
 class TestMiCoTrace(unittest.TestCase):
     """Test the MiCoTrace tracer class."""
     
@@ -208,6 +233,23 @@ class TestMiCoCodeGenForward(unittest.TestCase):
         
         self.assertIsNotNone(output)
         self.assertEqual(output.shape[0], 1)
+
+    def test_pooling_parameters_are_emitted_as_c_scalars(self):
+        """Tuple pooling parameters should not be stringified into C calls."""
+        codegen = MiCoCodeGen(Pooling1dModel().eval())
+        codegen.forward(torch.randn(1, 2, 16))
+        forward_code = "\n".join(codegen.model_forward)
+        self.assertIn("MiCo_avgpool3d_f32", forward_code)
+        self.assertNotIn("(4,)", forward_code)
+        self.assertNotIn("(2,)", forward_code)
+
+        codegen = MiCoCodeGen(Pooling2dModel().eval())
+        codegen.forward(torch.randn(1, 2, 16, 16))
+        forward_code = "\n".join(codegen.model_forward)
+        self.assertIn("MiCo_avgpool4d_f32", forward_code)
+        self.assertIn("MiCo_maxpool4d_f32", forward_code)
+        self.assertNotIn("(2, 2)", forward_code)
+        self.assertNotIn("(1, 1)", forward_code)
 
 
 class TestMiCoCodeGenTensorManagement(unittest.TestCase):
