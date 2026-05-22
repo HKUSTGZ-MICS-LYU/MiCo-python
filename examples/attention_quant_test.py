@@ -13,6 +13,7 @@ if PROJECT_ROOT not in sys.path:
 from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa447K, TinyViT1M, cct_2, cct_7, model_zoo, tiny_waveformer
 from models.LLaMa import TinyLLaMa2c110M, TinyLLaMa11M, TinyLLaMa28M
 from models.utils import AttentionQuantMixin, set_attention_quantization
+from MiCoSmoothQuant import apply_smoothquant, collect_smoothquant_act_scales, find_smoothquant_mappings
 
 QUANT_CHOICES = ["none", "int8", "fp8", "bitnet"]
 
@@ -47,6 +48,7 @@ def parse_args():
     )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--batches", type=int, default=None, help="Limit test batches.")
+    parser.add_argument("--num-workers", type=int, default=None, help="Override model_zoo NUM_WORKERS.")
     parser.add_argument("--checkpoint-dir", type=str, default="output/ckpt")
     parser.add_argument("--checkpoint", type=str, default=None)
     parser.add_argument("--no-checkpoint", action="store_true")
@@ -87,6 +89,10 @@ def parse_args():
         help="Use random inputs/labels instead of model_zoo datasets.",
     )
     parser.add_argument("--input-len", type=int, default=512, help="Synthetic WaveFormer length or LLaMa token length.")
+    parser.add_argument("--smoothquant", action="store_true", help="Apply SmoothQuant before attention quantization.")
+    parser.add_argument("--smoothquant-alpha", type=float, default=0.5)
+    parser.add_argument("--smoothquant-batches", type=int, default=32)
+    parser.add_argument("--compare-smoothquant", action="store_true", help="Evaluate without and with SmoothQuant.")
     parser.add_argument("--seed", type=int, default=0)
     return parser.parse_args()
 
@@ -152,17 +158,19 @@ def build_synthetic_model_and_loader(model_name, batch_size, input_len, device):
         )
 
     loader = DataLoader(TensorDataset(x, y), batch_size=batch_size, shuffle=False)
-    return model, loader
+    return model, loader, loader
 
 
 def load_model_and_loader(args, device):
     if args.synthetic:
         return build_synthetic_model_and_loader(args.model_name, args.batch_size, args.input_len, device)
 
+    if args.num_workers is not None:
+        model_zoo.NUM_WORKERS = args.num_workers
     model, _train_loader, test_loader = model_zoo.from_zoo(
         args.model_name, shuffle=False, batch_size=args.batch_size
     )
-    return model.to(device), test_loader
+    return model.to(device), _train_loader, test_loader
 
 
 def maybe_limit_loader(loader, batches):
@@ -228,6 +236,26 @@ def quant_configs(args):
     return configs
 
 
+def apply_smoothquant_if_enabled(model, calib_loader, args, device):
+    if not args.smoothquant and not args.compare_smoothquant:
+        return "disabled"
+    act_scales = collect_smoothquant_act_scales(
+        model,
+        calib_loader,
+        num_batches=args.smoothquant_batches,
+        device=device,
+    )
+    mappings = find_smoothquant_mappings(model)
+    applied = apply_smoothquant(
+        model,
+        act_scales,
+        alpha=args.smoothquant_alpha,
+        mappings=mappings,
+        verbose=False,
+    )
+    return f"applied {len(applied)}/{len(mappings)} groups, alpha={args.smoothquant_alpha}"
+
+
 def test_model(model, loader, device):
     model.eval()
     criterion = torch.nn.CrossEntropyLoss()
@@ -269,7 +297,7 @@ def main():
         args.device if args.device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
     )
 
-    base_model, test_loader = load_model_and_loader(args, device)
+    base_model, calib_loader, test_loader = load_model_and_loader(args, device)
     test_loader = maybe_limit_loader(test_loader, args.batches)
     checkpoint_status = load_checkpoint_if_available(base_model, args, device)
     attention_modules = count_attention_modules(base_model)
@@ -278,7 +306,18 @@ def main():
     print(f"Device: {device}")
     print(f"Attention modules: {attention_modules}")
     print(f"Checkpoint: {checkpoint_status}")
+    print(f"SmoothQuant: {'compare' if args.compare_smoothquant else ('enabled' if args.smoothquant else 'disabled')}")
     print()
+
+    base_variants = [("base", base_model)]
+    if args.smoothquant or args.compare_smoothquant:
+        smooth_model = copy.deepcopy(base_model).to(device)
+        smooth_status = apply_smoothquant_if_enabled(smooth_model, calib_loader, args, device)
+        print(f"SmoothQuant status: {smooth_status}")
+        if args.compare_smoothquant:
+            base_variants.append(("smooth", smooth_model))
+        else:
+            base_variants = [("smooth", smooth_model)]
 
     qscheme = [
         [args.weight_q] * base_model.n_layers, # weight qscheme
@@ -287,41 +326,43 @@ def main():
     # Keep Last Layer in 8-bit
     qscheme[0][-1] = 8
     qscheme[1][-1] = 8
-    base_model.set_qscheme(qscheme)
 
     results = []
     int_dim = parse_int_dim(args.int_dim)
     int_dim_q = parse_int_dim(args.int_dim_q) if args.int_dim_q is not None else None
     int_dim_k = parse_int_dim(args.int_dim_k) if args.int_dim_k is not None else None
     int_dim_v = parse_int_dim(args.int_dim_v) if args.int_dim_v is not None else None
-    for label, q_quant, kv_quant in quant_configs(args):
-        model = copy.deepcopy(base_model).to(device)
-        set_attention_quantization(
-            model,
-            quant=kv_quant,
-            q_quant=q_quant,
-            kv_quant=kv_quant,
-            fp8_dtype=args.fp8_dtype,
-            int_dim=int_dim,
-            int_dim_q=int_dim_q,
-            int_dim_k=int_dim_k,
-            int_dim_v=int_dim_v,
-            quantize_q=not args.no_quantize_q,
-            quantize_kv=not args.no_quantize_kv,
-            quantize_score=args.quantize_score,
-            quantize_output=not args.no_quantize_output,
-        )
-        result = test_model(model, test_loader, device)
-        result["Quant"] = label
-        result["QQuant"] = q_quant
-        result["KVQuant"] = kv_quant
-        results.append(result)
-        print(f"{label}: {result}")
+    for variant_name, variant_model in base_variants:
+        for label, q_quant, kv_quant in quant_configs(args):
+            model = copy.deepcopy(variant_model).to(device)
+            model.set_qscheme(qscheme)
+            set_attention_quantization(
+                model,
+                quant=kv_quant,
+                q_quant=q_quant,
+                kv_quant=kv_quant,
+                fp8_dtype=args.fp8_dtype,
+                int_dim=int_dim,
+                int_dim_q=int_dim_q,
+                int_dim_k=int_dim_k,
+                int_dim_v=int_dim_v,
+                quantize_q=not args.no_quantize_q,
+                quantize_kv=not args.no_quantize_kv,
+                quantize_score=args.quantize_score,
+                quantize_output=not args.no_quantize_output,
+            )
+            result = test_model(model, test_loader, device)
+            result["Variant"] = variant_name
+            result["Quant"] = label
+            result["QQuant"] = q_quant
+            result["KVQuant"] = kv_quant
+            results.append(result)
+            print(f"{variant_name}/{label}: {result}")
 
     print("\nSummary")
-    print(f"{'QQuant':<8} {'KVQuant':<8} {'TestLoss':>12} {'TestAcc':>12}")
+    print(f"{'Variant':<8} {'QQuant':<8} {'KVQuant':<8} {'TestLoss':>12} {'TestAcc':>12}")
     for result in results:
-        print(f"{result['QQuant']:<8} {result['KVQuant']:<8} {result['TestLoss']:>12.6f} {result['TestAcc']:>12.6f}")
+        print(f"{result['Variant']:<8} {result['QQuant']:<8} {result['KVQuant']:<8} {result['TestLoss']:>12.6f} {result['TestAcc']:>12.6f}")
 
 
 if __name__ == "__main__":
