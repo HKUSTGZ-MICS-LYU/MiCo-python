@@ -18,12 +18,32 @@ ATTENTION_QUANT_BITNET = "int1.58"
 ATTENTION_QUANT_FP8 = "fp8"
 
 
+def _parse_int_quant(quant):
+    text = str(quant).lower()
+    if text.startswith("int") and text[3:].isdigit():
+        bits = int(text[3:])
+    elif text.startswith("i") and text[1:].isdigit():
+        bits = int(text[1:])
+    elif text.isdigit():
+        bits = int(text)
+    else:
+        return None
+    if 1 <= bits <= 31:
+        return bits
+    return None
+
+
 def _normalize_attention_quant(quant):
     if quant is None or quant is False:
         return ATTENTION_QUANT_NONE
     if quant is True:
         return ATTENTION_QUANT_INT8
     quant = str(quant).lower()
+    int_bits = _parse_int_quant(quant)
+    if int_bits is not None:
+        if int_bits >= 32:
+            return ATTENTION_QUANT_NONE
+        return f"int{int_bits}"
     aliases = {
         "none": ATTENTION_QUANT_NONE,
         "fp32": ATTENTION_QUANT_NONE,
@@ -36,10 +56,6 @@ def _normalize_attention_quant(quant):
         "1.5": ATTENTION_QUANT_BITNET,
         "1.58bit": ATTENTION_QUANT_BITNET,
         "ternary": ATTENTION_QUANT_BITNET,
-        "int8": ATTENTION_QUANT_INT8,
-        "i8": ATTENTION_QUANT_INT8,
-        "8": ATTENTION_QUANT_INT8,
-        "8.0": ATTENTION_QUANT_INT8,
         "fp8": ATTENTION_QUANT_FP8,
         "float8": ATTENTION_QUANT_FP8,
         "e4m3": ATTENTION_QUANT_FP8,
@@ -58,12 +74,10 @@ def attention_qtype_to_quant(qtype):
         return ATTENTION_QUANT_NONE
     if qtype >= 32:
         return ATTENTION_QUANT_NONE
-    if qtype == 8:
-        return ATTENTION_QUANT_INT8
     if 0 < qtype < 2:
         return ATTENTION_QUANT_BITNET
-    if qtype == 2:
-        return ATTENTION_QUANT_BITNET
+    if float(qtype).is_integer():
+        return f"int{int(qtype)}"
     raise ValueError(f"Unsupported attention qtype: {qtype}")
 
 
@@ -71,10 +85,13 @@ def attention_quant_to_bits(quant):
     quant = _normalize_attention_quant(quant)
     if quant == ATTENTION_QUANT_NONE:
         return 32
-    if quant == ATTENTION_QUANT_INT8 or quant == ATTENTION_QUANT_FP8:
+    if quant == ATTENTION_QUANT_FP8:
         return 8
     if quant == ATTENTION_QUANT_BITNET:
         return 1.58
+    int_bits = _parse_int_quant(quant)
+    if int_bits is not None:
+        return int_bits
     raise ValueError(f"Unsupported attention quantization mode: {quant}")
 
 
@@ -94,6 +111,10 @@ def _resolve_fp8_dtype(fp8_dtype):
 
 
 def fake_quant_int8(x, dim=None, eps=1e-8):
+    return fake_quant_int(x, qbit=8, dim=dim, eps=eps)
+
+
+def fake_quant_int(x, qbit=8, dim=None, eps=1e-8):
     reduce_dims = dim
     if dim is None:
         max_abs = x.detach().abs().amax()
@@ -102,24 +123,52 @@ def fake_quant_int8(x, dim=None, eps=1e-8):
             reduce_dims = (dim,)
         max_abs = x.detach().abs().amax(dim=reduce_dims, keepdim=True)
 
-    scale = max_abs.clamp(min=eps) / 127.0
-    q = torch.round(x / scale).clamp(-128, 127)
+    qbit = int(qbit)
+    if qbit <= 0:
+        raise ValueError(f"qbit must be positive, got {qbit}")
+    if qbit == 1:
+        if dim is None:
+            scale = x.detach().abs().mean().clamp(min=eps)
+        else:
+            scale = x.detach().abs().mean(dim=reduce_dims, keepdim=True).clamp(min=eps)
+        q = torch.sign(x)
+        q = torch.where(q == 0.0, torch.ones_like(q), q)
+        return q * scale
+
+    qmax = 2 ** (qbit - 1) - 1
+    qmin = -(2 ** (qbit - 1))
+    scale = max_abs.clamp(min=eps) / float(qmax)
+    q = torch.round(x / scale).clamp(qmin, qmax)
     return q * scale
 
 
-def fake_quant_bitnet(x, dim=None, eps=1e-8):
-    reduce_dims = dim
-    if dim is None:
-        max_abs = x.detach().abs().amax()
-    else:
-        if isinstance(dim, int):
-            reduce_dims = (dim,)
-        max_abs = x.detach().abs().amax(dim=reduce_dims, keepdim=True)
+def _normalize_bitnet_scale(bitnet_scale):
+    bitnet_scale = str(bitnet_scale).lower()
+    if bitnet_scale not in ["max", "mean"]:
+        raise ValueError(f"Unsupported bitnet scale mode: {bitnet_scale}")
+    return bitnet_scale
 
-    scale = max_abs.clamp(min=eps)
+
+def fake_quant_bitnet(x, dim=None, eps=1e-8, mode="max"):
+    reduce_dims = dim
+    mode = _normalize_bitnet_scale(mode)
+    if dim is not None and isinstance(dim, int):
+        reduce_dims = (dim,)
+
+    if mode == "max":
+        if dim is None:
+            denom = x.detach().abs().amax()
+        else:
+            denom = x.detach().abs().amax(dim=reduce_dims, keepdim=True)
+    else:
+        if dim is None:
+            denom = x.detach().abs().mean()
+        else:
+            denom = x.detach().abs().mean(dim=reduce_dims, keepdim=True)
+
+    scale = denom.clamp(min=eps)
     q = torch.round(x / scale).clamp(-1, 1)
     return q * scale
-
 
 def fake_quant_fp8(x, fp8_dtype="e4m3fn"):
     dtype = _resolve_fp8_dtype(fp8_dtype)
@@ -135,6 +184,7 @@ class AttentionQuantMixin:
         k_quant=None,
         v_quant=None,
         score_quant=None,
+        bitnet_scale="max",
         fp8_dtype="e4m3fn",
         int_dim=None,
         int_dim_q=None,
@@ -157,6 +207,7 @@ class AttentionQuantMixin:
         self.score_attention_quant = _normalize_attention_quant(
             score_quant if score_quant is not None else quant
         )
+        self.bitnet_scale = _normalize_bitnet_scale(bitnet_scale)
         self.fp8_dtype = fp8_dtype
         self.int_dim = int_dim
         self.int_dim_q = int_dim_q if int_dim_q is not None else int_dim
@@ -178,6 +229,7 @@ class AttentionQuantMixin:
         k_quant=None,
         v_quant=None,
         score_quant=None,
+        bitnet_scale=None,
         fp8_dtype=None,
         int_dim=None,
         int_dim_q=None,
@@ -200,6 +252,8 @@ class AttentionQuantMixin:
         self.score_attention_quant = _normalize_attention_quant(
             score_quant if score_quant is not None else quant
         )
+        if bitnet_scale is not None:
+            self.bitnet_scale = _normalize_bitnet_scale(bitnet_scale)
         if fp8_dtype is not None:
             self.fp8_dtype = fp8_dtype
         if int_dim is not None:
@@ -233,10 +287,11 @@ class AttentionQuantMixin:
 
     def _quantize_attention_tensor(self, x, int_dim=None, quant=None):
         quant = self.attention_quant if quant is None else _normalize_attention_quant(quant)
-        if quant == ATTENTION_QUANT_INT8:
-            return fake_quant_int8(x, dim=int_dim)
+        int_bits = _parse_int_quant(quant)
+        if int_bits is not None:
+            return fake_quant_int(x, qbit=int_bits, dim=int_dim)
         if quant == ATTENTION_QUANT_BITNET:
-            return fake_quant_bitnet(x, dim=int_dim)
+            return fake_quant_bitnet(x, dim=int_dim, mode=self.bitnet_scale)
         if quant == ATTENTION_QUANT_FP8:
             return fake_quant_fp8(x, self.fp8_dtype)
         return x
@@ -300,6 +355,37 @@ class LinearAttentionScore(nn.Module):
         return num / (den + self.eps)
 
 
+class LLaMaAttention(nn.Module):
+    def __init__(self, head_dim: int, dropout: float = 0.0,
+                 max_seq_len: int = 256, use_flash: bool = True):
+        super().__init__()
+        self.head_dim = head_dim
+        self.dropout = dropout
+        self.flash = use_flash and hasattr(torch.nn.functional, "scaled_dot_product_attention")
+        mask = torch.full((1, 1, max_seq_len, max_seq_len), float("-inf"))
+        mask = torch.triu(mask, diagonal=1)
+        self.register_buffer("mask", mask, persistent=False)
+
+    def forward(self, q, k, v):
+        if self.flash:
+            return torch.nn.functional.scaled_dot_product_attention(
+                q,
+                k,
+                v,
+                attn_mask=None,
+                dropout_p=self.dropout if self.training else 0.0,
+                is_causal=True,
+            )
+
+        seqlen = q.shape[2]
+        scores = torch.matmul(q, k.transpose(2, 3)) / (self.head_dim ** 0.5)
+        mask = self.mask[:, :, :seqlen, :seqlen].to(device=scores.device)
+        scores = scores + mask
+        scores = F.softmax(scores.float(), dim=-1).type_as(q)
+        scores = F.dropout(scores, p=self.dropout, training=self.training)
+        return torch.matmul(scores, v)
+
+
 class LinearAttention(nn.Module):
     def __init__(self, dim, num_heads=8, attention_dropout=0.1,
                  projection_dropout=0.1, eps=1e-6, **kwargs):
@@ -332,7 +418,7 @@ class LinearAttention(nn.Module):
 
 def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8,
                                q_quant=None, kv_quant=None, k_quant=None, v_quant=None,
-                               score_quant=None, fp8_dtype="e4m3fn",
+                               score_quant=None, bitnet_scale="max", fp8_dtype="e4m3fn",
                                int_dim=None, int_dim_q=None, int_dim_k=None,
                                int_dim_v=None, int_dim_score=None,
                                quantize_q=True, quantize_kv=True,
@@ -347,6 +433,7 @@ def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8,
                 k_quant=k_quant,
                 v_quant=v_quant,
                 score_quant=score_quant,
+                bitnet_scale=bitnet_scale,
                 fp8_dtype=fp8_dtype,
                 int_dim=int_dim,
                 int_dim_q=int_dim_q,

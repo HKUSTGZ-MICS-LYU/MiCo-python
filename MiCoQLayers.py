@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from MiCoMisc import (
     AttentionQuantMixin,
     AttentionScore,
+    LLaMaAttention,
     LinearAttentionScore,
     ATTENTION_QUANT_NONE,
     attention_qtype_to_quant,
@@ -470,6 +471,7 @@ class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
         v_qtype=DEFAULT_W_Q,
         score_qtype=DEFAULT_ACT_Q,
         qat=False,
+        bitnet_scale="max",
         fp8_dtype="e4m3fn",
         int_dim=None,
         int_dim_q=None,
@@ -496,6 +498,7 @@ class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
             k_quant=attention_qtype_to_quant(k_qtype),
             v_quant=attention_qtype_to_quant(v_qtype),
             score_quant=attention_qtype_to_quant(score_qtype),
+            bitnet_scale=bitnet_scale,
             fp8_dtype=fp8_dtype,
             int_dim=int_dim,
             int_dim_q=int_dim_q,
@@ -562,6 +565,7 @@ class BitAttentionScore(AttentionScore, _BitAttentionBase):
                  v_qtype=DEFAULT_W_Q,
                  score_qtype=DEFAULT_ACT_Q,
                  qat=False,
+                 bitnet_scale="max",
                  fp8_dtype="e4m3fn",
                  int_dim=None,
                  int_dim_q=None,
@@ -580,6 +584,7 @@ class BitAttentionScore(AttentionScore, _BitAttentionBase):
             v_qtype=v_qtype,
             score_qtype=score_qtype,
             qat=qat,
+            bitnet_scale=bitnet_scale,
             fp8_dtype=fp8_dtype,
             int_dim=int_dim,
             int_dim_q=int_dim_q,
@@ -616,6 +621,7 @@ class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
                  v_qtype=DEFAULT_W_Q,
                  score_qtype=DEFAULT_ACT_Q,
                  qat=False,
+                 bitnet_scale="max",
                  fp8_dtype="e4m3fn",
                  int_dim=None,
                  int_dim_q=None,
@@ -634,6 +640,7 @@ class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
             v_qtype=v_qtype,
             score_qtype=score_qtype,
             qat=qat,
+            bitnet_scale=bitnet_scale,
             fp8_dtype=fp8_dtype,
             int_dim=int_dim,
             int_dim_q=int_dim_q,
@@ -666,3 +673,69 @@ class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
         num = torch.einsum("bhnd,bhdm->bnhm", q, context)
         den = torch.einsum("bhnd,bhd->bnh", q, k_sum).unsqueeze(-1)
         return num / (den + self.eps)
+
+
+class BitLLaMaAttention(LLaMaAttention, _BitAttentionBase):
+    def __init__(self, head_dim: int, dropout: float = 0.0,
+                 max_seq_len: int = 256,
+                 q_qtype=DEFAULT_ACT_Q,
+                 k_qtype=DEFAULT_W_Q,
+                 v_qtype=DEFAULT_W_Q,
+                 score_qtype=DEFAULT_ACT_Q,
+                 qat=False,
+                 bitnet_scale="max",
+                 fp8_dtype="e4m3fn",
+                 int_dim=None,
+                 int_dim_q=None,
+                 int_dim_k=None,
+                 int_dim_v=None,
+                 int_dim_score=None,
+                 quantize_q=True,
+                 quantize_k=True,
+                 quantize_v=True,
+                 quantize_score=True):
+        LLaMaAttention.__init__(
+            self,
+            head_dim=head_dim,
+            dropout=dropout,
+            max_seq_len=max_seq_len,
+            use_flash=False,
+        )
+        self.layer_type = "LLaMaAttention"
+        self._init_bit_attention(
+            q_qtype=q_qtype,
+            k_qtype=k_qtype,
+            v_qtype=v_qtype,
+            score_qtype=score_qtype,
+            qat=qat,
+            bitnet_scale=bitnet_scale,
+            fp8_dtype=fp8_dtype,
+            int_dim=int_dim,
+            int_dim_q=int_dim_q,
+            int_dim_k=int_dim_k,
+            int_dim_v=int_dim_v,
+            int_dim_score=int_dim_score,
+            quantize_q=quantize_q,
+            quantize_k=quantize_k,
+            quantize_v=quantize_v,
+            quantize_score=quantize_score,
+        )
+
+    def forward(self, q, k, v):
+        B, H, I, Fdim = q.shape
+        J = k.shape[2]
+        self.score_macs = B * H * I * J * Fdim
+        self.context_macs = B * H * I * J * Fdim
+        self.macs = self.score_macs + self.context_macs
+        self.layer_features = [B, H, I, J, Fdim]
+
+        q = self._quantize_q(q)
+        k = self._quantize_k(k)
+        v = self._quantize_v(v)
+        scores = torch.matmul(q, k.transpose(2, 3)) / (self.head_dim ** 0.5)
+        mask = self.mask[:, :, :I, :J].to(device=scores.device)
+        scores = scores + mask
+        scores = F.softmax(scores.float(), dim=-1).type_as(q)
+        scores = self._quantize_score(scores)
+        scores = F.dropout(scores, p=self.dropout, training=self.training)
+        return torch.matmul(scores, v)

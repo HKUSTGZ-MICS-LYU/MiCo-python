@@ -5,8 +5,9 @@ from MiCoQLayers import (
     BitQLayer,
     BitAttentionScore,
     BitLinearAttentionScore,
+    BitLLaMaAttention,
 )
-from MiCoMisc import AttentionScore, LinearAttentionScore
+from MiCoMisc import AttentionScore, LLaMaAttention, LinearAttentionScore
 
 import copy
 import struct
@@ -36,7 +37,9 @@ def list_quantize_layers(model: nn.Module):
 def list_quantize_attn_layers(model: nn.Module):
     layers = []
     for name, module in model.named_children():
-        if isinstance(module, (AttentionScore, LinearAttentionScore)):
+        if isinstance(module, (BitAttentionScore, BitLinearAttentionScore, BitLLaMaAttention)):
+            layers.append(module)
+        elif isinstance(module, (AttentionScore, LinearAttentionScore, LLaMaAttention)):
             layers.append(module)
         else:
             layers += list_quantize_attn_layers(module)
@@ -159,6 +162,7 @@ def _expand_attn_qscheme(attn_qscheme, n_layers):
 def replace_quantize_attn_layers(model: nn.Module,
                                  attn_qscheme: dict,
                                  quant_aware=False,
+                                 bitnet_scale="max",
                                  fp8_dtype="e4m3fn",
                                  int_dim=None,
                                  int_dim_q=None,
@@ -178,6 +182,7 @@ def replace_quantize_attn_layers(model: nn.Module,
         qscheme["v"],
         qscheme["score"],
         quant_aware=quant_aware,
+        bitnet_scale=bitnet_scale,
         fp8_dtype=fp8_dtype,
         int_dim=int_dim,
         int_dim_q=int_dim_q,
@@ -203,6 +208,7 @@ def __replace_attn_layer(model: nn.Module,
                          v_list: list,
                          score_list: list,
                          quant_aware=False,
+                         bitnet_scale="max",
                          fp8_dtype="e4m3fn",
                          int_dim=None,
                          int_dim_q=None,
@@ -213,22 +219,33 @@ def __replace_attn_layer(model: nn.Module,
                          quantize_k=True,
                          quantize_v=True,
                          quantize_score=True):
+    def module_device(module):
+        for tensor in list(module.parameters(recurse=False)) + list(module.buffers(recurse=False)):
+            return tensor.device
+        return None
+
+    def maybe_to_source_device(new_module, old_module):
+        device = module_device(old_module)
+        if device is not None:
+            new_module = new_module.to(device)
+        return new_module
+
     for name, module in model.named_children():
         if isinstance(module, BitAttentionScore):
             module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
         elif isinstance(module, BitLinearAttentionScore):
             module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
+        elif isinstance(module, BitLLaMaAttention):
+            module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
         elif isinstance(module, AttentionScore):
-            setattr(
-                model,
-                name,
-                BitAttentionScore(
+            new_module = BitAttentionScore(
                     module.scale,
                     q_qtype=q_list.pop(0),
                     k_qtype=k_list.pop(0),
                     v_qtype=v_list.pop(0),
                     score_qtype=score_list.pop(0),
                     qat=quant_aware,
+                    bitnet_scale=bitnet_scale,
                     fp8_dtype=fp8_dtype,
                     int_dim=int_dim,
                     int_dim_q=int_dim_q,
@@ -240,18 +257,16 @@ def __replace_attn_layer(model: nn.Module,
                     quantize_v=quantize_v,
                     quantize_score=quantize_score,
                 )
-            )
+            setattr(model, name, maybe_to_source_device(new_module, module))
         elif isinstance(module, LinearAttentionScore):
-            setattr(
-                model,
-                name,
-                BitLinearAttentionScore(
+            new_module = BitLinearAttentionScore(
                     module.eps,
                     q_qtype=q_list.pop(0),
                     k_qtype=k_list.pop(0),
                     v_qtype=v_list.pop(0),
                     score_qtype=score_list.pop(0),
                     qat=quant_aware,
+                    bitnet_scale=bitnet_scale,
                     fp8_dtype=fp8_dtype,
                     int_dim=int_dim,
                     int_dim_q=int_dim_q,
@@ -263,7 +278,30 @@ def __replace_attn_layer(model: nn.Module,
                     quantize_v=quantize_v,
                     quantize_score=quantize_score,
                 )
-            )
+            setattr(model, name, maybe_to_source_device(new_module, module))
+        elif isinstance(module, LLaMaAttention):
+            new_module = BitLLaMaAttention(
+                    head_dim=module.head_dim,
+                    dropout=module.dropout,
+                    max_seq_len=module.mask.shape[-1],
+                    q_qtype=q_list.pop(0),
+                    k_qtype=k_list.pop(0),
+                    v_qtype=v_list.pop(0),
+                    score_qtype=score_list.pop(0),
+                    qat=quant_aware,
+                    bitnet_scale=bitnet_scale,
+                    fp8_dtype=fp8_dtype,
+                    int_dim=int_dim,
+                    int_dim_q=int_dim_q,
+                    int_dim_k=int_dim_k,
+                    int_dim_v=int_dim_v,
+                    int_dim_score=int_dim_score,
+                    quantize_q=quantize_q,
+                    quantize_k=quantize_k,
+                    quantize_v=quantize_v,
+                    quantize_score=quantize_score,
+                )
+            setattr(model, name, maybe_to_source_device(new_module, module))
         else:
             __replace_attn_layer(
                 module,
@@ -272,6 +310,7 @@ def __replace_attn_layer(model: nn.Module,
                 v_list,
                 score_list,
                 quant_aware=quant_aware,
+                bitnet_scale=bitnet_scale,
                 fp8_dtype=fp8_dtype,
                 int_dim=int_dim,
                 int_dim_q=int_dim_q,

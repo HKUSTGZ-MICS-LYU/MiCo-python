@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 
 from MiCoModel import MiCoModel
-from MiCoMisc import ATTENTION_QUANT_NONE, AttentionQuantMixin
+from MiCoMisc import LLaMaAttention
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -98,7 +98,7 @@ def repeat_kv(x: torch.Tensor, n_rep: int) -> torch.Tensor:
         .reshape(bs, slen, n_kv_heads * n_rep, head_dim)
     )
 
-class Attention(nn.Module, AttentionQuantMixin):
+class Attention(nn.Module):
     def __init__(self, args: ModelArgs):
         super().__init__()
         self.n_kv_heads = args.n_heads if args.n_kv_heads is None else args.n_kv_heads
@@ -112,17 +112,14 @@ class Attention(nn.Module, AttentionQuantMixin):
         self.wk = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wv = nn.Linear(args.dim, self.n_kv_heads * self.head_dim, bias=False)
         self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
-        self.attn_dropout = nn.Dropout(args.dropout)
+        self.attn_score = LLaMaAttention(
+            head_dim=self.head_dim,
+            dropout=args.dropout,
+            max_seq_len=args.max_seq_len,
+        )
         self.resid_dropout = nn.Dropout(args.dropout)
-        self.dropout = args.dropout
-        self._init_attention_quant()
 
-        # use flash attention or a manual implementation?
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        mask = torch.full((1, 1, args.max_seq_len, args.max_seq_len), float("-inf"))
-        mask = torch.triu(mask, diagonal=1)
-        self.register_buffer("mask", mask, persistent=False)
-        if not self.flash:
+        if not self.attn_score.flash:
             print("WARNING: using slow attention. Flash Attention requires PyTorch >= 2.0")
 
     def forward(
@@ -150,26 +147,7 @@ class Attention(nn.Module, AttentionQuantMixin):
         xq = xq.transpose(1, 2)  # (bs, n_local_heads, seqlen, head_dim)
         xk = xk.transpose(1, 2)
         xv = xv.transpose(1, 2)
-        xq = self._quantize_q(xq)
-        xk, xv = self._quantize_kv(xk, xv)
-
-        # flash implementation
-        use_flash = self.flash and not (
-            self.quantize_score and self.attention_quant != ATTENTION_QUANT_NONE
-        )
-        if use_flash:
-            output = torch.nn.functional.scaled_dot_product_attention(xq, xk, xv, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True)
-        else:
-            # manual implementation
-            scores = torch.matmul(xq, xk.transpose(2, 3)) / math.sqrt(self.head_dim)
-            assert hasattr(self, 'mask')
-            scores = scores + self.mask[:, :, :seqlen, :seqlen]   # (bs, n_local_heads, seqlen, cache_len + seqlen)
-            scores = F.softmax(scores.float(), dim=-1).type_as(xq)
-            scores = self._quantize_score(scores)
-            scores = self.attn_dropout(scores)
-            output = torch.matmul(scores, xv)  # (bs, n_local_heads, seqlen, head_dim)
-        if self.quantize_output and self.attention_quant != ATTENTION_QUANT_NONE:
-            output = self._quantize_attention_tensor(output)
+        output = self.attn_score(xq, xk, xv)
 
         # restore time as batch dimension and concat heads
         output = output.transpose(1, 2).contiguous().view(bsz, seqlen, -1)
