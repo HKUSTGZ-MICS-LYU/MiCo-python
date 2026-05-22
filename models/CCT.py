@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from torch.nn import Module, ModuleList, Linear, Dropout, LayerNorm, Identity, Parameter, init
 
 from MiCoModel import MiCoModel, MiCoFunc
-from models.utils import AttentionScore, LinearAttention
+from MiCoMisc import AttentionScore, LinearAttention
 
 """
 https://github.com/SHI-Labs/Compact-Transformers

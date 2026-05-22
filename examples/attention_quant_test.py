@@ -12,7 +12,8 @@ if PROJECT_ROOT not in sys.path:
 
 from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa447K, TinyViT1M, cct_2, cct_7, model_zoo, tiny_waveformer
 from models.LLaMa import TinyLLaMa2c110M, TinyLLaMa11M, TinyLLaMa28M
-from models.utils import AttentionQuantMixin, set_attention_quantization
+from MiCoMisc import AttentionQuantMixin, set_attention_quantization
+from MiCoUtils import replace_quantize_attn_layers
 from MiCoSmoothQuant import apply_smoothquant, collect_smoothquant_act_scales, find_smoothquant_mappings
 
 QUANT_CHOICES = ["none", "int8", "fp8", "bitnet"]
@@ -45,6 +46,27 @@ def parse_args():
         default=None,
         choices=QUANT_CHOICES,
         help="K/V quantization modes. Defaults to --quant.",
+    )
+    parser.add_argument(
+        "--k-quant",
+        nargs="+",
+        default=None,
+        choices=QUANT_CHOICES,
+        help="K quantization modes. Defaults to --kv-quant or --quant.",
+    )
+    parser.add_argument(
+        "--v-quant",
+        nargs="+",
+        default=None,
+        choices=QUANT_CHOICES,
+        help="V quantization modes. Defaults to --kv-quant or --quant.",
+    )
+    parser.add_argument(
+        "--score-quant",
+        nargs="+",
+        default=None,
+        choices=QUANT_CHOICES,
+        help="Softmax score quantization modes. Defaults to --kv-quant or --quant.",
     )
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--batches", type=int, default=None, help="Limit test batches.")
@@ -79,9 +101,17 @@ def parse_args():
         default=None,
         help='INT reduction dim for V (overrides --int-dim).',
     )
+    parser.add_argument(
+        "--int-dim-score",
+        type=str,
+        default=None,
+        help='INT reduction dim for softmax score (overrides --int-dim).',
+    )
     parser.add_argument("--quantize-score", action="store_true")
     parser.add_argument("--no-quantize-q", action="store_true")
     parser.add_argument("--no-quantize-kv", action="store_true")
+    parser.add_argument("--no-quantize-k", action="store_true")
+    parser.add_argument("--no-quantize-v", action="store_true")
     parser.add_argument("--no-quantize-output", action="store_true")
     parser.add_argument(
         "--synthetic",
@@ -220,19 +250,29 @@ def load_checkpoint_if_available(model, args, device):
 
 
 def count_attention_modules(model):
+    return count_attention_score_modules(model) + count_attention_mixin_modules(model)
+
+
+def count_attention_score_modules(model):
+    return len(model.get_attn_qlayers()) if hasattr(model, "get_attn_qlayers") else 0
+
+
+def count_attention_mixin_modules(model):
     return sum(1 for module in model.modules() if isinstance(module, AttentionQuantMixin))
 
 
 def quant_configs(args):
-    if args.q_quant is None and args.kv_quant is None:
-        return [(quant, quant, quant) for quant in args.quant]
-
     q_quants = args.q_quant if args.q_quant is not None else args.quant
-    kv_quants = args.kv_quant if args.kv_quant is not None else args.quant
+    k_quants = args.k_quant if args.k_quant is not None else (args.kv_quant if args.kv_quant is not None else args.quant)
+    v_quants = args.v_quant if args.v_quant is not None else (args.kv_quant if args.kv_quant is not None else args.quant)
+    score_quants = args.score_quant if args.score_quant is not None else (args.kv_quant if args.kv_quant is not None else args.quant)
     configs = []
     for q_quant in q_quants:
-        for kv_quant in kv_quants:
-            configs.append((f"q={q_quant},kv={kv_quant}", q_quant, kv_quant))
+        for k_quant in k_quants:
+            for v_quant in v_quants:
+                for score_quant in score_quants:
+                    label = f"q={q_quant},k={k_quant},v={v_quant},score={score_quant}"
+                    configs.append((label, q_quant, k_quant, v_quant, score_quant))
     return configs
 
 
@@ -332,37 +372,70 @@ def main():
     int_dim_q = parse_int_dim(args.int_dim_q) if args.int_dim_q is not None else None
     int_dim_k = parse_int_dim(args.int_dim_k) if args.int_dim_k is not None else None
     int_dim_v = parse_int_dim(args.int_dim_v) if args.int_dim_v is not None else None
+    int_dim_score = parse_int_dim(args.int_dim_score) if args.int_dim_score is not None else None
     for variant_name, variant_model in base_variants:
-        for label, q_quant, kv_quant in quant_configs(args):
+        for label, q_quant, k_quant, v_quant, score_quant in quant_configs(args):
             model = copy.deepcopy(variant_model).to(device)
             model.set_qscheme(qscheme)
-            set_attention_quantization(
-                model,
-                quant=kv_quant,
-                q_quant=q_quant,
-                kv_quant=kv_quant,
-                fp8_dtype=args.fp8_dtype,
-                int_dim=int_dim,
-                int_dim_q=int_dim_q,
-                int_dim_k=int_dim_k,
-                int_dim_v=int_dim_v,
-                quantize_q=not args.no_quantize_q,
-                quantize_kv=not args.no_quantize_kv,
-                quantize_score=args.quantize_score,
-                quantize_output=not args.no_quantize_output,
-            )
+            attn_count = count_attention_score_modules(model)
+            if attn_count:
+                replace_quantize_attn_layers(
+                    model,
+                    {
+                        "q": [q_quant] * attn_count,
+                        "k": [k_quant] * attn_count,
+                        "v": [v_quant] * attn_count,
+                        "score": [score_quant] * attn_count,
+                    },
+                    fp8_dtype=args.fp8_dtype,
+                    int_dim=int_dim,
+                    int_dim_q=int_dim_q,
+                    int_dim_k=int_dim_k,
+                    int_dim_v=int_dim_v,
+                    int_dim_score=int_dim_score,
+                    quantize_q=not args.no_quantize_q,
+                    quantize_k=(not args.no_quantize_kv) and (not args.no_quantize_k),
+                    quantize_v=(not args.no_quantize_kv) and (not args.no_quantize_v),
+                    quantize_score=args.quantize_score,
+                )
+            elif count_attention_mixin_modules(model):
+                set_attention_quantization(
+                    model,
+                    quant=score_quant,
+                    q_quant=q_quant,
+                    k_quant=k_quant,
+                    v_quant=v_quant,
+                    score_quant=score_quant,
+                    fp8_dtype=args.fp8_dtype,
+                    int_dim=int_dim,
+                    int_dim_q=int_dim_q,
+                    int_dim_k=int_dim_k,
+                    int_dim_v=int_dim_v,
+                    int_dim_score=int_dim_score,
+                    quantize_q=not args.no_quantize_q,
+                    quantize_k=(not args.no_quantize_kv) and (not args.no_quantize_k),
+                    quantize_v=(not args.no_quantize_kv) and (not args.no_quantize_v),
+                    quantize_score=args.quantize_score,
+                    quantize_output=not args.no_quantize_output,
+                )
             result = test_model(model, test_loader, device)
             result["Variant"] = variant_name
             result["Quant"] = label
             result["QQuant"] = q_quant
-            result["KVQuant"] = kv_quant
+            result["KQuant"] = k_quant
+            result["VQuant"] = v_quant
+            result["ScoreQuant"] = score_quant
             results.append(result)
             print(f"{variant_name}/{label}: {result}")
 
     print("\nSummary")
-    print(f"{'Variant':<8} {'QQuant':<8} {'KVQuant':<8} {'TestLoss':>12} {'TestAcc':>12}")
+    print(f"{'Variant':<8} {'QQuant':<8} {'KQuant':<8} {'VQuant':<8} {'Score':<8} {'TestLoss':>12} {'TestAcc':>12}")
     for result in results:
-        print(f"{result['Variant']:<8} {result['QQuant']:<8} {result['KVQuant']:<8} {result['TestLoss']:>12.6f} {result['TestAcc']:>12.6f}")
+        print(
+            f"{result['Variant']:<8} {result['QQuant']:<8} {result['KQuant']:<8} "
+            f"{result['VQuant']:<8} {result['ScoreQuant']:<8} "
+            f"{result['TestLoss']:>12.6f} {result['TestAcc']:>12.6f}"
+        )
 
 
 if __name__ == "__main__":

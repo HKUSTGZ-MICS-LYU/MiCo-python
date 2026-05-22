@@ -1,4 +1,12 @@
-from MiCoQLayers import BitLinear, BitConv2d, BitConv1d, BitQLayer
+from MiCoQLayers import (
+    BitLinear,
+    BitConv2d,
+    BitConv1d,
+    BitQLayer,
+    BitAttentionScore,
+    BitLinearAttentionScore,
+)
+from MiCoMisc import AttentionScore, LinearAttentionScore
 
 import copy
 import struct
@@ -23,6 +31,15 @@ def list_quantize_layers(model: nn.Module):
             layers.append(module)
         else:
             layers += list_quantize_layers(module)
+    return layers
+
+def list_quantize_attn_layers(model: nn.Module):
+    layers = []
+    for name, module in model.named_children():
+        if isinstance(module, (AttentionScore, LinearAttentionScore)):
+            layers.append(module)
+        else:
+            layers += list_quantize_attn_layers(module)
     return layers
 
 def list_qlayers(model: nn.Module):
@@ -111,6 +128,161 @@ def replace_quantize_layers(model: nn.Module,
                     use_bias,
                     device)
     
+    return
+
+def _expand_attn_qscheme(attn_qscheme, n_layers):
+    if attn_qscheme is None:
+        raise ValueError("attn_qscheme must be provided")
+    if not isinstance(attn_qscheme, dict):
+        raise TypeError("attn_qscheme must be a dict with q/k/v/score keys")
+
+    def expand(name, default=None):
+        value = attn_qscheme.get(name, default)
+        if value is None:
+            raise ValueError(f"Missing attention qscheme key: {name}")
+        if isinstance(value, (list, tuple)):
+            if len(value) != n_layers:
+                raise ValueError(
+                    f"attention qscheme '{name}' length {len(value)} != {n_layers}"
+                )
+            return list(value)
+        return [value] * n_layers
+
+    return {
+        "q": expand("q"),
+        "k": expand("k", attn_qscheme.get("kv")),
+        "v": expand("v", attn_qscheme.get("kv")),
+        "score": expand("score"),
+    }
+
+
+def replace_quantize_attn_layers(model: nn.Module,
+                                 attn_qscheme: dict,
+                                 quant_aware=False,
+                                 fp8_dtype="e4m3fn",
+                                 int_dim=None,
+                                 int_dim_q=None,
+                                 int_dim_k=None,
+                                 int_dim_v=None,
+                                 int_dim_score=None,
+                                 quantize_q=True,
+                                 quantize_k=True,
+                                 quantize_v=True,
+                                 quantize_score=True):
+    n_layers = len(list_quantize_attn_layers(model))
+    qscheme = _expand_attn_qscheme(attn_qscheme, n_layers)
+    __replace_attn_layer(
+        model,
+        qscheme["q"],
+        qscheme["k"],
+        qscheme["v"],
+        qscheme["score"],
+        quant_aware=quant_aware,
+        fp8_dtype=fp8_dtype,
+        int_dim=int_dim,
+        int_dim_q=int_dim_q,
+        int_dim_k=int_dim_k,
+        int_dim_v=int_dim_v,
+        int_dim_score=int_dim_score,
+        quantize_q=quantize_q,
+        quantize_k=quantize_k,
+        quantize_v=quantize_v,
+        quantize_score=quantize_score,
+    )
+    return
+
+
+def set_attn_qscheme(model: nn.Module, attn_qscheme: dict, **kwargs):
+    replace_quantize_attn_layers(model, attn_qscheme, **kwargs)
+    return
+
+
+def __replace_attn_layer(model: nn.Module,
+                         q_list: list,
+                         k_list: list,
+                         v_list: list,
+                         score_list: list,
+                         quant_aware=False,
+                         fp8_dtype="e4m3fn",
+                         int_dim=None,
+                         int_dim_q=None,
+                         int_dim_k=None,
+                         int_dim_v=None,
+                         int_dim_score=None,
+                         quantize_q=True,
+                         quantize_k=True,
+                         quantize_v=True,
+                         quantize_score=True):
+    for name, module in model.named_children():
+        if isinstance(module, BitAttentionScore):
+            module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
+        elif isinstance(module, BitLinearAttentionScore):
+            module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
+        elif isinstance(module, AttentionScore):
+            setattr(
+                model,
+                name,
+                BitAttentionScore(
+                    module.scale,
+                    q_qtype=q_list.pop(0),
+                    k_qtype=k_list.pop(0),
+                    v_qtype=v_list.pop(0),
+                    score_qtype=score_list.pop(0),
+                    qat=quant_aware,
+                    fp8_dtype=fp8_dtype,
+                    int_dim=int_dim,
+                    int_dim_q=int_dim_q,
+                    int_dim_k=int_dim_k,
+                    int_dim_v=int_dim_v,
+                    int_dim_score=int_dim_score,
+                    quantize_q=quantize_q,
+                    quantize_k=quantize_k,
+                    quantize_v=quantize_v,
+                    quantize_score=quantize_score,
+                )
+            )
+        elif isinstance(module, LinearAttentionScore):
+            setattr(
+                model,
+                name,
+                BitLinearAttentionScore(
+                    module.eps,
+                    q_qtype=q_list.pop(0),
+                    k_qtype=k_list.pop(0),
+                    v_qtype=v_list.pop(0),
+                    score_qtype=score_list.pop(0),
+                    qat=quant_aware,
+                    fp8_dtype=fp8_dtype,
+                    int_dim=int_dim,
+                    int_dim_q=int_dim_q,
+                    int_dim_k=int_dim_k,
+                    int_dim_v=int_dim_v,
+                    int_dim_score=int_dim_score,
+                    quantize_q=quantize_q,
+                    quantize_k=quantize_k,
+                    quantize_v=quantize_v,
+                    quantize_score=quantize_score,
+                )
+            )
+        else:
+            __replace_attn_layer(
+                module,
+                q_list,
+                k_list,
+                v_list,
+                score_list,
+                quant_aware=quant_aware,
+                fp8_dtype=fp8_dtype,
+                int_dim=int_dim,
+                int_dim_q=int_dim_q,
+                int_dim_k=int_dim_k,
+                int_dim_v=int_dim_v,
+                int_dim_score=int_dim_score,
+                quantize_q=quantize_q,
+                quantize_k=quantize_k,
+                quantize_v=quantize_v,
+                quantize_score=quantize_score,
+            )
     return
 
 def __replace_layer(model: nn.Module,
@@ -222,7 +394,9 @@ def get_model_size(model: nn.Module):
     size = 0
     for name, module in model.named_children():
         if isinstance(module, BitQLayer):
-            size += module.weight.numel() * module.qtype
+            params = module.get_params()
+            if params:
+                size += params * module.qtype
         else:
             size += get_model_size(module)
     return size

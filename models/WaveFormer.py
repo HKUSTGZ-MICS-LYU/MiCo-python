@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 from MiCoModel import MiCoModel
-from models.utils import LinearAttentionScore, AttentionScore
+from MiCoMisc import LinearAttentionScore, AttentionScore
 
 """
 Work in Progress: Linear Transformers for TinyML,

@@ -2,6 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.fusion as fusion
 import torch.nn.functional as F
+from MiCoMisc import (
+    AttentionQuantMixin,
+    AttentionScore,
+    LinearAttentionScore,
+    ATTENTION_QUANT_NONE,
+    attention_qtype_to_quant,
+    attention_quant_to_bits,
+)
 
 DEFAULT_W_Q =8
 DEFAULT_ACT_Q = 8
@@ -450,3 +458,211 @@ class BitConv1d(nn.Conv1d, BitQLayer):
         else:
             return F.conv1d(x, w, self.bias, self.stride,
                             self.padding, self.dilation, self.groups)
+
+
+class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
+    layer_type = "AttentionScore"
+
+    def _init_bit_attention(
+        self,
+        q_qtype=DEFAULT_ACT_Q,
+        k_qtype=DEFAULT_W_Q,
+        v_qtype=DEFAULT_W_Q,
+        score_qtype=DEFAULT_ACT_Q,
+        qat=False,
+        fp8_dtype="e4m3fn",
+        int_dim=None,
+        int_dim_q=None,
+        int_dim_k=None,
+        int_dim_v=None,
+        int_dim_score=None,
+        quantize_q=True,
+        quantize_k=True,
+        quantize_v=True,
+        quantize_score=True,
+    ):
+        # Keep BitQLayer's legacy qtype/act_q fields meaningful enough for
+        # generic reporting: qtype tracks K/V-side precision, act_q tracks Q.
+        BitQLayer.__init__(self, qtype=k_qtype, act_q=q_qtype, qat=qat)
+        self.q_qtype = q_qtype
+        self.k_qtype = k_qtype
+        self.v_qtype = v_qtype
+        self.score_qtype = score_qtype
+        self.score_macs = 0
+        self.context_macs = 0
+        self._init_attention_quant(
+            quant=ATTENTION_QUANT_NONE,
+            q_quant=attention_qtype_to_quant(q_qtype),
+            k_quant=attention_qtype_to_quant(k_qtype),
+            v_quant=attention_qtype_to_quant(v_qtype),
+            score_quant=attention_qtype_to_quant(score_qtype),
+            fp8_dtype=fp8_dtype,
+            int_dim=int_dim,
+            int_dim_q=int_dim_q,
+            int_dim_k=int_dim_k,
+            int_dim_v=int_dim_v,
+            int_dim_score=int_dim_score,
+            quantize_q=quantize_q,
+            quantize_kv=True,
+            quantize_k=quantize_k,
+            quantize_v=quantize_v,
+            quantize_score=quantize_score,
+            quantize_output=False,
+        )
+
+    def set_attn_qscheme(self, q_qtype=None, k_qtype=None, v_qtype=None, score_qtype=None):
+        if q_qtype is not None:
+            self.q_qtype = q_qtype
+            self.act_q = q_qtype
+            self.q_attention_quant = attention_qtype_to_quant(q_qtype)
+        if k_qtype is not None:
+            self.k_qtype = k_qtype
+            self.qtype = k_qtype
+            self.k_attention_quant = attention_qtype_to_quant(k_qtype)
+            self.kv_attention_quant = self.k_attention_quant
+        if v_qtype is not None:
+            self.v_qtype = v_qtype
+            self.v_attention_quant = attention_qtype_to_quant(v_qtype)
+        if score_qtype is not None:
+            self.score_qtype = score_qtype
+            self.score_attention_quant = attention_qtype_to_quant(score_qtype)
+
+    def get_params(self):
+        return 0
+
+    def save_qweight(self):
+        self.qw = None
+        self.qw_scale = None
+
+    def export_qweight(self):
+        return {
+            "LayerType": self.layer_type,
+            "QType": self.q_qtype,
+            "KType": self.k_qtype,
+            "VType": self.v_qtype,
+            "ScoreType": self.score_qtype,
+        }
+
+    def get_mac(self):
+        return self.score_macs + self.context_macs
+
+    def get_bops(self):
+        return (
+            self.score_macs * attention_quant_to_bits(self.q_attention_quant) *
+            attention_quant_to_bits(self.k_attention_quant)
+            + self.context_macs * attention_quant_to_bits(self.score_attention_quant) *
+            attention_quant_to_bits(self.v_attention_quant)
+        )
+
+
+class BitAttentionScore(AttentionScore, _BitAttentionBase):
+    def __init__(self, scale: float,
+                 q_qtype=DEFAULT_ACT_Q,
+                 k_qtype=DEFAULT_W_Q,
+                 v_qtype=DEFAULT_W_Q,
+                 score_qtype=DEFAULT_ACT_Q,
+                 qat=False,
+                 fp8_dtype="e4m3fn",
+                 int_dim=None,
+                 int_dim_q=None,
+                 int_dim_k=None,
+                 int_dim_v=None,
+                 int_dim_score=None,
+                 quantize_q=True,
+                 quantize_k=True,
+                 quantize_v=True,
+                 quantize_score=True):
+        AttentionScore.__init__(self, scale)
+        self.layer_type = "AttentionScore"
+        self._init_bit_attention(
+            q_qtype=q_qtype,
+            k_qtype=k_qtype,
+            v_qtype=v_qtype,
+            score_qtype=score_qtype,
+            qat=qat,
+            fp8_dtype=fp8_dtype,
+            int_dim=int_dim,
+            int_dim_q=int_dim_q,
+            int_dim_k=int_dim_k,
+            int_dim_v=int_dim_v,
+            int_dim_score=int_dim_score,
+            quantize_q=quantize_q,
+            quantize_k=quantize_k,
+            quantize_v=quantize_v,
+            quantize_score=quantize_score,
+        )
+
+    def forward(self, q, k, v):
+        B, H, I, Fdim = q.shape
+        J = k.shape[2]
+        self.score_macs = B * H * I * J * Fdim
+        self.context_macs = B * H * I * J * Fdim
+        self.macs = self.score_macs + self.context_macs
+        self.layer_features = [B, H, I, J, Fdim]
+
+        q = self._quantize_q(q)
+        k = self._quantize_k(k)
+        v = self._quantize_v(v)
+        score = torch.einsum("bhif, bhjf->bhij", q, k) / self.scale
+        score = F.softmax(score, dim=-1)
+        score = self._quantize_score(score)
+        return torch.einsum("bhij, bhjf->bihf", score, v)
+
+
+class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
+    def __init__(self, eps=1e-6,
+                 q_qtype=DEFAULT_ACT_Q,
+                 k_qtype=DEFAULT_W_Q,
+                 v_qtype=DEFAULT_W_Q,
+                 score_qtype=DEFAULT_ACT_Q,
+                 qat=False,
+                 fp8_dtype="e4m3fn",
+                 int_dim=None,
+                 int_dim_q=None,
+                 int_dim_k=None,
+                 int_dim_v=None,
+                 int_dim_score=None,
+                 quantize_q=True,
+                 quantize_k=True,
+                 quantize_v=True,
+                 quantize_score=True):
+        LinearAttentionScore.__init__(self, eps)
+        self.layer_type = "LinearAttentionScore"
+        self._init_bit_attention(
+            q_qtype=q_qtype,
+            k_qtype=k_qtype,
+            v_qtype=v_qtype,
+            score_qtype=score_qtype,
+            qat=qat,
+            fp8_dtype=fp8_dtype,
+            int_dim=int_dim,
+            int_dim_q=int_dim_q,
+            int_dim_k=int_dim_k,
+            int_dim_v=int_dim_v,
+            int_dim_score=int_dim_score,
+            quantize_q=quantize_q,
+            quantize_k=quantize_k,
+            quantize_v=quantize_v,
+            quantize_score=quantize_score,
+        )
+
+    def forward(self, q, k, v):
+        B, H, N, D = q.shape
+        M = v.shape[-1]
+        self.score_macs = B * H * N * D * M
+        self.context_macs = B * H * N * D * M
+        self.macs = self.score_macs + self.context_macs
+        self.layer_features = [B, H, N, D, M]
+
+        q = F.elu(q) + 1
+        k = F.elu(k) + 1
+        q = self._quantize_q(q)
+        k = self._quantize_k(k)
+        v = self._quantize_v(v)
+
+        context = torch.einsum("bhnd,bhnm->bhdm", k, v)
+        context = self._quantize_score(context)
+        k_sum = k.sum(dim=2)
+        num = torch.einsum("bhnd,bhdm->bnhm", q, context)
+        den = torch.einsum("bhnd,bhd->bnh", q, k_sum).unsqueeze(-1)
+        return num / (den + self.eps)

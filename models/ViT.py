@@ -6,7 +6,7 @@ from torch.nn import functional as F
 from tqdm import tqdm
 
 from MiCoModel import MiCoModel, MiCoFunc
-from models.utils import AttentionScore, LinearAttention
+from MiCoMisc import AttentionScore, LinearAttention
 
 class Im2Word(nn.Module):
     def __init__(self, img_size:int=32, patch:int=8):

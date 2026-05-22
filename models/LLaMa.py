@@ -12,7 +12,7 @@ from tqdm import tqdm
 
 
 from MiCoModel import MiCoModel
-from models.utils import ATTENTION_QUANT_NONE, AttentionQuantMixin
+from MiCoMisc import ATTENTION_QUANT_NONE, AttentionQuantMixin
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -162,11 +162,10 @@ class Attention(nn.Module, AttentionQuantMixin):
         else:
             # manual implementation
             scores = torch.matmul(xq, xk.transpose(2, 3)) / math.sqrt(self.head_dim)
-            if self.quantize_score and self.attention_quant != ATTENTION_QUANT_NONE:
-                scores = self._quantize_attention_tensor(scores)
             assert hasattr(self, 'mask')
             scores = scores + self.mask[:, :, :seqlen, :seqlen]   # (bs, n_local_heads, seqlen, cache_len + seqlen)
             scores = F.softmax(scores.float(), dim=-1).type_as(xq)
+            scores = self._quantize_score(scores)
             scores = self.attn_dropout(scores)
             output = torch.matmul(scores, xv)  # (bs, n_local_heads, seqlen, head_dim)
         if self.quantize_output and self.attention_quant != ATTENTION_QUANT_NONE:

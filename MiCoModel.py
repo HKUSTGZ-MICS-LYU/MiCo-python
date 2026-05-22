@@ -7,9 +7,11 @@ from typing import List, Tuple
 from tqdm import tqdm
 from MiCoUtils import (
     list_quantize_layers, 
+    list_quantize_attn_layers,
     set_to_qforward, 
     unset_qforward,
     replace_quantize_layers,
+    replace_quantize_attn_layers,
     replace_quantize_layers_torchao)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -28,6 +30,13 @@ class MiCoModel(nn.Module):
     def get_qlayers(self):
         return list_quantize_layers(self)
 
+    def get_attn_qlayers(self):
+        return list_quantize_attn_layers(self)
+
+    @property
+    def n_attn_layers(self):
+        return len(self.get_attn_qlayers())
+
     def set_qscheme(self, qscheme, qat=False, device=device, group_size = 1, use_bias = True, use_norm = False):
         replace_quantize_layers(self, qscheme[0], qscheme[1], 
                                 quant_aware=qat, group_size=group_size,
@@ -38,6 +47,12 @@ class MiCoModel(nn.Module):
     
     def unset_qscheme(self):
         unset_qforward(self)
+        return
+
+    def set_attn_qscheme(self, attn_qscheme, qat=False, **kwargs):
+        replace_quantize_attn_layers(self, attn_qscheme, quant_aware=qat, **kwargs)
+        if not qat:
+            set_to_qforward(self)
         return
 
     def set_qscheme_torchao(self, qscheme,device=device):
