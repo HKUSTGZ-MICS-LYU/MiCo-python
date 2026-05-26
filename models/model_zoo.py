@@ -11,6 +11,7 @@ from models import (
     ViT, TinyViT1M, CCT, cct_2, cct_7,
     HARMLP,
     tiny_kws_transformer,
+    kwt_from_name,
     tiny_waveformer,
     ParameterGolfBaseline,
     ParameterGolfSmall,
@@ -124,6 +125,13 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = speechcommands(
             shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS,
             preprocess="mfcc")
+    elif name in ["kwt", "tiny_kwt", "kwt-1", "kwt-2", "kwt-3"]:
+        from MiCoDatasets import speechcommands
+
+        model = kwt_from_name(name, n_classes=35).to(device)
+        train_loader, test_loader = speechcommands(
+            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS,
+            preprocess="mfcc")
     elif name == "waveformer":
         from MiCoDatasets import speechcommands
 
@@ -215,6 +223,11 @@ def list_zoo_models():
         "m5_kws",
         "dscnn_kws",
         "kws_transformer",
+        "kwt",
+        "tiny_kwt",
+        "kwt-1",
+        "kwt-2",
+        "kwt-3",
         "parameter_golf_gpt",
         "parameter_golf_gpt_baseline",
         "parameter_golf_gpt_small",
