@@ -472,6 +472,9 @@ class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
         score_qtype=DEFAULT_ACT_Q,
         qat=False,
         bitnet_scale="max",
+        bitnet_group_size=None,
+        bitnet_group_dim=-1,
+        bitnet_clip=None,
         fp8_dtype="e4m3fn",
         int_dim=None,
         int_dim_q=None,
@@ -482,6 +485,8 @@ class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
         quantize_k=True,
         quantize_v=True,
         quantize_score=True,
+        llama_kv_quant_scope="all",
+        llama_kv_group_size=32,
     ):
         # Keep BitQLayer's legacy qtype/act_q fields meaningful enough for
         # generic reporting: qtype tracks K/V-side precision, act_q tracks Q.
@@ -499,6 +504,9 @@ class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
             v_quant=attention_qtype_to_quant(v_qtype),
             score_quant=attention_qtype_to_quant(score_qtype),
             bitnet_scale=bitnet_scale,
+            bitnet_group_size=bitnet_group_size,
+            bitnet_group_dim=bitnet_group_dim,
+            bitnet_clip=bitnet_clip,
             fp8_dtype=fp8_dtype,
             int_dim=int_dim,
             int_dim_q=int_dim_q,
@@ -511,6 +519,8 @@ class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
             quantize_v=quantize_v,
             quantize_score=quantize_score,
             quantize_output=False,
+            llama_kv_quant_scope=llama_kv_quant_scope,
+            llama_kv_group_size=llama_kv_group_size,
         )
 
     def set_attn_qscheme(self, q_qtype=None, k_qtype=None, v_qtype=None, score_qtype=None):
@@ -550,11 +560,22 @@ class _BitAttentionBase(BitQLayer, AttentionQuantMixin):
         return self.score_macs + self.context_macs
 
     def get_bops(self):
+        k_bits = attention_quant_to_bits(self.k_attention_quant)
+        v_bits = attention_quant_to_bits(self.v_attention_quant)
+        if self.layer_type == "LLaMaAttention" and self.llama_kv_quant_scope == "current_group":
+            group_size = max(int(self.llama_kv_group_size), 1)
+            seq_len = self.layer_features[2] if len(self.layer_features) > 2 else 0
+            if seq_len > 0:
+                quant_pairs = sum((idx // group_size) * group_size + 1 for idx in range(seq_len))
+                total_pairs = seq_len * (seq_len + 1) / 2
+                quant_ratio = min(max(quant_pairs / max(total_pairs, 1), 0.0), 1.0)
+                k_bits = quant_ratio * k_bits + (1.0 - quant_ratio) * 32
+                v_bits = quant_ratio * v_bits + (1.0 - quant_ratio) * 32
         return (
             self.score_macs * attention_quant_to_bits(self.q_attention_quant) *
-            attention_quant_to_bits(self.k_attention_quant)
+            k_bits
             + self.context_macs * attention_quant_to_bits(self.score_attention_quant) *
-            attention_quant_to_bits(self.v_attention_quant)
+            v_bits
         )
 
 
@@ -566,6 +587,9 @@ class BitAttentionScore(AttentionScore, _BitAttentionBase):
                  score_qtype=DEFAULT_ACT_Q,
                  qat=False,
                  bitnet_scale="max",
+                 bitnet_group_size=None,
+                 bitnet_group_dim=-1,
+                 bitnet_clip=None,
                  fp8_dtype="e4m3fn",
                  int_dim=None,
                  int_dim_q=None,
@@ -575,7 +599,9 @@ class BitAttentionScore(AttentionScore, _BitAttentionBase):
                  quantize_q=True,
                  quantize_k=True,
                  quantize_v=True,
-                 quantize_score=True):
+                 quantize_score=True,
+                 llama_kv_quant_scope="all",
+                 llama_kv_group_size=32):
         AttentionScore.__init__(self, scale)
         self.layer_type = "AttentionScore"
         self._init_bit_attention(
@@ -585,6 +611,9 @@ class BitAttentionScore(AttentionScore, _BitAttentionBase):
             score_qtype=score_qtype,
             qat=qat,
             bitnet_scale=bitnet_scale,
+            bitnet_group_size=bitnet_group_size,
+            bitnet_group_dim=bitnet_group_dim,
+            bitnet_clip=bitnet_clip,
             fp8_dtype=fp8_dtype,
             int_dim=int_dim,
             int_dim_q=int_dim_q,
@@ -595,6 +624,8 @@ class BitAttentionScore(AttentionScore, _BitAttentionBase):
             quantize_k=quantize_k,
             quantize_v=quantize_v,
             quantize_score=quantize_score,
+            llama_kv_quant_scope=llama_kv_quant_scope,
+            llama_kv_group_size=llama_kv_group_size,
         )
 
     def forward(self, q, k, v):
@@ -622,6 +653,9 @@ class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
                  score_qtype=DEFAULT_ACT_Q,
                  qat=False,
                  bitnet_scale="max",
+                 bitnet_group_size=None,
+                 bitnet_group_dim=-1,
+                 bitnet_clip=None,
                  fp8_dtype="e4m3fn",
                  int_dim=None,
                  int_dim_q=None,
@@ -631,7 +665,9 @@ class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
                  quantize_q=True,
                  quantize_k=True,
                  quantize_v=True,
-                 quantize_score=True):
+                 quantize_score=True,
+                 llama_kv_quant_scope="all",
+                 llama_kv_group_size=32):
         LinearAttentionScore.__init__(self, eps)
         self.layer_type = "LinearAttentionScore"
         self._init_bit_attention(
@@ -641,6 +677,9 @@ class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
             score_qtype=score_qtype,
             qat=qat,
             bitnet_scale=bitnet_scale,
+            bitnet_group_size=bitnet_group_size,
+            bitnet_group_dim=bitnet_group_dim,
+            bitnet_clip=bitnet_clip,
             fp8_dtype=fp8_dtype,
             int_dim=int_dim,
             int_dim_q=int_dim_q,
@@ -651,6 +690,8 @@ class BitLinearAttentionScore(LinearAttentionScore, _BitAttentionBase):
             quantize_k=quantize_k,
             quantize_v=quantize_v,
             quantize_score=quantize_score,
+            llama_kv_quant_scope=llama_kv_quant_scope,
+            llama_kv_group_size=llama_kv_group_size,
         )
 
     def forward(self, q, k, v):
@@ -684,6 +725,9 @@ class BitLLaMaAttention(LLaMaAttention, _BitAttentionBase):
                  score_qtype=DEFAULT_ACT_Q,
                  qat=False,
                  bitnet_scale="max",
+                 bitnet_group_size=None,
+                 bitnet_group_dim=-1,
+                 bitnet_clip=None,
                  fp8_dtype="e4m3fn",
                  int_dim=None,
                  int_dim_q=None,
@@ -693,7 +737,9 @@ class BitLLaMaAttention(LLaMaAttention, _BitAttentionBase):
                  quantize_q=True,
                  quantize_k=True,
                  quantize_v=True,
-                 quantize_score=True):
+                 quantize_score=True,
+                 llama_kv_quant_scope="all",
+                 llama_kv_group_size=32):
         LLaMaAttention.__init__(
             self,
             head_dim=head_dim,
@@ -709,6 +755,9 @@ class BitLLaMaAttention(LLaMaAttention, _BitAttentionBase):
             score_qtype=score_qtype,
             qat=qat,
             bitnet_scale=bitnet_scale,
+            bitnet_group_size=bitnet_group_size,
+            bitnet_group_dim=bitnet_group_dim,
+            bitnet_clip=bitnet_clip,
             fp8_dtype=fp8_dtype,
             int_dim=int_dim,
             int_dim_q=int_dim_q,
@@ -719,6 +768,8 @@ class BitLLaMaAttention(LLaMaAttention, _BitAttentionBase):
             quantize_k=quantize_k,
             quantize_v=quantize_v,
             quantize_score=quantize_score,
+            llama_kv_quant_scope=llama_kv_quant_scope,
+            llama_kv_group_size=llama_kv_group_size,
         )
 
     def forward(self, q, k, v):
@@ -730,12 +781,77 @@ class BitLLaMaAttention(LLaMaAttention, _BitAttentionBase):
         self.layer_features = [B, H, I, J, Fdim]
 
         q = self._quantize_q(q)
-        k = self._quantize_k(k)
-        v = self._quantize_v(v)
-        scores = torch.matmul(q, k.transpose(2, 3)) / (self.head_dim ** 0.5)
+        if self.llama_kv_quant_scope == "current_group":
+            scores, v_for_context = self._forward_current_group_kv(q, k, v, I, J)
+        else:
+            k = self._quantize_k(k)
+            v_for_context = self._quantize_v(v)
+            scores = torch.matmul(q, k.transpose(2, 3))
+        scores = scores / (self.head_dim ** 0.5)
         mask = self.mask[:, :, :I, :J].to(device=scores.device)
         scores = scores + mask
         scores = F.softmax(scores.float(), dim=-1).type_as(q)
         scores = self._quantize_score(scores)
         scores = F.dropout(scores, p=self.dropout, training=self.training)
-        return torch.matmul(scores, v)
+        if isinstance(v_for_context, torch.Tensor):
+            return torch.matmul(scores, v_for_context)
+        return self._matmul_current_group_v(scores, v, v_for_context, I, J)
+
+    def _query_positions(self, I, J, device):
+        start = max(J - I, 0)
+        return torch.arange(start, start + I, device=device)
+
+    def _group_prefix_lengths(self, I, J, device):
+        group_size = max(int(self.llama_kv_group_size), 1)
+        q_pos = self._query_positions(I, J, device)
+        return (q_pos // group_size) * group_size
+
+    def _forward_current_group_kv(self, q, k, v, I, J):
+        prefix_lengths = self._group_prefix_lengths(I, J, q.device).clamp(max=J)
+        max_prefix = int(prefix_lengths.max().item()) if prefix_lengths.numel() > 0 else 0
+
+        if max_prefix <= 0:
+            scores = torch.matmul(q, k.transpose(2, 3))
+            return scores, None
+
+        k_mixed = k
+        if self.quantize_k and self.k_attention_quant != ATTENTION_QUANT_NONE:
+            k_quant = self._quantize_k(k[:, :, :max_prefix, :])
+            k_mixed = torch.cat([k_quant, k[:, :, max_prefix:, :]], dim=2)
+        scores = torch.matmul(q, k_mixed.transpose(2, 3))
+
+        if self.quantize_k and self.k_attention_quant != ATTENTION_QUANT_NONE:
+            key_pos = torch.arange(J, device=q.device).view(1, 1, 1, J)
+            row_prefix = prefix_lengths.view(1, 1, I, 1)
+            fp_mask = (key_pos >= row_prefix) & (key_pos < max_prefix)
+            if fp_mask.any():
+                fp_scores = torch.matmul(q, k[:, :, :max_prefix, :].transpose(2, 3))
+                scores[:, :, :, :max_prefix] = torch.where(
+                    fp_mask[:, :, :, :max_prefix],
+                    fp_scores,
+                    scores[:, :, :, :max_prefix],
+                )
+
+        if not self.quantize_v or self.v_attention_quant == ATTENTION_QUANT_NONE:
+            return scores, v
+        return scores, (self._quantize_v(v[:, :, :max_prefix, :]), prefix_lengths, max_prefix)
+
+    def _matmul_current_group_v(self, scores, v, v_context, I, J):
+        v_quant_prefix, prefix_lengths, max_prefix = v_context
+        output = torch.matmul(scores, v)
+        if max_prefix <= 0:
+            return output
+
+        quant_output = torch.matmul(scores[:, :, :, :max_prefix], v_quant_prefix)
+        fp_prefix_output = torch.matmul(scores[:, :, :, :max_prefix], v[:, :, :max_prefix, :])
+        output = output + quant_output - fp_prefix_output
+
+        key_pos = torch.arange(max_prefix, device=scores.device).view(1, 1, 1, max_prefix)
+        row_prefix = prefix_lengths.view(1, 1, I, 1)
+        fp_mask = key_pos >= row_prefix
+        if fp_mask.any():
+            fp_score = scores[:, :, :, :max_prefix] * fp_mask.to(dtype=scores.dtype)
+            quant_fp_group_output = torch.matmul(fp_score, v_quant_prefix)
+            true_fp_group_output = torch.matmul(fp_score, v[:, :, :max_prefix, :])
+            output = output + true_fp_group_output - quant_fp_group_output
+        return output

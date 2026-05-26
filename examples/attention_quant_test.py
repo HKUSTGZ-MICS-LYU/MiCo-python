@@ -12,11 +12,11 @@ if PROJECT_ROOT not in sys.path:
 
 from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa447K, TinyViT1M, cct_2, cct_7, model_zoo, tiny_waveformer
 from models.LLaMa import TinyLLaMa2c110M, TinyLLaMa11M, TinyLLaMa28M
-from MiCoMisc import AttentionQuantMixin, set_attention_quantization
+from MiCoMisc import AttentionQuantMixin, _normalize_attention_quant, set_attention_quantization
 from MiCoUtils import replace_quantize_attn_layers
 from MiCoSmoothQuant import apply_smoothquant, collect_smoothquant_act_scales, find_smoothquant_mappings
 
-QUANT_CHOICES = ["none", "int8", "fp8", "bitnet"]
+DEFAULT_QUANTS = ["none", "int8", "fp8", "bitnet"]
 
 
 def parse_args():
@@ -29,43 +29,37 @@ def parse_args():
     parser.add_argument(
         "--quant",
         nargs="+",
-        default=["none", "int8", "fp8", "bitnet"],
-        choices=QUANT_CHOICES,
-        help="Default attention quantization modes to test.",
+        default=DEFAULT_QUANTS,
+        help="Default attention quantization modes to test, e.g. none fp8 bitnet int8 int7 int6 int1.",
     )
     parser.add_argument(
         "--q-quant",
         nargs="+",
         default=None,
-        choices=QUANT_CHOICES,
         help="Q quantization modes. Defaults to --quant.",
     )
     parser.add_argument(
         "--kv-quant",
         nargs="+",
         default=None,
-        choices=QUANT_CHOICES,
         help="K/V quantization modes. Defaults to --quant.",
     )
     parser.add_argument(
         "--k-quant",
         nargs="+",
         default=None,
-        choices=QUANT_CHOICES,
         help="K quantization modes. Defaults to --kv-quant or --quant.",
     )
     parser.add_argument(
         "--v-quant",
         nargs="+",
         default=None,
-        choices=QUANT_CHOICES,
         help="V quantization modes. Defaults to --kv-quant or --quant.",
     )
     parser.add_argument(
         "--score-quant",
         nargs="+",
         default=None,
-        choices=QUANT_CHOICES,
         help="Softmax score quantization modes. Defaults to --kv-quant or --quant.",
     )
     parser.add_argument("--batch-size", type=int, default=32)
@@ -77,6 +71,24 @@ def parse_args():
     parser.add_argument("--strict-load", action="store_true")
     parser.add_argument("--device", type=str, default=None)
     parser.add_argument("--fp8-dtype", type=str, default="e4m3fn", choices=["e4m3fn", "e5m2"])
+    parser.add_argument(
+        "--bitnet-scale",
+        type=str,
+        default="max",
+        choices=["max", "mean"],
+        help="Scale mode for bitnet/ternary attention fake quantization.",
+    )
+    parser.add_argument("--bitnet-group-size", type=int, default=None)
+    parser.add_argument("--bitnet-group-dim", type=int, default=-1)
+    parser.add_argument("--bitnet-clip", type=float, default=None)
+    parser.add_argument(
+        "--llama-kv-quant-scope",
+        type=str,
+        default="all",
+        choices=["all", "current_group", "history", "past", "cache", "kivi", "residual"],
+        help="For LLaMa attention, quantize all KV or only closed KV groups.",
+    )
+    parser.add_argument("--llama-kv-group-size", type=int, default=32)
     parser.add_argument(
         "--int-dim",
         type=str,
@@ -107,7 +119,19 @@ def parse_args():
         default=None,
         help='INT reduction dim for softmax score (overrides --int-dim).',
     )
-    parser.add_argument("--quantize-score", action="store_true")
+    parser.add_argument(
+        "--quantize-score",
+        dest="quantize_score",
+        action="store_true",
+        default=None,
+        help="Enable softmax score quantization.",
+    )
+    parser.add_argument(
+        "--no-quantize-score",
+        dest="quantize_score",
+        action="store_false",
+        help="Disable softmax score quantization.",
+    )
     parser.add_argument("--no-quantize-q", action="store_true")
     parser.add_argument("--no-quantize-kv", action="store_true")
     parser.add_argument("--no-quantize-k", action="store_true")
@@ -133,6 +157,31 @@ def parse_int_dim(value):
         return None
     dims = tuple(int(item) for item in value.split(","))
     return dims[0] if len(dims) == 1 else dims
+
+
+def normalize_quant_list(values, arg_name):
+    if values is None:
+        return None
+    normalized = []
+    for value in values:
+        try:
+            normalized.append(_normalize_attention_quant(value))
+        except ValueError as exc:
+            raise ValueError(f"Invalid {arg_name} value '{value}': {exc}") from exc
+    return normalized
+
+
+def normalize_quant_args(args):
+    explicit_score_quant = args.score_quant is not None
+    args.quant = normalize_quant_list(args.quant, "--quant")
+    args.q_quant = normalize_quant_list(args.q_quant, "--q-quant")
+    args.kv_quant = normalize_quant_list(args.kv_quant, "--kv-quant")
+    args.k_quant = normalize_quant_list(args.k_quant, "--k-quant")
+    args.v_quant = normalize_quant_list(args.v_quant, "--v-quant")
+    args.score_quant = normalize_quant_list(args.score_quant, "--score-quant")
+    if args.quantize_score is None:
+        args.quantize_score = explicit_score_quant and any(q != "none" for q in args.score_quant)
+    return args
 
 
 def build_synthetic_model_and_loader(model_name, batch_size, input_len, device):
@@ -332,6 +381,7 @@ def test_model(model, loader, device):
 
 def main():
     args = parse_args()
+    args = normalize_quant_args(args)
     torch.manual_seed(args.seed)
     device = torch.device(
         args.device if args.device is not None else ("cuda" if torch.cuda.is_available() else "cpu")
@@ -346,6 +396,7 @@ def main():
     print(f"Device: {device}")
     print(f"Attention modules: {attention_modules}")
     print(f"Checkpoint: {checkpoint_status}")
+    print(f"Score quantization: {'enabled' if args.quantize_score else 'disabled'}")
     print(f"SmoothQuant: {'compare' if args.compare_smoothquant else ('enabled' if args.smoothquant else 'disabled')}")
     print()
 
@@ -379,14 +430,19 @@ def main():
             model.set_qscheme(qscheme)
             attn_count = count_attention_score_modules(model)
             if attn_count:
+                config = {
+                    "q": [q_quant] * attn_count,
+                    "k": [k_quant] * attn_count,
+                    "v": [v_quant] * attn_count,
+                    "score": [score_quant] * attn_count,
+                }
                 replace_quantize_attn_layers(
                     model,
-                    {
-                        "q": [q_quant] * attn_count,
-                        "k": [k_quant] * attn_count,
-                        "v": [v_quant] * attn_count,
-                        "score": [score_quant] * attn_count,
-                    },
+                    config,
+                    bitnet_scale=args.bitnet_scale,
+                    bitnet_group_size=args.bitnet_group_size,
+                    bitnet_group_dim=args.bitnet_group_dim,
+                    bitnet_clip=args.bitnet_clip,
                     fp8_dtype=args.fp8_dtype,
                     int_dim=int_dim,
                     int_dim_q=int_dim_q,
@@ -397,6 +453,8 @@ def main():
                     quantize_k=(not args.no_quantize_kv) and (not args.no_quantize_k),
                     quantize_v=(not args.no_quantize_kv) and (not args.no_quantize_v),
                     quantize_score=args.quantize_score,
+                    llama_kv_quant_scope=args.llama_kv_quant_scope,
+                    llama_kv_group_size=args.llama_kv_group_size,
                 )
             elif count_attention_mixin_modules(model):
                 set_attention_quantization(
@@ -406,6 +464,10 @@ def main():
                     k_quant=k_quant,
                     v_quant=v_quant,
                     score_quant=score_quant,
+                    bitnet_scale=args.bitnet_scale,
+                    bitnet_group_size=args.bitnet_group_size,
+                    bitnet_group_dim=args.bitnet_group_dim,
+                    bitnet_clip=args.bitnet_clip,
                     fp8_dtype=args.fp8_dtype,
                     int_dim=int_dim,
                     int_dim_q=int_dim_q,
@@ -417,6 +479,8 @@ def main():
                     quantize_v=(not args.no_quantize_kv) and (not args.no_quantize_v),
                     quantize_score=args.quantize_score,
                     quantize_output=not args.no_quantize_output,
+                    llama_kv_quant_scope=args.llama_kv_quant_scope,
+                    llama_kv_group_size=args.llama_kv_group_size,
                 )
             result = test_model(model, test_loader, device)
             result["Variant"] = variant_name

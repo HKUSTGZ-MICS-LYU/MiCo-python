@@ -163,6 +163,9 @@ def replace_quantize_attn_layers(model: nn.Module,
                                  attn_qscheme: dict,
                                  quant_aware=False,
                                  bitnet_scale="max",
+                                 bitnet_group_size=None,
+                                 bitnet_group_dim=-1,
+                                 bitnet_clip=None,
                                  fp8_dtype="e4m3fn",
                                  int_dim=None,
                                  int_dim_q=None,
@@ -172,7 +175,9 @@ def replace_quantize_attn_layers(model: nn.Module,
                                  quantize_q=True,
                                  quantize_k=True,
                                  quantize_v=True,
-                                 quantize_score=True):
+                                 quantize_score=True,
+                                 llama_kv_quant_scope="all",
+                                 llama_kv_group_size=32):
     n_layers = len(list_quantize_attn_layers(model))
     qscheme = _expand_attn_qscheme(attn_qscheme, n_layers)
     __replace_attn_layer(
@@ -183,6 +188,9 @@ def replace_quantize_attn_layers(model: nn.Module,
         qscheme["score"],
         quant_aware=quant_aware,
         bitnet_scale=bitnet_scale,
+        bitnet_group_size=bitnet_group_size,
+        bitnet_group_dim=bitnet_group_dim,
+        bitnet_clip=bitnet_clip,
         fp8_dtype=fp8_dtype,
         int_dim=int_dim,
         int_dim_q=int_dim_q,
@@ -193,6 +201,8 @@ def replace_quantize_attn_layers(model: nn.Module,
         quantize_k=quantize_k,
         quantize_v=quantize_v,
         quantize_score=quantize_score,
+        llama_kv_quant_scope=llama_kv_quant_scope,
+        llama_kv_group_size=llama_kv_group_size,
     )
     return
 
@@ -209,6 +219,9 @@ def __replace_attn_layer(model: nn.Module,
                          score_list: list,
                          quant_aware=False,
                          bitnet_scale="max",
+                         bitnet_group_size=None,
+                         bitnet_group_dim=-1,
+                         bitnet_clip=None,
                          fp8_dtype="e4m3fn",
                          int_dim=None,
                          int_dim_q=None,
@@ -218,7 +231,9 @@ def __replace_attn_layer(model: nn.Module,
                          quantize_q=True,
                          quantize_k=True,
                          quantize_v=True,
-                         quantize_score=True):
+                         quantize_score=True,
+                         llama_kv_quant_scope="all",
+                         llama_kv_group_size=32):
     def module_device(module):
         for tensor in list(module.parameters(recurse=False)) + list(module.buffers(recurse=False)):
             return tensor.device
@@ -233,10 +248,64 @@ def __replace_attn_layer(model: nn.Module,
     for name, module in model.named_children():
         if isinstance(module, BitAttentionScore):
             module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
+            module.set_quantization(
+                bitnet_scale=bitnet_scale,
+                bitnet_group_size=bitnet_group_size,
+                bitnet_group_dim=bitnet_group_dim,
+                bitnet_clip=bitnet_clip,
+                fp8_dtype=fp8_dtype,
+                int_dim=int_dim,
+                int_dim_q=int_dim_q,
+                int_dim_k=int_dim_k,
+                int_dim_v=int_dim_v,
+                int_dim_score=int_dim_score,
+                quantize_q=quantize_q,
+                quantize_k=quantize_k,
+                quantize_v=quantize_v,
+                quantize_score=quantize_score,
+                llama_kv_quant_scope=llama_kv_quant_scope,
+                llama_kv_group_size=llama_kv_group_size,
+            )
         elif isinstance(module, BitLinearAttentionScore):
             module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
+            module.set_quantization(
+                bitnet_scale=bitnet_scale,
+                bitnet_group_size=bitnet_group_size,
+                bitnet_group_dim=bitnet_group_dim,
+                bitnet_clip=bitnet_clip,
+                fp8_dtype=fp8_dtype,
+                int_dim=int_dim,
+                int_dim_q=int_dim_q,
+                int_dim_k=int_dim_k,
+                int_dim_v=int_dim_v,
+                int_dim_score=int_dim_score,
+                quantize_q=quantize_q,
+                quantize_k=quantize_k,
+                quantize_v=quantize_v,
+                quantize_score=quantize_score,
+                llama_kv_quant_scope=llama_kv_quant_scope,
+                llama_kv_group_size=llama_kv_group_size,
+            )
         elif isinstance(module, BitLLaMaAttention):
             module.set_attn_qscheme(q_list.pop(0), k_list.pop(0), v_list.pop(0), score_list.pop(0))
+            module.set_quantization(
+                bitnet_scale=bitnet_scale,
+                bitnet_group_size=bitnet_group_size,
+                bitnet_group_dim=bitnet_group_dim,
+                bitnet_clip=bitnet_clip,
+                fp8_dtype=fp8_dtype,
+                int_dim=int_dim,
+                int_dim_q=int_dim_q,
+                int_dim_k=int_dim_k,
+                int_dim_v=int_dim_v,
+                int_dim_score=int_dim_score,
+                quantize_q=quantize_q,
+                quantize_k=quantize_k,
+                quantize_v=quantize_v,
+                quantize_score=quantize_score,
+                llama_kv_quant_scope=llama_kv_quant_scope,
+                llama_kv_group_size=llama_kv_group_size,
+            )
         elif isinstance(module, AttentionScore):
             new_module = BitAttentionScore(
                     module.scale,
@@ -246,6 +315,9 @@ def __replace_attn_layer(model: nn.Module,
                     score_qtype=score_list.pop(0),
                     qat=quant_aware,
                     bitnet_scale=bitnet_scale,
+                    bitnet_group_size=bitnet_group_size,
+                    bitnet_group_dim=bitnet_group_dim,
+                    bitnet_clip=bitnet_clip,
                     fp8_dtype=fp8_dtype,
                     int_dim=int_dim,
                     int_dim_q=int_dim_q,
@@ -256,6 +328,8 @@ def __replace_attn_layer(model: nn.Module,
                     quantize_k=quantize_k,
                     quantize_v=quantize_v,
                     quantize_score=quantize_score,
+                    llama_kv_quant_scope=llama_kv_quant_scope,
+                    llama_kv_group_size=llama_kv_group_size,
                 )
             setattr(model, name, maybe_to_source_device(new_module, module))
         elif isinstance(module, LinearAttentionScore):
@@ -267,6 +341,9 @@ def __replace_attn_layer(model: nn.Module,
                     score_qtype=score_list.pop(0),
                     qat=quant_aware,
                     bitnet_scale=bitnet_scale,
+                    bitnet_group_size=bitnet_group_size,
+                    bitnet_group_dim=bitnet_group_dim,
+                    bitnet_clip=bitnet_clip,
                     fp8_dtype=fp8_dtype,
                     int_dim=int_dim,
                     int_dim_q=int_dim_q,
@@ -277,6 +354,8 @@ def __replace_attn_layer(model: nn.Module,
                     quantize_k=quantize_k,
                     quantize_v=quantize_v,
                     quantize_score=quantize_score,
+                    llama_kv_quant_scope=llama_kv_quant_scope,
+                    llama_kv_group_size=llama_kv_group_size,
                 )
             setattr(model, name, maybe_to_source_device(new_module, module))
         elif isinstance(module, LLaMaAttention):
@@ -290,6 +369,9 @@ def __replace_attn_layer(model: nn.Module,
                     score_qtype=score_list.pop(0),
                     qat=quant_aware,
                     bitnet_scale=bitnet_scale,
+                    bitnet_group_size=bitnet_group_size,
+                    bitnet_group_dim=bitnet_group_dim,
+                    bitnet_clip=bitnet_clip,
                     fp8_dtype=fp8_dtype,
                     int_dim=int_dim,
                     int_dim_q=int_dim_q,
@@ -300,6 +382,8 @@ def __replace_attn_layer(model: nn.Module,
                     quantize_k=quantize_k,
                     quantize_v=quantize_v,
                     quantize_score=quantize_score,
+                    llama_kv_quant_scope=llama_kv_quant_scope,
+                    llama_kv_group_size=llama_kv_group_size,
                 )
             setattr(model, name, maybe_to_source_device(new_module, module))
         else:
@@ -311,6 +395,9 @@ def __replace_attn_layer(model: nn.Module,
                 score_list,
                 quant_aware=quant_aware,
                 bitnet_scale=bitnet_scale,
+                bitnet_group_size=bitnet_group_size,
+                bitnet_group_dim=bitnet_group_dim,
+                bitnet_clip=bitnet_clip,
                 fp8_dtype=fp8_dtype,
                 int_dim=int_dim,
                 int_dim_q=int_dim_q,
@@ -321,6 +408,8 @@ def __replace_attn_layer(model: nn.Module,
                 quantize_k=quantize_k,
                 quantize_v=quantize_v,
                 quantize_score=quantize_score,
+                llama_kv_quant_scope=llama_kv_quant_scope,
+                llama_kv_group_size=llama_kv_group_size,
             )
     return
 

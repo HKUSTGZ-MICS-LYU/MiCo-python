@@ -114,13 +114,48 @@ def fake_quant_int8(x, dim=None, eps=1e-8):
     return fake_quant_int(x, qbit=8, dim=dim, eps=eps)
 
 
+def _normalize_reduce_dims(dim):
+    if dim is None:
+        return None
+    if isinstance(dim, int):
+        return (dim,)
+    return tuple(dim)
+
+
+def _apply_group_quant(x, quant_fn, dim=-1, group_size=None):
+    if group_size is None or group_size <= 0:
+        return quant_fn(x)
+
+    dim = dim % x.dim()
+    size = x.size(dim)
+    if size % group_size != 0:
+        raise ValueError(f"group_size {group_size} must divide tensor dim {dim} size {size}")
+
+    num_groups = size // group_size
+    shape = list(x.shape)
+    shape[dim] = num_groups
+    shape.insert(dim + 1, group_size)
+    grouped = x.reshape(shape)
+    quantized = quant_fn(grouped, reduce_dim=dim + 1)
+    return quantized.reshape_as(x)
+
+
+def _clip_by_mean_abs(x, alpha=None, dim=None, eps=1e-8):
+    if alpha is None or alpha <= 0:
+        return x
+    reduce_dims = _normalize_reduce_dims(dim)
+    if reduce_dims is None:
+        limit = alpha * x.detach().abs().mean().clamp(min=eps)
+    else:
+        limit = alpha * x.detach().abs().mean(dim=reduce_dims, keepdim=True).clamp(min=eps)
+    return x.clamp(-limit, limit)
+
+
 def fake_quant_int(x, qbit=8, dim=None, eps=1e-8):
-    reduce_dims = dim
+    reduce_dims = _normalize_reduce_dims(dim)
     if dim is None:
         max_abs = x.detach().abs().amax()
     else:
-        if isinstance(dim, int):
-            reduce_dims = (dim,)
         max_abs = x.detach().abs().amax(dim=reduce_dims, keepdim=True)
 
     qbit = int(qbit)
@@ -149,11 +184,26 @@ def _normalize_bitnet_scale(bitnet_scale):
     return bitnet_scale
 
 
-def fake_quant_bitnet(x, dim=None, eps=1e-8, mode="max"):
-    reduce_dims = dim
+def fake_quant_bitnet(x, dim=None, eps=1e-8, mode="max",
+                      group_size=None, group_dim=-1, clip_alpha=None):
+    x = _clip_by_mean_abs(x, alpha=clip_alpha, dim=dim, eps=eps)
+
+    def quant_fn(tensor, reduce_dim=None):
+        return _fake_quant_bitnet_impl(
+            tensor,
+            dim=reduce_dim if reduce_dim is not None else dim,
+            eps=eps,
+            mode=mode,
+        )
+
+    if group_size is not None and group_size > 0:
+        return _apply_group_quant(x, quant_fn, dim=group_dim, group_size=group_size)
+    return quant_fn(x)
+
+
+def _fake_quant_bitnet_impl(x, dim=None, eps=1e-8, mode="max"):
+    reduce_dims = _normalize_reduce_dims(dim)
     mode = _normalize_bitnet_scale(mode)
-    if dim is not None and isinstance(dim, int):
-        reduce_dims = (dim,)
 
     if mode == "max":
         if dim is None:
@@ -185,6 +235,9 @@ class AttentionQuantMixin:
         v_quant=None,
         score_quant=None,
         bitnet_scale="max",
+        bitnet_group_size=None,
+        bitnet_group_dim=-1,
+        bitnet_clip=None,
         fp8_dtype="e4m3fn",
         int_dim=None,
         int_dim_q=None,
@@ -197,6 +250,8 @@ class AttentionQuantMixin:
         quantize_v=True,
         quantize_score=False,
         quantize_output=False,
+        llama_kv_quant_scope="all",
+        llama_kv_group_size=32,
     ):
         self.attention_quant = _normalize_attention_quant(quant)
         self.q_attention_quant = _normalize_attention_quant(q_quant if q_quant is not None else quant)
@@ -208,6 +263,9 @@ class AttentionQuantMixin:
             score_quant if score_quant is not None else quant
         )
         self.bitnet_scale = _normalize_bitnet_scale(bitnet_scale)
+        self.bitnet_group_size = bitnet_group_size
+        self.bitnet_group_dim = bitnet_group_dim
+        self.bitnet_clip = bitnet_clip
         self.fp8_dtype = fp8_dtype
         self.int_dim = int_dim
         self.int_dim_q = int_dim_q if int_dim_q is not None else int_dim
@@ -220,6 +278,8 @@ class AttentionQuantMixin:
         self.quantize_kv = quantize_kv
         self.quantize_score = quantize_score
         self.quantize_output = quantize_output
+        self.llama_kv_quant_scope = self._normalize_llama_kv_quant_scope(llama_kv_quant_scope)
+        self.llama_kv_group_size = int(llama_kv_group_size)
 
     def set_quantization(
         self,
@@ -230,6 +290,9 @@ class AttentionQuantMixin:
         v_quant=None,
         score_quant=None,
         bitnet_scale=None,
+        bitnet_group_size=None,
+        bitnet_group_dim=None,
+        bitnet_clip=None,
         fp8_dtype=None,
         int_dim=None,
         int_dim_q=None,
@@ -242,6 +305,8 @@ class AttentionQuantMixin:
         quantize_v=None,
         quantize_score=None,
         quantize_output=None,
+        llama_kv_quant_scope=None,
+        llama_kv_group_size=None,
     ):
         self.attention_quant = _normalize_attention_quant(quant)
         self.q_attention_quant = _normalize_attention_quant(q_quant if q_quant is not None else quant)
@@ -254,6 +319,12 @@ class AttentionQuantMixin:
         )
         if bitnet_scale is not None:
             self.bitnet_scale = _normalize_bitnet_scale(bitnet_scale)
+        if bitnet_group_size is not None:
+            self.bitnet_group_size = bitnet_group_size
+        if bitnet_group_dim is not None:
+            self.bitnet_group_dim = bitnet_group_dim
+        if bitnet_clip is not None:
+            self.bitnet_clip = bitnet_clip
         if fp8_dtype is not None:
             self.fp8_dtype = fp8_dtype
         if int_dim is not None:
@@ -284,6 +355,29 @@ class AttentionQuantMixin:
             self.quantize_score = quantize_score
         if quantize_output is not None:
             self.quantize_output = quantize_output
+        if llama_kv_quant_scope is not None:
+            self.llama_kv_quant_scope = self._normalize_llama_kv_quant_scope(llama_kv_quant_scope)
+        if llama_kv_group_size is not None:
+            self.llama_kv_group_size = int(llama_kv_group_size)
+
+    @staticmethod
+    def _normalize_llama_kv_quant_scope(scope):
+        scope = str(scope).lower()
+        aliases = {
+            "all": "all",
+            "full": "all",
+            "history": "current_group",
+            "past": "current_group",
+            "cache": "current_group",
+            "cached": "current_group",
+            "current_group": "current_group",
+            "group": "current_group",
+            "kivi": "current_group",
+            "residual": "current_group",
+        }
+        if scope not in aliases:
+            raise ValueError(f"Unsupported LLaMa KV quantization scope: {scope}")
+        return aliases[scope]
 
     def _quantize_attention_tensor(self, x, int_dim=None, quant=None):
         quant = self.attention_quant if quant is None else _normalize_attention_quant(quant)
@@ -291,7 +385,14 @@ class AttentionQuantMixin:
         if int_bits is not None:
             return fake_quant_int(x, qbit=int_bits, dim=int_dim)
         if quant == ATTENTION_QUANT_BITNET:
-            return fake_quant_bitnet(x, dim=int_dim, mode=self.bitnet_scale)
+            return fake_quant_bitnet(
+                x,
+                dim=int_dim,
+                mode=self.bitnet_scale,
+                group_size=self.bitnet_group_size,
+                group_dim=self.bitnet_group_dim,
+                clip_alpha=self.bitnet_clip,
+            )
         if quant == ATTENTION_QUANT_FP8:
             return fake_quant_fp8(x, self.fp8_dtype)
         return x
@@ -418,12 +519,16 @@ class LinearAttention(nn.Module):
 
 def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8,
                                q_quant=None, kv_quant=None, k_quant=None, v_quant=None,
-                               score_quant=None, bitnet_scale="max", fp8_dtype="e4m3fn",
+                               score_quant=None, bitnet_scale="max",
+                               bitnet_group_size=None, bitnet_group_dim=-1,
+                               bitnet_clip=None, fp8_dtype="e4m3fn",
                                int_dim=None, int_dim_q=None, int_dim_k=None,
                                int_dim_v=None, int_dim_score=None,
                                quantize_q=True, quantize_kv=True,
                                quantize_k=True, quantize_v=True,
-                               quantize_score=False, quantize_output=False):
+                               quantize_score=False, quantize_output=False,
+                               llama_kv_quant_scope=None,
+                               llama_kv_group_size=None):
     for module in model.modules():
         if isinstance(module, AttentionQuantMixin):
             module.set_quantization(
@@ -434,6 +539,9 @@ def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8,
                 v_quant=v_quant,
                 score_quant=score_quant,
                 bitnet_scale=bitnet_scale,
+                bitnet_group_size=bitnet_group_size,
+                bitnet_group_dim=bitnet_group_dim,
+                bitnet_clip=bitnet_clip,
                 fp8_dtype=fp8_dtype,
                 int_dim=int_dim,
                 int_dim_q=int_dim_q,
@@ -446,5 +554,7 @@ def set_attention_quantization(model, quant=ATTENTION_QUANT_INT8,
                 quantize_v=quantize_v,
                 quantize_score=quantize_score,
                 quantize_output=quantize_output,
+                llama_kv_quant_scope=llama_kv_quant_scope,
+                llama_kv_group_size=llama_kv_group_size,
             )
     return model

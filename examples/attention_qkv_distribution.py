@@ -14,7 +14,7 @@ if PROJECT_ROOT not in sys.path:
 
 from models import cct_2, cct_7, tiny_waveformer
 from models import model_zoo
-from models.utils import AttentionScore, LinearAttentionScore
+from MiCoMisc import AttentionScore, LinearAttentionScore
 
 
 ATTENTION_SCORE_TYPES = (AttentionScore, LinearAttentionScore)
