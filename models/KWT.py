@@ -1,7 +1,7 @@
 import torch
 from torch import nn
 
-from MiCoModel import MiCoModel
+from MiCoModel import MiCoModel, MiCoFunc
 from models.ViT import TransformerEncoder
 
 
@@ -30,6 +30,14 @@ class KWTPatchEmbedding(nn.Module):
         self.num_patches = self.grid_size[0] * self.grid_size[1]
         patch_dim = channels * self.patch_res[0] * self.patch_res[1]
         self.proj = nn.Linear(patch_dim, dim)
+        self.MiCo_func = MiCoFunc(
+            "MiCo_kwt_patch_embedding_{dtype}",
+            input_names=[
+                "to_patch_embedding_proj_weight",
+                "to_patch_embedding_proj_bias",
+            ],
+            params=[self.patch_res[0], self.patch_res[1]],
+        )
 
     def forward(self, x):
         p_h, p_w = self.patch_res
@@ -107,13 +115,14 @@ class KWT(MiCoModel):
             nn.Linear(dim, num_classes),
         )
         self.n_layers = len(self.get_qlayers())
+        self.default_dataset = "SPEECHCOMMANDS_2D"
 
     def forward(self, x):
         x = self.to_patch_embedding(x)
         b, n, _ = x.shape
 
         cls_tokens = self.cls_token.repeat(b, 1, 1)
-        x = torch.cat((cls_tokens, x), dim=1)
+        x = torch.cat([cls_tokens, x], dim=1)
         x = x + self.pos_embedding[:, : n + 1]
         x = self.dropout(x)
 
@@ -172,10 +181,10 @@ def tiny_kwt(n_classes: int = 35):
         input_res=(64, 81),
         patch_res=(64, 1),
         num_classes=n_classes,
-        mlp_dim=128,
-        dim=64,
+        mlp_dim=256,
+        dim=128,
         heads=4,
-        depth=2,
+        depth=4,
         dropout=0.1,
         emb_dropout=0.1,
         pre_norm=True,

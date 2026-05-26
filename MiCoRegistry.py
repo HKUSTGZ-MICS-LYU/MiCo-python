@@ -35,6 +35,12 @@ import torch.nn.functional as F
 from MiCoQLayers import BitConv1d, BitConv2d, BitLinear
 
 
+try:
+    from models.KWT import KWTPatchEmbedding
+except ImportError:
+    KWTPatchEmbedding = None
+
+
 class MiCoOpRegistry:
     """
     Registry for PyTorch operation handlers.
@@ -165,6 +171,24 @@ def handle_getitem(codegen, n, out, input_names, input_args):
         return
 
     index = input_args[1]
+    if out.dim() == 3 and isinstance(index, tuple) and len(index) == 2:
+        first, second = index
+        is_full_first = isinstance(first, slice) and first.start is None and first.stop is None and first.step is None
+        is_prefix_second = (
+            isinstance(second, slice)
+            and second.start is None
+            and second.step is None
+        )
+        if is_full_first and is_prefix_second:
+            src_name = input_names[0]
+            src_tensor = codegen.tensors[src_name]["tensor"]
+            codegen.add_connect_tensor(n.name, out)
+            if tuple(src_tensor.shape) == tuple(out.shape):
+                codegen.add_forward_call("MiCo_CONNECT", out, n.name, [src_name])
+            else:
+                codegen.add_forward_call("MiCo_getitem3d_prefix_{dtype}", out, n.name, [src_name])
+            return
+
     if out.dim() == 2 and isinstance(index, tuple) and len(index) == 2 and isinstance(index[1], int):
         # ViT class-token extraction: x[:, idx, :]
         codegen.add_uninitialized_tensor(n.name, out)
@@ -380,6 +404,59 @@ def handle_cat(codegen, n, out, input_names, input_args):
 # ============================================================================
 # Module Handlers
 # ============================================================================
+
+if KWTPatchEmbedding is not None:
+    @MiCoOpRegistry.register_module(KWTPatchEmbedding)
+    def handle_kwt_patch_embedding_module(codegen, n, out, module, input_names):
+        """Handler for KWT patch extraction plus projection."""
+        layer_name = n.name
+        input_name = input_names[0]
+        weight_name = f"{layer_name}_proj_weight"
+        bias_name = f"{layer_name}_proj_bias"
+
+        if isinstance(module.proj, BitLinear):
+            patch_dim = module.channels * module.patch_res[0] * module.patch_res[1]
+            patches_name = f"{layer_name}_patches"
+            patches = torch.empty(
+                (out.shape[0], module.num_patches, patch_dim),
+                dtype=out.dtype,
+                device=out.device,
+            )
+            codegen.add_uninitialized_tensor(patches_name, patches)
+            codegen.add_forward_call(
+                "MiCo_kwt_patch_extract_{dtype}",
+                patches,
+                patches_name,
+                [input_name],
+                [module.patch_res[0], module.patch_res[1]],
+            )
+
+            codegen.add_uninitialized_tensor(layer_name, out)
+            codegen.add_initialized_tensor(weight_name, module.proj.weight, quant=module.proj.qtype, scale=module.proj.qw_scale)
+            codegen.add_initialized_tensor(bias_name, module.proj.bias)
+            codegen.add_forward_call(
+                "MiCo_bitlinear3d_{dtype}",
+                out,
+                layer_name,
+                [patches_name, weight_name, bias_name],
+                [round(module.proj.qtype), round(module.proj.act_q), codegen.align_to],
+            )
+            return
+
+        input_names.append(weight_name)
+        input_names.append(bias_name)
+
+        codegen.add_uninitialized_tensor(layer_name, out)
+        codegen.add_initialized_tensor(weight_name, module.proj.weight)
+        codegen.add_initialized_tensor(bias_name, module.proj.bias)
+        codegen.add_forward_call(
+            "MiCo_kwt_patch_embedding_{dtype}",
+            out,
+            layer_name,
+            input_names,
+            [module.patch_res[0], module.patch_res[1]],
+        )
+
 
 def _maybe_insert_simple_rmsnorm(codegen, layer_name, module, input_names):
     """Insert simple RMSNorm before quantized layer input when requested."""
