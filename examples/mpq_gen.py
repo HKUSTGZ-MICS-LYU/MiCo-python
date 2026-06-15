@@ -87,6 +87,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("model_name", type=str, nargs="?")
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument(
+        "--num-workers",
+        type=int,
+        default=None,
+        help="Override model_zoo DataLoader worker count. Use 0 in restricted sandboxes.",
+    )
     parser.add_argument("--list-models", action="store_true")
 
     parser.add_argument("--ckpt", type=str, default=None)
@@ -139,6 +145,9 @@ def main():
 
     if args.fuse and args.fuse_seq:
         raise ValueError("Please use only one of --fuse or --fuse-seq.")
+
+    if args.num_workers is not None:
+        model_zoo.NUM_WORKERS = args.num_workers
 
     model, _, test_loader = model_zoo.from_zoo(
         args.model_name, shuffle=False, batch_size=args.batch_size

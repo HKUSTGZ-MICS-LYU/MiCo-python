@@ -37,7 +37,10 @@ class MiCoModel(nn.Module):
     def n_attn_layers(self):
         return len(self.get_attn_qlayers())
 
-    def set_qscheme(self, qscheme, qat=False, device=device, group_size = 1, use_bias = True, use_norm = False):
+    def set_qscheme(self, qscheme, qat=False, device=None, group_size = 1, use_bias = True, use_norm = False):
+        if device is None:
+            device = self.current_device()
+        self.to(device)
         replace_quantize_layers(self, qscheme[0], qscheme[1], 
                                 quant_aware=qat, group_size=group_size,
                                 device=device, use_bias=use_bias, use_norm=use_norm)
@@ -55,7 +58,10 @@ class MiCoModel(nn.Module):
             set_to_qforward(self)
         return
 
-    def set_qscheme_torchao(self, qscheme,device=device):
+    def set_qscheme_torchao(self, qscheme, device=None):
+        if device is None:
+            device = self.current_device()
+        self.to(device)
         unset_qforward(self)
         replace_quantize_layers_torchao(self, qscheme[0], qscheme[1], device=device)
         return
@@ -63,14 +69,20 @@ class MiCoModel(nn.Module):
     def torchao_autoquant(self, example_input: torch.Tensor):
         raise NotImplementedError("autoquant was removed in torchao 0.17.0. Use set_qscheme_torchao() instead.")
 
+    def current_device(self):
+        for tensor in list(self.parameters()) + list(self.buffers()):
+            return tensor.device
+        return device
+
     def test(self, test_loader):
         self.eval()
+        run_device = self.current_device()
         criterion = torch.nn.CrossEntropyLoss()
         test_loss = []
         test_total, test_correct = 0, 0
         with torch.no_grad():
             for i, (images, labels) in enumerate(test_loader):
-                x, y = images.to(device), labels.to(device)
+                x, y = images.to(run_device), labels.to(run_device)
                 output = self.forward(x)
                 _, predicted = torch.max(output.data, 1)
                 loss = criterion(output, y)
@@ -86,6 +98,7 @@ class MiCoModel(nn.Module):
                    warmup_epochs = 0, warmup_lr = 1e-6):
         optimizer = torch.optim.Adam(self.parameters(), lr=lr)
         criterion = torch.nn.CrossEntropyLoss()
+        run_device = self.current_device()
         warmup_epochs = max(0, int(warmup_epochs))
         warmup_epochs = min(warmup_epochs, max(0, n_epoch - 1))
         use_warmup = scheduler == "cosine" and warmup_epochs > 0
@@ -118,14 +131,14 @@ class MiCoModel(nn.Module):
 
             train_loss = []
             train_total, train_correct = 0, 0
-            loss = torch.tensor(np.inf)
+            loss = torch.tensor(np.inf, device=run_device)
             # Training
             self.train()
             loop = tqdm(enumerate(train_loader), total=len(train_loader), 
                         disable=not verbose)
             
             for i, (images, labels) in loop:
-                x, y = images.to(device), labels.to(device)
+                x, y = images.to(run_device), labels.to(run_device)
                 optimizer.zero_grad()
                 output = self(x)
                 _, predicted = torch.max(output.data, 1)
@@ -147,7 +160,7 @@ class MiCoModel(nn.Module):
             test_total, test_correct = 0, 0
             with torch.no_grad():
                 for i, (images, labels) in enumerate(test_loader):
-                    x, y = images.to(device), labels.to(device)
+                    x, y = images.to(run_device), labels.to(run_device)
                     output = self.forward(x)
                     _, predicted = torch.max(output.data, 1)
                     loss = criterion(output, y)

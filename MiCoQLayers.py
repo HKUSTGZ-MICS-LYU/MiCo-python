@@ -41,6 +41,7 @@ def activation_nquant_2d(x: torch.Tensor, qbit = 8):
     if qbit == 1:
         x_absmean = torch.mean(x.abs(), dim=(-2,-1), keepdim=True)
         y = x.sign() * x_absmean
+        y = torch.where(y == 0.0, -x_absmean, y)
     elif qbit < 2: # Ternary quantization
         x_absmean = torch.mean(x.abs(), dim=(-2,-1), keepdim=True)
         scale = 1.0 / x_absmean.clamp_(min=1e-5)
@@ -140,7 +141,7 @@ def weight_quantnb(w: torch.Tensor, qbit = 8, mode = "max"):
 def weight_quantnb_group(w: torch.Tensor, qbit: int = 8, mode: str = "max",
                          dim: int = -1, group_size: int = 32, return_expanded: bool = True):
     """
-    Group-wise symmetric quantization for qbit >= 2.
+    Group-wise weight quantization for qbit >= 1.
     - dim: dimension to group over
     - group_size: number of contiguous elements per group along 'dim'
     - mode: "max" (per-group max) for qbit > 2, otherwise "mean"
@@ -149,7 +150,7 @@ def weight_quantnb_group(w: torch.Tensor, qbit: int = 8, mode: str = "max",
       u: integer-quantized weights (same shape as w)
       inv_scale: inverse scale tensor (broadcastable to w if return_expanded=True)
     """
-    assert qbit > 1, "qbit should be larger than 1"
+    assert qbit >= 1, "qbit should be larger than or equal to 1"
     assert isinstance(group_size, int) and group_size > 0, "group_size must be a positive int"
 
     # Normalize dim to positive index
@@ -166,16 +167,25 @@ def weight_quantnb_group(w: torch.Tensor, qbit: int = 8, mode: str = "max",
     x = w.reshape(new_shape)
 
     reduce_dim = dim + 1  # the 'group_size' axis
-    if (mode == "max") and (qbit > 2):
+    if qbit == 1:
+        denom = x.abs().mean(dim=reduce_dim, keepdim=True)
+        scale = 1.0 / denom.clamp(min=1e-5)
+        u_group = x.sign()
+    elif 1 < qbit < 2:
+        denom = x.abs().mean(dim=reduce_dim, keepdim=True)
+        scale = 1.0 / denom.clamp(min=1e-5)
+        u_group = (x * scale).round().clamp_(-1, 1)
+    elif (mode == "max") and (qbit > 2):
         denom = x.abs().amax(dim=reduce_dim, keepdim=True)
+        scale = (2**(qbit - 1) - 1) / denom.clamp(min=1e-5)
+        u_group = (x * scale).round().clamp_(-(2**(qbit - 1)), 2**(qbit - 1) - 1)
     elif (mode == "mean") or (qbit <= 2):
         denom = x.abs().mean(dim=reduce_dim, keepdim=True)
+        scale = (2**(qbit - 1) - 1) / denom.clamp(min=1e-5)
+        u_group = (x * scale).round().clamp_(-(2**(qbit - 1)), 2**(qbit - 1) - 1)
     else:
         raise ValueError("Invalid mode")
 
-    scale = (2**(qbit - 1) - 1) / denom.clamp(min=1e-5)
-
-    u_group = (x * scale).round().clamp_(-(2**(qbit - 1)), 2**(qbit - 1) - 1)
     u = u_group.reshape_as(w)
 
     inv_scale_group = 1.0 / scale
@@ -264,6 +274,19 @@ class BitQLayer:
     
     def save_qweight(self):
         self.qw, self.qw_scale = self._weight_quant_impl(self.weight.data)
+
+    def qweight(self):
+        if self.qw is None or self.qw_scale is None:
+            self.save_qweight()
+        if self.qw.device != self.weight.device:
+            self.qw = self.qw.to(self.weight.device)
+        if self.qw_scale.device != self.weight.device:
+            self.qw_scale = self.qw_scale.to(self.weight.device)
+        return self.qw * self.qw_scale
+
+    def ste_weight_quant(self):
+        w = self.weight
+        return w + (self.weight_quant(w) - w).detach()
     
     def export_qweight(self):
         return {
@@ -315,14 +338,16 @@ class BitLinear(nn.Linear, BitQLayer):
             x_norm = SimpleRMSNorm(self.in_features)(x) if self.use_norm else x
             x_norm = HadamardTransform()(x) if self.haramard else x_norm
             x_quant = x_norm + (self.act_quant(x_norm) - x_norm).detach()
-            w_quant = w + (self.weight_quant(w) - w).detach()
+            w_quant = self.ste_weight_quant()
             y = F.linear(x_quant, w_quant, bias=self.bias)
             return y
         elif self.qforward is True:
             # Forward with Post Training Quantization (PTQ)
             # Only for inference
-            qx = self.act_quant(x)
-            y = F.linear(qx, self.qw * self.qw_scale, bias=self.bias)
+            x_norm = SimpleRMSNorm(self.in_features)(x) if self.use_norm else x
+            x_norm = HadamardTransform()(x) if self.haramard else x_norm
+            qx = self.act_quant(x_norm)
+            y = F.linear(qx, self.qweight(), bias=self.bias)
             return y
         else:
             return F.linear(x, w, bias=self.bias)
@@ -387,15 +412,16 @@ class BitConv2d(nn.Conv2d, BitQLayer):
             # Using Straight-Through-Estimator (STE) 
             x_norm = self.rmsnorm(x) if self.use_norm else x
             x_quant = x_norm + (activation_nquant_2d(x_norm, self.act_q) - x_norm).detach()
-            w_quant = w + (self.weight_quant(w) - w).detach()
+            w_quant = self.ste_weight_quant()
             y = F.conv2d(x_quant, w_quant, self.bias, self.stride, self.padding, 
                         self.dilation, self.groups)
             return y
         elif self.qforward:
             # Forward with Post Training Quantization (PTQ)
             # Only for inference
-            qx = activation_nquant_2d(x, self.act_q)
-            y = F.conv2d(qx, self.qw * self.qw_scale, self.bias, self.stride, self.padding, 
+            x_norm = self.rmsnorm(x) if self.use_norm else x
+            qx = activation_nquant_2d(x_norm, self.act_q)
+            y = F.conv2d(qx, self.qweight(), self.bias, self.stride, self.padding, 
                         self.dilation, self.groups)
             return y
         else:
@@ -449,12 +475,13 @@ class BitConv1d(nn.Conv1d, BitQLayer):
         if self.qat:
             x_norm = self.rmsnorm(x) if self.use_norm else x
             x_quant = x_norm + (activation_nquant(x_norm, self.act_q) - x_norm).detach()
-            w_quant = w + (self.weight_quant(w) - w).detach()
+            w_quant = self.ste_weight_quant()
             return F.conv1d(x_quant, w_quant, self.bias, self.stride,
                             self.padding, self.dilation, self.groups)
         elif self.qforward is True:
-            qx = activation_nquant(x, self.act_q)
-            return F.conv1d(qx, self.qw * self.qw_scale, self.bias,
+            x_norm = self.rmsnorm(x) if self.use_norm else x
+            qx = activation_nquant(x_norm, self.act_q)
+            return F.conv1d(qx, self.qweight(), self.bias,
                             self.stride, self.padding, self.dilation, self.groups)
         else:
             return F.conv1d(x, w, self.bias, self.stride,

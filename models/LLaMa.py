@@ -16,6 +16,67 @@ from MiCoMisc import LLaMaAttention
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+
+def _llama_lr_lambda(step, n_iter, base_lr, warmup_iters=0, warmup_lr=1e-6,
+                     decay="cosine"):
+    warmup_iters = max(0, int(warmup_iters))
+    if warmup_iters > 0 and step < warmup_iters:
+        start_factor = warmup_lr / base_lr if base_lr > 0 else 1.0
+        progress = step / max(1, warmup_iters)
+        return start_factor + (1.0 - start_factor) * progress
+
+    decay_steps = max(1, n_iter - warmup_iters)
+    progress = min(1.0, max(0.0, (step - warmup_iters) / decay_steps))
+    if decay == "linear":
+        return max(0.0, 1.0 - progress)
+    if decay == "cosine":
+        return 0.5 * (1.0 + math.cos(math.pi * progress))
+    raise ValueError(f"Unknown LLaMa LR decay: {decay}")
+
+
+def build_llama_scheduler(optimizer, n_iter, scheduler="step", lr=0.001,
+                          warmup_iters=0, warmup_lr=1e-6):
+    scheduler = (scheduler or "none").lower().replace("_", "-")
+    if scheduler in ["none", "constant"]:
+        return None
+    if scheduler == "step":
+        return torch.optim.lr_scheduler.StepLR(
+            optimizer,
+            step_size=max(1, n_iter // 4),
+            gamma=0.5,
+        )
+    if scheduler == "cosine":
+        return torch.optim.lr_scheduler.CosineAnnealingLR(
+            optimizer,
+            T_max=max(1, n_iter),
+        )
+    if scheduler in ["linear", "linear-decay"]:
+        return torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: _llama_lr_lambda(
+                step, n_iter, lr, decay="linear"
+            ),
+        )
+    if scheduler in ["cosine-warmup", "warmup-cosine", "linear-warmup-cosine"]:
+        return torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: _llama_lr_lambda(
+                step, n_iter, lr, warmup_iters, warmup_lr, decay="cosine"
+            ),
+        )
+    if scheduler in ["linear-warmup", "warmup-linear"]:
+        return torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: _llama_lr_lambda(
+                step, n_iter, lr, warmup_iters, warmup_lr, decay="linear"
+            ),
+        )
+    raise ValueError(
+        f"Scheduler {scheduler} not recognized. "
+        "Choose from none, step, cosine, linear, cosine-warmup, linear-warmup."
+    )
+
+
 @dataclass
 class ModelArgs:
     dim: int = 288
@@ -383,17 +444,24 @@ class Transformer(MiCoModel):
         losses = self.estimate_loss()
         return losses
 
-    def train_loop(self, n_iter, train_loader, test_loader, verbose = False, lr = 0.001, eval_interval = None):
+    def train_loop(self, n_iter, train_loader, test_loader, verbose = False,
+                   lr = 0.001, eval_interval = None, scheduler = "step",
+                   warmup_iters = 0, warmup_lr = 1e-6):
 
         if eval_interval is None:
             eval_interval = max(n_iter // 10, 50)
 
         self.train_loader = train_loader
         self.test_loader = test_loader
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
-                                                    step_size=n_iter//4, 
-                                                    gamma=0.5)
+        optimizer = torch.optim.AdamW(self.parameters(), lr=lr)
+        lr_scheduler = build_llama_scheduler(
+            optimizer,
+            n_iter,
+            scheduler=scheduler,
+            lr=lr,
+            warmup_iters=warmup_iters,
+            warmup_lr=warmup_lr,
+        )
         X, Y = next(self.train_loader)
         iters = tqdm(range(n_iter), disable= not verbose)
         loss = torch.tensor(np.inf)
@@ -404,7 +472,8 @@ class Transformer(MiCoModel):
                 print(f"step {iter_num}:",
                       f"train loss {losses['TrainLoss']:.4f},",
                       f"val loss {losses['TestLoss']:.4f},",
-                      f"val acc {losses['TestAcc']*100:.2f}%")
+                      f"val acc {losses['TestAcc']*100:.2f}%,",
+                      f"lr {optimizer.param_groups[0]['lr']:.2e}")
                 
                 self.checkpoint = {
                     "model": self.state_dict(),
@@ -420,7 +489,8 @@ class Transformer(MiCoModel):
 
             loss.backward()
             optimizer.step()
-            scheduler.step()
+            if lr_scheduler is not None:
+                lr_scheduler.step()
             optimizer.zero_grad(set_to_none=True)
             iter_num += 1
 

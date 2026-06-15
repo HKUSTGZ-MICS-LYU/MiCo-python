@@ -42,7 +42,7 @@ class MiCoEval:
                  lr=0.0001, model_name = "", 
                  objective='ptq_acc',
                  constraint='bops',
-                 linear_group_size = 1,
+                 linear_group_size = 0,
                  output_json='output/json/mico_eval.json') -> None:
         
         self.model = model
@@ -68,8 +68,10 @@ class MiCoEval:
         
         self.set_eval(objective)
         self.set_constraint(constraint)
-        
-        self.fp_acc = self.eval_fp()
+
+        self.fp_res = self.eval_fp()
+        self.fp_acc = self.eval_fp()['TestAcc']
+        self.fp_loss = self.eval_fp()['TestLoss']
         # Initial Conversion and Test
         res = self.eval_f([8]*self.n_layers*2)
         self.baseline_acc = res
@@ -96,6 +98,7 @@ class MiCoEval:
         print("Total Params: ", np.sum(self.layer_params))
         print("INT8 Model Accuracy: ", res)
         print("FP Model Accuracy: ", self.fp_acc)
+        print("FP Model Loss:", self.fp_loss)
         return
     
     def get_layer_info(self):
@@ -325,7 +328,7 @@ class MiCoEval:
 
     def eval_fp(self):
         self.model.unset_qscheme()
-        return self.model.test(self.test_loader)['TestAcc']
+        return self.model.test(self.test_loader)
 
     def eval_ptq_loss(self, scheme: list):
         wq = scheme[:self.n_layers]

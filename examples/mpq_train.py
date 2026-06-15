@@ -11,7 +11,12 @@ argsparse.add_argument("model_name", type=str)
 argsparse.add_argument("epoches", type=int, default=40)
 argsparse.add_argument("--batch-size", type=int, default=32)
 argsparse.add_argument("--lr", type=float, default=0.001)
-argsparse.add_argument("--scheduler", type=str, default="none")
+argsparse.add_argument(
+    "--scheduler",
+    type=str,
+    default="none",
+    help="Non-LLaMa: none/cosine/step/cifar100-step. LLaMa: none/step/cosine/linear/cosine-warmup/linear-warmup.",
+)
 argsparse.add_argument("--warmup-epochs", type=int, default=3)
 argsparse.add_argument("--warmup-lr", type=float, default=1e-6)
 
@@ -34,6 +39,9 @@ if __name__ == "__main__":
                 test_loader=test_loader,
                 lr = lr, 
                 eval_interval = epoches // 2,
+                scheduler = scheduler,
+                warmup_iters = warmup_epochs,
+                warmup_lr = warmup_lr,
                 verbose=True)
     else:
         res = model.train_loop(n_epoch=int(epoches),

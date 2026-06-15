@@ -24,8 +24,8 @@ def parse_args():
         description="Evaluate one model with multiple attention quantization modes."
     )
     parser.add_argument("model_name", type=str)
-    parser.add_argument("--weight-q", type=int, default=8)
-    parser.add_argument("--act-q", type=int, default=8)
+    parser.add_argument("--weight-q", type=float, default=8)
+    parser.add_argument("--act-q", type=float, default=8)
     parser.add_argument(
         "--quant",
         nargs="+",

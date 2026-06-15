@@ -54,7 +54,7 @@ extern size_t model_weight_start[];
 extern size_t model_weight_end[];
 
 // Profiler Timer
-extern long QMATMUL_TIMER, QUANT_TIMER, IM2COL_TIMER;
+extern unsigned long long QMATMUL_TIMER, QUANT_TIMER, IM2COL_TIMER;
 
 typedef struct {{
 {model_struct}
@@ -352,20 +352,20 @@ void model_forward(Model* model) {{
         groups = self.get_benchmark_call_groups()
         total_occurrences = sum(group["count"] for group in groups)
         lines = [
-            f"{indent}long benchmark_total_time = 0;",
+            f"{indent}unsigned long long benchmark_total_time = 0;",
             f"{indent}printf(\"Benchmark Mode: %d unique kernels, %d total occurrences\\n\", {len(groups)}, {total_occurrences});",
         ]
         for idx, group in enumerate(groups):
             escaped_name = group["function_name"].replace("\\", "\\\\").replace('"', '\\"')
             lines += [
-                f"{indent}long benchmark_kernel_time_{idx} = MiCo_time();",
+                f"{indent}unsigned long long benchmark_kernel_time_{idx} = MiCo_time();",
                 f"{indent}{group['call']}",
                 f"{indent}benchmark_kernel_time_{idx} = MiCo_time() - benchmark_kernel_time_{idx};",
-                f"{indent}long benchmark_kernel_estimate_{idx} = benchmark_kernel_time_{idx} * {group['count']};",
+                f"{indent}unsigned long long benchmark_kernel_estimate_{idx} = benchmark_kernel_time_{idx} * {group['count']};",
                 f"{indent}benchmark_total_time += benchmark_kernel_estimate_{idx};",
-                f"{indent}printf(\"Benchmark Kernel {idx}: {escaped_name} occurrences={group['count']} time=%ld estimated=%ld\\n\", benchmark_kernel_time_{idx}, benchmark_kernel_estimate_{idx});",
+                f"{indent}printf(\"Benchmark Kernel {idx}: {escaped_name} occurrences={group['count']} time=%llu estimated=%llu\\n\", benchmark_kernel_time_{idx}, benchmark_kernel_estimate_{idx});",
             ]
-        lines.append(f"{indent}printf(\"Estimated Execution Time: %ld\\n\", benchmark_total_time);")
+        lines.append(f"{indent}printf(\"Estimated Execution Time: %llu\\n\", benchmark_total_time);")
         return lines
     
     def _extract_input_names(self, n: torch.fx.node.Node) -> List[str]:
