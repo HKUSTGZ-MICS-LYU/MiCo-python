@@ -11,7 +11,7 @@ from models import MLP, LeNet, VGG, resnet_alt_8
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
 
-def __test_model_memory(model_class, model_kwargs, input_shape, model_name):
+def _test_model_memory(model_class, model_kwargs, input_shape, model_name):
     """Test memory optimization for a given model."""
     print(f"\n{'='*70}")
     print(f"Testing: {model_name}")
