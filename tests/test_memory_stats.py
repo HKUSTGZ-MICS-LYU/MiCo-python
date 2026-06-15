@@ -11,7 +11,7 @@ from models import MLP, LeNet, VGG, resnet_alt_8
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
 
-def test_model_memory(model_class, model_kwargs, input_shape, model_name):
+def __test_model_memory(model_class, model_kwargs, input_shape, model_name):
     """Test memory optimization for a given model."""
     print(f"\n{'='*70}")
     print(f"Testing: {model_name}")
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     results = []
     
     # Test MLP
-    results.append(test_model_memory(
+    results.append(_test_model_memory(
         MLP,
         {'in_features': 256, 'config': {"Layers": [64, 64, 64, 10]}},
         (1, 256),
@@ -100,7 +100,7 @@ if __name__ == "__main__":
     ))
     
     # Test LeNet
-    results.append(test_model_memory(
+    results.append(_test_model_memory(
         LeNet,
         {'in_channels': 1},
         (1, 1, 28, 28),
@@ -108,7 +108,7 @@ if __name__ == "__main__":
     ))
     
     # Test VGG (smaller version for CIFAR)
-    results.append(test_model_memory(
+    results.append(_test_model_memory(
         VGG,
         {'in_channels': 3, 'num_class': 10},
         (1, 3, 32, 32),
@@ -116,7 +116,7 @@ if __name__ == "__main__":
     ))
     
     # Test ResNet8 (non-sequential with skip connections)
-    results.append(test_model_memory(
+    results.append(_test_model_memory(
         resnet_alt_8,
         {'n_class': 10},
         (1, 3, 32, 32),

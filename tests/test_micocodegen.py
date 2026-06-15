@@ -433,8 +433,8 @@ class TestMiCoCodeGenConversion(unittest.TestCase):
 
         self.assertIn('printf("Benchmark Mode: %d unique kernels, %d total occurrences\\n", 2, 4);', model_h)
         self.assertIn("occurrences=2", model_h)
-        self.assertIn("Estimated Execution Time: %ld", model_h)
-        self.assertNotIn('printf("Execution Time: %ld\\n", profile_time);', model_h)
+        self.assertIn("Estimated Execution Time: %llu", model_h)
+        self.assertNotIn('printf("Execution Time: %llu\\n", profile_time);', model_h)
 
 
 class TestMiCoCodeGenModuleAccess(unittest.TestCase):

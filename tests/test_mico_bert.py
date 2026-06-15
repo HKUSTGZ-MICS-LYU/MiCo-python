@@ -38,6 +38,10 @@ class TestMiCoBERT(unittest.TestCase):
         _, test_loader = local_mlm_text(batch_size=2, max_seq_len=model.params.max_seq_len, num_works=0)
         model.set_qscheme([[8] * model.n_layers, [8] * model.n_layers])
 
+        # Move model to the same device that model.test() will use
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        model = model.to(device)
+
         results = model.test(test_loader, n_eval_batches=1)
 
         self.assertIn("TestLoss", results)
