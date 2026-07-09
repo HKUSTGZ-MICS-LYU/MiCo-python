@@ -7,3 +7,6 @@
 [submodule "project"]
 	path = project
 	url = git@github.com:HKUSTGZ-MICS-LYU/MiCo-SW.git
+[submodule "MiCoTile"]
+	path = MiCoTile
+	url = git@github.com:HKUSTGZ-MICS-LYU/MiCoTile.git
