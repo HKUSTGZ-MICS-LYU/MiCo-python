@@ -42,6 +42,15 @@ argsparse.add_argument("--bb-mu-grid", type=str, default="0.01,0.03,0.05,0.07,0.
 argsparse.add_argument("--bb-lr", type=float, default=1e-3)
 argsparse.add_argument("--bb-gamma-init", type=str, default="6.0",
                        help="Scalar or comma-separated gate initialization, e.g. 6.0 or 0,0,-1,-1")
+argsparse.add_argument("--bb-objective", type=str, default="constrained",
+                       choices=["constrained", "pareto"],
+                       help="constrained uses a target-BOP violation penalty; pareto uses original BB CE + mu * gate regularizer")
+argsparse.add_argument("--bb-constraint-lambda", type=float, default=10.0)
+argsparse.add_argument("--bb-constraint-margin", type=float, default=1.0,
+                       help="Multiplier on target constraint for constrained BB; <1 is stricter")
+argsparse.add_argument("--bb-decode", type=str, default="hard",
+                       choices=["hard", "expected_floor", "expected_nearest"],
+                       help="Decode learned BayesianBits gates into a discrete MiCo scheme")
 argsparse.add_argument("--bb-max-batches", type=int, default=None)
 argsparse.add_argument("--bb-train-weights", type=str, default="auto",
                        choices=["auto", "yes", "no"])
@@ -76,7 +85,12 @@ MODE = args.mode
 EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
 OUTPUT_JSON = args.output_json or f"output/json/{model_name}_search.json"
 QTYPES = None if args.qtypes is None else [int(x) for x in args.qtypes.split(",") if x]
-BB_MU_GRID = [args.bb_mu] if args.bb_mu is not None else [float(x) for x in args.bb_mu_grid.split(",") if x]
+if args.bb_mu is not None:
+    BB_MU_GRID = [args.bb_mu]
+elif args.bb_objective == "constrained":
+    BB_MU_GRID = [0.0]
+else:
+    BB_MU_GRID = [float(x) for x in args.bb_mu_grid.split(",") if x]
 
 if __name__ == "__main__":
 
@@ -150,6 +164,10 @@ if __name__ == "__main__":
                     gamma_init=BB_GAMMA_INIT,
                     max_batches=args.bb_max_batches,
                     train_weights=args.bb_train_weights,
+                    objective=args.bb_objective,
+                    constraint_lambda=args.bb_constraint_lambda,
+                    constraint_margin=args.bb_constraint_margin,
+                    decode_mode=args.bb_decode,
                 )
             else:
                 searcher = RegressionSearcher(

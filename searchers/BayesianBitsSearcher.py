@@ -102,6 +102,16 @@ class OrderedGateQuantizer(nn.Module):
             return list(hard_concrete_sample(self.gamma))
         return list(hard_concrete_eval_gate(self.gamma))
 
+    def prob_on(self):
+        if self.gamma.numel() == 0:
+            return torch.empty(0, device=self.gamma.device)
+        return hard_concrete_prob_on(self.gamma)
+
+    def eval_gates(self):
+        if self.gamma.numel() == 0:
+            return torch.empty(0, device=self.gamma.device)
+        return hard_concrete_eval_gate(self.gamma)
+
     def expected_bit(self):
         if len(self.qtypes) == 1:
             return torch.tensor(float(self.qtypes[0]), device=self.gamma.device)
@@ -126,9 +136,19 @@ class OrderedGateQuantizer(nn.Module):
             prev_on = gate_on
         return reg
 
-    def decode_bit(self):
+    def decode_bit(self, mode="hard"):
+        if mode == "expected_floor":
+            expected = float(self.expected_bit().detach().cpu())
+            candidates = [q for q in self.qtypes if q <= expected + 1e-6]
+            return int(max(candidates) if candidates else self.qtypes[0])
+        if mode == "expected_nearest":
+            expected = float(self.expected_bit().detach().cpu())
+            return int(min(self.qtypes, key=lambda q: (abs(q - expected), q)))
+        if mode != "hard":
+            raise ValueError(f"Unknown BayesianBits decode mode: {mode}")
+
         bit = self.qtypes[0]
-        for gate, next_bit in zip(hard_concrete_eval_gate(self.gamma), self.qtypes[1:]):
+        for gate, next_bit in zip(self.eval_gates(), self.qtypes[1:]):
             if float(gate.item()) < 0.5:
                 break
             bit = next_bit
@@ -162,6 +182,7 @@ class BayesianBitsSearcher(QSearcher):
         objective: str = "constrained",
         constraint_lambda: float = 10.0,
         constraint_margin: float = 1.0,
+        decode_mode: str = "hard",
     ) -> None:
         qtypes = qtypes or [1, 2, 4, 8]
         super().__init__(evaluator, n_inits, qtypes)
@@ -183,6 +204,9 @@ class BayesianBitsSearcher(QSearcher):
         self.objective = objective
         self.constraint_lambda = constraint_lambda
         self.constraint_margin = constraint_margin
+        if decode_mode not in ["hard", "expected_floor", "expected_nearest"]:
+            raise ValueError(f"Unknown BayesianBits decode mode: {decode_mode}")
+        self.decode_mode = decode_mode
         self.candidates = []
         self.device = self._select_device()
 
@@ -244,9 +268,35 @@ class BayesianBitsSearcher(QSearcher):
         return total
 
     def _decode_scheme(self, layers):
-        wq = [layer.bb_weight_quantizer.decode_bit() for layer in layers]
-        aq = [layer.bb_act_quantizer.decode_bit() for layer in layers]
+        wq = [layer.bb_weight_quantizer.decode_bit(self.decode_mode) for layer in layers]
+        aq = [layer.bb_act_quantizer.decode_bit(self.decode_mode) for layer in layers]
         return wq + aq
+
+    def _format_gate_stats(self, layers, attr_name):
+        gammas = []
+        probs = []
+        gates = []
+        expected_bits = []
+        for layer in layers:
+            quantizer = getattr(layer, attr_name)
+            if quantizer.gamma.numel() == 0:
+                continue
+            gammas.append(quantizer.gamma.detach().flatten())
+            probs.append(quantizer.prob_on().detach().flatten())
+            gates.append(quantizer.eval_gates().detach().flatten())
+            expected_bits.append(quantizer.expected_bit().detach().reshape(1))
+        if not gammas:
+            return "no-gates"
+        gamma = torch.cat(gammas).cpu()
+        prob = torch.cat(probs).cpu()
+        gate = torch.cat(gates).cpu()
+        expected = torch.cat(expected_bits).cpu()
+        return (
+            f"gamma[min/mean/max]={gamma.min().item():.3f}/{gamma.mean().item():.3f}/{gamma.max().item():.3f} "
+            f"prob[min/mean/max]={prob.min().item():.3f}/{prob.mean().item():.3f}/{prob.max().item():.3f} "
+            f"hard_on={int(gate.sum().item())}/{gate.numel()} "
+            f"ebit[min/mean/max]={expected.min().item():.3f}/{expected.mean().item():.3f}/{expected.max().item():.3f}"
+        )
 
     def _loss_complexity(self, layers, mu, target_constr):
         bb_reg = self._gate_regularizer(layers)
@@ -321,6 +371,11 @@ class BayesianBitsSearcher(QSearcher):
                 f"BB Epoch Decoded Scheme: {scheme} "
                 f"constraint={scheme_constr} ({scheme_constr / max(max_constr, 1.0):.5f} of max)"
             )
+            # print(
+            #     "BB Gate Stats: "
+            #     f"W {self._format_gate_stats(layers, 'bb_weight_quantizer')} | "
+            #     f"A {self._format_gate_stats(layers, 'bb_act_quantizer')}"
+            # )
 
         scheme = self._decode_scheme(layers)
         return scheme
@@ -345,7 +400,8 @@ class BayesianBitsSearcher(QSearcher):
         for mu in self.mu_grid:
             print(
                 f"BayesianBits Training: mu={mu}, epochs={epochs}, qtypes={self.qtypes}, "
-                f"gate_transitions={self.gate_transitions}, objective={self.objective}, device={self.device}"
+                f"gate_transitions={self.gate_transitions}, objective={self.objective}, "
+                f"decode={self.decode_mode}, device={self.device}"
             )
             scheme = self._train_one_mu(target, mu, epochs, max_constr, target_constr)
             real_constr = self.evaluator.constr(scheme) if constr else None
