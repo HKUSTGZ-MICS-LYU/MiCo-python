@@ -250,6 +250,8 @@ class BitQLayer:
         self.qw_scale = None
         self.macs = None
         self.act_l2 = None
+        self.bb_weight_quantizer = None
+        self.bb_act_quantizer = None
 
     def get_bops(self):
         return self.get_mac() * self.qtype * self.act_q
@@ -337,8 +339,12 @@ class BitLinear(nn.Linear, BitQLayer):
             # Using Straight-Through-Estimator (STE)
             x_norm = SimpleRMSNorm(self.in_features)(x) if self.use_norm else x
             x_norm = HadamardTransform()(x) if self.haramard else x_norm
-            x_quant = x_norm + (self.act_quant(x_norm) - x_norm).detach()
-            w_quant = self.ste_weight_quant()
+            if self.bb_weight_quantizer is not None and self.bb_act_quantizer is not None:
+                x_quant = self.bb_act_quantizer(x_norm)
+                w_quant = self.bb_weight_quantizer(w)
+            else:
+                x_quant = x_norm + (self.act_quant(x_norm) - x_norm).detach()
+                w_quant = self.ste_weight_quant()
             y = F.linear(x_quant, w_quant, bias=self.bias)
             return y
         elif self.qforward is True:
@@ -411,8 +417,12 @@ class BitConv2d(nn.Conv2d, BitQLayer):
             # Forward with Quantization Aware Training (QAT)
             # Using Straight-Through-Estimator (STE) 
             x_norm = self.rmsnorm(x) if self.use_norm else x
-            x_quant = x_norm + (activation_nquant_2d(x_norm, self.act_q) - x_norm).detach()
-            w_quant = self.ste_weight_quant()
+            if self.bb_weight_quantizer is not None and self.bb_act_quantizer is not None:
+                x_quant = self.bb_act_quantizer(x_norm)
+                w_quant = self.bb_weight_quantizer(w)
+            else:
+                x_quant = x_norm + (activation_nquant_2d(x_norm, self.act_q) - x_norm).detach()
+                w_quant = self.ste_weight_quant()
             y = F.conv2d(x_quant, w_quant, self.bias, self.stride, self.padding, 
                         self.dilation, self.groups)
             return y
@@ -474,8 +484,12 @@ class BitConv1d(nn.Conv1d, BitQLayer):
             self.layer_features = [inl, self.in_channels, outc, k]
         if self.qat:
             x_norm = self.rmsnorm(x) if self.use_norm else x
-            x_quant = x_norm + (activation_nquant(x_norm, self.act_q) - x_norm).detach()
-            w_quant = self.ste_weight_quant()
+            if self.bb_weight_quantizer is not None and self.bb_act_quantizer is not None:
+                x_quant = self.bb_act_quantizer(x_norm)
+                w_quant = self.bb_weight_quantizer(w)
+            else:
+                x_quant = x_norm + (activation_nquant(x_norm, self.act_q) - x_norm).detach()
+                w_quant = self.ste_weight_quant()
             return F.conv1d(x_quant, w_quant, self.bias, self.stride,
                             self.padding, self.dilation, self.groups)
         elif self.qforward is True:

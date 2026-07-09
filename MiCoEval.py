@@ -254,7 +254,7 @@ class MiCoEval:
             self.model = from_torch(self.model).to(DEVICE)
         else:
             self.model = self.model.to(DEVICE)
-            ckpt = torch.load(self.pretrained_model, weights_only=False)
+            ckpt = torch.load(self.pretrained_model, weights_only=False, map_location=DEVICE)
             if "model" in ckpt:
                 ckpt = ckpt["model"]
             self.model.load_state_dict(ckpt)

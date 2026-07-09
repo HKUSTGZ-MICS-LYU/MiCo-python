@@ -4,7 +4,10 @@ import argparse
 import random
 import numpy as np
 import os
+import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from matplotlib import pyplot as plt
 
@@ -16,7 +19,8 @@ from tqdm import tqdm
 
 from searchers import (
     RegressionSearcher, BayesSearcher, 
-    NLPSearcher, HAQSearcher, MiCoSearcher
+    NLPSearcher, HAQSearcher, MiCoSearcher,
+    BayesianBitsSearcher,
 )
 
 argsparse = argparse.ArgumentParser()
@@ -30,8 +34,36 @@ argsparse.add_argument("-t", "--trails", type=int, default=5)
 argsparse.add_argument("-m", "--mode", type=str, default="ptq_acc")
 argsparse.add_argument("-e", "--epochs", type=int, default=1)
 argsparse.add_argument("--output-json", type=str, default=None)
+argsparse.add_argument("--qtypes", type=str, default=None,
+                       help="Comma-separated bitwidth search space, e.g. 1,2,4,8 or 4,5,6,7,8")
+argsparse.add_argument("--bb-mu", type=float, default=None,
+                       help="Single BayesianBits regularization strength. Overrides --bb-mu-grid when set.")
+argsparse.add_argument("--bb-mu-grid", type=str, default="0.01,0.03,0.05,0.07,0.1,0.2")
+argsparse.add_argument("--bb-lr", type=float, default=1e-3)
+argsparse.add_argument("--bb-gamma-init", type=str, default="6.0",
+                       help="Scalar or comma-separated gate initialization, e.g. 6.0 or 0,0,-1,-1")
+argsparse.add_argument("--bb-max-batches", type=int, default=None)
+argsparse.add_argument("--bb-train-weights", type=str, default="auto",
+                       choices=["auto", "yes", "no"])
+argsparse.add_argument("--batch-size", type=int, default=32)
+argsparse.add_argument("--num-workers", type=int, default=None,
+                       help="Override model_zoo.NUM_WORKERS for local smoke tests or constrained environments")
 
 args = argsparse.parse_args()
+
+
+def parse_bb_gamma_init(raw_value: str, bitwidths: list):
+    gate_transitions = list(zip(bitwidths[:-1], bitwidths[1:]))
+    n_gates = len(gate_transitions)
+    if "," not in raw_value:
+        return float(raw_value)
+    values = [float(x) for x in raw_value.split(",") if x]
+    if len(values) != n_gates:
+        raise ValueError(
+            f"--bb-gamma-init has {len(values)} values, but qtypes={bitwidths} "
+            f"requires {n_gates} gates for transitions {gate_transitions}"
+        )
+    return values
 
 model_name = args.model_name
 N_INIT = args.init
@@ -43,21 +75,31 @@ TRAILS = args.trails
 MODE = args.mode
 EPOCHS = args.epochs # required for QAT search, ignored for PTQ search
 OUTPUT_JSON = args.output_json or f"output/json/{model_name}_search.json"
+QTYPES = None if args.qtypes is None else [int(x) for x in args.qtypes.split(",") if x]
+BB_MU_GRID = [args.bb_mu] if args.bb_mu is not None else [float(x) for x in args.bb_mu_grid.split(",") if x]
 
 if __name__ == "__main__":
 
-    model, train_loader, test_loader = model_zoo.from_zoo(model_name)
+    if QTYPES is not None:
+        bitwidths = QTYPES
+    elif MODE == "ptq_acc":
+        bitwidths = [4, 5, 6, 7, 8]
+    elif MODE == "qat_acc":
+        bitwidths = [1, 2, 4, 8]
+    else:
+        bitwidths = [4, 5, 6, 7, 8]
+    BB_GAMMA_INIT = parse_bb_gamma_init(args.bb_gamma_init, bitwidths)
+    print("BB Gate Transitions:", list(zip(bitwidths[:-1], bitwidths[1:])))
+
+    if args.num_workers is not None:
+        model_zoo.NUM_WORKERS = args.num_workers
+    model, train_loader, test_loader = model_zoo.from_zoo(model_name, batch_size=args.batch_size)
 
     evaluator = MiCoEval(model, EPOCHS, train_loader, test_loader, 
                          f"output/ckpt/{model_name}.pth",
                          output_json=OUTPUT_JSON)
 
     dim = evaluator.n_layers * 2
-
-    if MODE == "ptq_acc":
-        bitwidths = [4, 5, 6, 7, 8]
-    elif MODE == "qat_acc":
-        bitwidths = [1, 2, 4, 8]
 
     evaluator.set_constraint(CONSTR_TYPE)
 
@@ -101,6 +143,14 @@ if __name__ == "__main__":
                 searcher = HAQSearcher(
                     evaluator, n_inits=N_INIT, qtypes=bitwidths
                     )
+            elif method == "bb":
+                searcher = BayesianBitsSearcher(
+                    evaluator, n_inits=N_INIT, qtypes=bitwidths,
+                    mu_grid=BB_MU_GRID, lr=args.bb_lr,
+                    gamma_init=BB_GAMMA_INIT,
+                    max_batches=args.bb_max_batches,
+                    train_weights=args.bb_train_weights,
+                )
             else:
                 searcher = RegressionSearcher(
                     evaluator, n_inits=N_INIT, qtypes=bitwidths,
