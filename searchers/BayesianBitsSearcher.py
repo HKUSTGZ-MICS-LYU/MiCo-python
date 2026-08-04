@@ -183,6 +183,8 @@ class BayesianBitsSearcher(QSearcher):
         constraint_lambda: float = 10.0,
         constraint_margin: float = 1.0,
         decode_mode: str = "hard",
+        select_mode: str = "best_acc",
+        target_under: float = 0.1,
     ) -> None:
         qtypes = qtypes or [1, 2, 4, 8]
         super().__init__(evaluator, n_inits, qtypes)
@@ -199,14 +201,20 @@ class BayesianBitsSearcher(QSearcher):
         self.max_batches = max_batches
         self.train_weights = train_weights
         self.stochastic = stochastic
-        if objective not in ["constrained", "pareto"]:
+        if objective not in ["constrained", "pareto", "target"]:
             raise ValueError(f"Unknown BayesianBits objective: {objective}")
         self.objective = objective
         self.constraint_lambda = constraint_lambda
         self.constraint_margin = constraint_margin
+        self.target_under = float(target_under)
+        if self.target_under < 0.0 or self.target_under >= 1.0:
+            raise ValueError("target_under must be in [0, 1)")
         if decode_mode not in ["hard", "expected_floor", "expected_nearest"]:
             raise ValueError(f"Unknown BayesianBits decode mode: {decode_mode}")
         self.decode_mode = decode_mode
+        if select_mode not in ["best_acc", "closest_feasible", "closest"]:
+            raise ValueError(f"Unknown BayesianBits select mode: {select_mode}")
+        self.select_mode = select_mode
         self.candidates = []
         self.device = self._select_device()
 
@@ -305,9 +313,19 @@ class BayesianBitsSearcher(QSearcher):
         violation = F.relu(expected_bops / constraint_target - 1.0)
         if self.objective == "pareto":
             return float(mu) * bb_reg, bb_reg, expected_bops, violation
+        if self.objective == "target":
+            ratio = expected_bops / max(float(target_constr), 1.0)
+            target_ratio = 1.0 - 0.5 * self.target_under
+            target_loss = float(self.constraint_lambda) * (ratio - target_ratio).pow(2)
+            target_gap = torch.abs(ratio - target_ratio)
+            complexity_loss = float(mu) * bb_reg + target_loss
+            return complexity_loss, bb_reg, expected_bops, target_gap
 
+        # constrained: bb_reg prevents degenerate gate collapse when under constraint;
+        # penalty adds a hard wall when the constraint is violated.
         penalty = float(self.constraint_lambda) * violation.pow(2)
-        return penalty, bb_reg, expected_bops, violation
+        complexity_loss = float(mu) * bb_reg + penalty
+        return complexity_loss, bb_reg, expected_bops, violation
 
     def _train_one_mu(self, target, mu, epochs, max_constr, target_constr):
         model, layers = self._prepare_model(target)
@@ -359,8 +377,12 @@ class BayesianBitsSearcher(QSearcher):
             expected_bops = self._expected_mico_bops(layers)
             expected_ratio = float((expected_bops / max(max_constr, 1.0)).detach().cpu())
             target_ratio = float((expected_bops / max(float(target_constr), 1.0)).detach().cpu())
-            margin_target = max(float(target_constr) * float(self.constraint_margin), 1.0)
-            violation = max(float((expected_bops / margin_target).detach().cpu()) - 1.0, 0.0)
+            if self.objective == "target":
+                target_center = 1.0 - 0.5 * self.target_under
+                violation = abs(target_ratio - target_center)
+            else:
+                margin_target = max(float(target_constr) * float(self.constraint_margin), 1.0)
+                violation = max(float((expected_bops / margin_target).detach().cpu()) - 1.0, 0.0)
             loss_text = "nan" if last_loss is None else f"{last_loss:.4f}"
             print(
                 f"BB mu={mu} epoch={epoch + 1}/{epochs} loss={loss_text} "
@@ -396,12 +418,16 @@ class BayesianBitsSearcher(QSearcher):
         closest_x = None
         closest_y = None
         closest_gap = None
+        closest_feasible_x = None
+        closest_feasible_y = None
+        closest_feasible_gap = None
 
         for mu in self.mu_grid:
             print(
                 f"BayesianBits Training: mu={mu}, epochs={epochs}, qtypes={self.qtypes}, "
                 f"gate_transitions={self.gate_transitions}, objective={self.objective}, "
-                f"decode={self.decode_mode}, device={self.device}"
+                f"decode={self.decode_mode}, select={self.select_mode}, "
+                f"target_under={self.target_under}, device={self.device}"
             )
             scheme = self._train_one_mu(target, mu, epochs, max_constr, target_constr)
             real_constr = self.evaluator.constr(scheme) if constr else None
@@ -429,7 +455,25 @@ class BayesianBitsSearcher(QSearcher):
                     closest_gap = gap
                     closest_x = scheme
                     closest_y = eval_y
+                if feasible:
+                    feasible_gap = abs(real_constr - constr_value)
+                    if closest_feasible_gap is None or feasible_gap < closest_feasible_gap:
+                        closest_feasible_gap = feasible_gap
+                        closest_feasible_x = scheme
+                        closest_feasible_y = eval_y
             self.best_trace.append(final_y if final_y is not None else eval_y)
+
+        if constr and self.select_mode == "closest":
+            final_x = closest_x
+            final_y = closest_y
+        elif constr and self.select_mode == "closest_feasible":
+            if closest_feasible_x is not None:
+                final_x = closest_feasible_x
+                final_y = closest_feasible_y
+            else:
+                print("Warning: no feasible BayesianBits candidate found. Returning closest constraint candidate.")
+                final_x = closest_x
+                final_y = closest_y
 
         if final_x is None:
             if closest_x is None:

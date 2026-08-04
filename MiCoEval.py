@@ -240,6 +240,7 @@ class MiCoEval:
             'qat_acc': self.eval_qat,
             'torchao_acc': self.eval_torchao,
             'bops': self.eval_bops,
+            'cbops': self.eval_cbops,
             'size': self.eval_size,
             'latency_host': lambda scheme: self.eval_latency(scheme, 'host'),
             'latency_bitfusion': lambda scheme: self.eval_latency(scheme, 'bitfusion'),
@@ -371,13 +372,25 @@ class MiCoEval:
         return bops
     
     def eval_cbops(self, scheme: list):
-        cbops = 0
+        return float(np.sum(self.eval_cbops_feat(scheme)))
+
+    def eval_cbops_feat(self, scheme: list, layer_type=None):
+        """Return aggregated 3D CBOPs features: [BMACS, W_LOADS, A_LOADS]."""
         wq = np.array(scheme[:self.n_layers])
         aq = np.array(scheme[self.n_layers:])
-        max_q = np.max([aq, wq], axis=0)
-        load_q = aq + wq
-        cbops = np.dot(max_q+load_q, self.layer_macs)
-        return cbops
+        macs = np.array(self.layer_macs)
+
+        if layer_type is not None:
+            mask = np.array([isinstance(layer, layer_type) for layer in self.layers])
+            wq = wq[mask]
+            aq = aq[mask]
+            macs = macs[mask]
+
+        q_max = np.maximum(aq, wq)
+        bmacs = np.dot(macs, q_max)
+        w_loads = np.dot(macs, wq)
+        a_loads = np.dot(macs, aq)
+        return np.array([bmacs, w_loads, a_loads], dtype=float)
 
     def eval_pred_latency(self, scheme: list):
 
@@ -388,10 +401,15 @@ class MiCoEval:
         conv2d_features = []
         linear_features = []
         for i in range(self.n_layers):
-            feat = [self.layer_macs[i]] + self.layer_features[i] + [aq[i], wq[i]]
             if isinstance(self.layers[i], BitConv2d):
+                feat = self._proxy_layer_feature(
+                    self.conv2d_proxy, i, aq[i], wq[i]
+                )
                 conv2d_features.append(feat)
             elif isinstance(self.layers[i], BitLinear):
+                feat = self._proxy_layer_feature(
+                    self.matmul_proxy, i, aq[i], wq[i]
+                )
                 linear_features.append(feat)
 
         pred_latency = 0.0
@@ -402,6 +420,16 @@ class MiCoEval:
         pred_latency += self.misc_latency
         pred_latency = self.slope * pred_latency + self.intercept
         return pred_latency
+
+    def _proxy_layer_feature(self, proxy, layer_idx: int, aq, wq):
+        macs = self.layer_macs[layer_idx]
+        if self._proxy_accepts_macs_bitwidth_only(proxy):
+            return [macs, aq, wq]
+        return [macs] + self.layer_features[layer_idx] + [aq, wq]
+
+    def _proxy_accepts_macs_bitwidth_only(self, proxy) -> bool:
+        preprocess_name = getattr(proxy, "preprocess_name", None)
+        return preprocess_name in {"macs+", "bops", "cbops"}
 
     def calibrate_proxy(self, min_q: int = 2, max_q: int = 8, target: str = 'bitfusion'):
         

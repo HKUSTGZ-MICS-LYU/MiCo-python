@@ -135,6 +135,7 @@ class MiCoProxy:
         QW = X[:, -1]
         BOPS = MACS * QW * QA
         return np.column_stack((BOPS,))
+    
     def _get_cbops_features(self, X):
         MACS = X[:, 0]
         QA = X[:, -2]
@@ -200,6 +201,7 @@ REGRESSOR_FACTORIES = {
     'XGBRegressor': lambda: XGBRegressor(random_state=42),
     'RandomForest': lambda: RandomForestRegressor(random_state=42),
     'LinearRegression': lambda: LinearRegression(),
+    'DirectSum' : lambda: DirectSum()
 }
 
 def get_proxy(profile_dataset: str, kernel_type: str = 'matmul',
