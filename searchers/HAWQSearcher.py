@@ -4,6 +4,7 @@ from copy import deepcopy
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 from gekko import GEKKO
 from tqdm import tqdm
 
@@ -53,6 +54,7 @@ class HAWQSearcher(QSearcher):
         self.delta_table = None
         self.sensitivity_table = None
         self.cost_table = None
+        self._using_shared_model = False
 
     def _select_device(self):
         if torch.cuda.is_available():
@@ -101,24 +103,89 @@ class HAWQSearcher(QSearcher):
             json.dump(data, f, indent=2)
         print(f"Saved HAWQ cache: {self.cache_path}")
 
+    def _clone_evaluator_model(self):
+        runtime_attrs = {}
+        for attr in ("train_loader", "test_loader"):
+            if hasattr(self.evaluator.model, attr):
+                runtime_attrs[attr] = getattr(self.evaluator.model, attr)
+                setattr(self.evaluator.model, attr, None)
+        try:
+            return deepcopy(self.evaluator.model)
+        except TypeError as exc:
+            if "pickle" not in str(exc):
+                raise
+            print(
+                "HAWQ warning: model deepcopy failed due to a non-picklable "
+                "runtime object; using evaluator.model for sensitivity extraction."
+            )
+            self._using_shared_model = True
+            return self.evaluator.model
+        finally:
+            for attr, value in runtime_attrs.items():
+                setattr(self.evaluator.model, attr, value)
+
+    def _disable_flash_attention_for_hessian(self, model):
+        original_flash = []
+        for module in model.modules():
+            if hasattr(module, "flash") and isinstance(module.flash, bool) and module.flash:
+                original_flash.append((module, module.flash))
+                module.flash = False
+
+        def restore_flash():
+            for module, value in original_flash:
+                module.flash = value
+
+        return restore_flash
+
     def _prepare_model(self):
         self.evaluator.load_pretrain()
-        model = deepcopy(self.evaluator.model).to(self.device)
+        self._using_shared_model = False
+        model = self._clone_evaluator_model().to(self.device)
         if hasattr(model, "unset_qscheme"):
             model.unset_qscheme()
+        restore_flash = self._disable_flash_attention_for_hessian(model)
         layers = list_qlayers(model)
         if len(layers) != self.n_layers:
             raise ValueError(f"Expected {self.n_layers} qlayers, got {len(layers)}")
+        original_requires_grad = [param.requires_grad for param in model.parameters()]
         for param in model.parameters():
             param.requires_grad = False
         for layer in layers:
             layer.weight.requires_grad = True
-        return model, layers
+
+        def restore_requires_grad():
+            if not self._using_shared_model:
+                restore_flash()
+                return
+            for param, requires_grad in zip(model.parameters(), original_requires_grad):
+                param.requires_grad = requires_grad
+            restore_flash()
+
+        return model, layers, restore_requires_grad
+
+    def _batch_loss(self, model, x, y):
+        try:
+            output = model(x, y)
+        except TypeError:
+            output = model(x)
+
+        loss = getattr(model, "last_loss", None)
+        if loss is not None:
+            return loss
+
+        if isinstance(output, (tuple, list)):
+            output = output[0]
+        if output.dim() >= 3 and y.dim() >= 2 and tuple(output.shape[:-1]) == tuple(y.shape):
+            return F.cross_entropy(
+                output.reshape(-1, output.size(-1)),
+                y.reshape(-1),
+                ignore_index=-1,
+            )
+        return F.cross_entropy(output, y)
 
     def _compute_hessian_trace(self, model, layers):
         weights = [layer.weight for layer in layers]
         trace = torch.zeros(len(weights), device=self.device)
-        criterion = torch.nn.CrossEntropyLoss()
         data_iter = iter(self.evaluator.train_loader)
         used = 0
 
@@ -139,8 +206,7 @@ class HAWQSearcher(QSearcher):
             x = images.to(self.device)
             y = labels.to(self.device)
             model.zero_grad(set_to_none=True)
-            output = model(x)
-            loss = criterion(output, y)
+            loss = self._batch_loss(model, x, y)
             grads = torch.autograd.grad(loss, weights, create_graph=True, allow_unused=True)
             vectors = [
                 torch.randint_like(w, low=0, high=2, dtype=w.dtype).mul_(2).sub_(1)
@@ -179,17 +245,20 @@ class HAWQSearcher(QSearcher):
     def _ensure_sensitivity(self):
         if self._load_cache():
             return
-        model, layers = self._prepare_model()
+        model, layers, restore_requires_grad = self._prepare_model()
         print(
             f"Computing HAWQ sensitivity: trace_samples={self.trace_samples}, "
             f"max_batches={self.max_batches}, qbits={self.qbits}, device={self.device}"
         )
-        self.trace = self._compute_hessian_trace(model, layers)
-        self.delta_table = self._compute_delta_table(layers)
-        self.sensitivity_table = self.trace[:, None] * self.delta_table
-        print("HAWQ Hessian trace:", self.trace.tolist())
-        print("HAWQ sensitivity table shape:", self.sensitivity_table.shape)
-        self._save_cache()
+        try:
+            self.trace = self._compute_hessian_trace(model, layers)
+            self.delta_table = self._compute_delta_table(layers)
+            self.sensitivity_table = self.trace[:, None] * self.delta_table
+            print("HAWQ Hessian trace:", self.trace.tolist())
+            print("HAWQ sensitivity table shape:", self.sensitivity_table.shape)
+            self._save_cache()
+        finally:
+            restore_requires_grad()
 
     def _scheme_for_layer_bits(self, layer_bits):
         bits = [int(q) for q in layer_bits]
