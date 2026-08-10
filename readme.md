@@ -1,8 +1,24 @@
 # MiCo: End-to-End Mixed Precision Neural Network Co-Exploration Framework for Edge AI
 
+<p align="center">
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/Python-3.10+-blue.svg" alt="Python 3.10+"/></a>
+  <a href="https://github.com/HKUSTGZ-MICS-LYU/MiCo-python"><img src="https://img.shields.io/badge/Paper-ICCAD_2025-brightgreen.svg" alt="ICCAD 2025"/></a>
+  <a href="https://arxiv.org/abs/2508.09500"><img src="https://img.shields.io/badge/arXiv-2508.09500-b31b1b.svg" alt="arXiv 2508.09500"/></a>
+  <a href="https://arxiv.org/abs/2608.06916"><img src="https://img.shields.io/badge/arXiv-2608.06916-b31b1b.svg" alt="arXiv 2608.06916"/></a>
+  <a href="https://github.com/HKUSTGZ-MICS-LYU/MiCo-python/stargazers"><img src="https://img.shields.io/github/stars/HKUSTGZ-MICS-LYU/MiCo-python?style=social" alt="GitHub stars"/></a>
+</p>
+
+<p align="center">
+<img src="doc/MICO.png" width="40%" height="40%"/>
+</p>
+<p align="center"> <i>"Train MiCo Models, Explore MiCo Schemes, Deploy on MiCo Hardware"</i></p>
+
+
 This is the Python codebase for MiCo Framework. 
 
 MiCo is an end-to-end framework that helps you train/explore/deploy mixed precision quantized models.
+
+---
 
 ## Pre-requisite
 
@@ -189,9 +205,3 @@ https://github.com/karpathy/llama2.c
 ## Roadmap
 
 Check our [Roadmap](/../../issues/1) to see what's on the plan!
-
----
-<p align="center">
-<img src="doc/icon_v1.jpg" width="50%" height="50%"/>
-</p>
-Generated with Gemini-2.5 Flash.
