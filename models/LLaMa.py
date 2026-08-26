@@ -446,14 +446,23 @@ class Transformer(MiCoModel):
 
     def train_loop(self, n_iter, train_loader, test_loader, verbose = False,
                    lr = 0.001, eval_interval = None, scheduler = "step",
-                   warmup_iters = 0, warmup_lr = 1e-6):
+                   warmup_iters = 0, warmup_lr = 1e-6,
+                   weight_decay = 1e-2, grad_clip = None, seed = None,
+                   best_checkpoint_path = None):
+
+        if seed is not None:
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
 
         if eval_interval is None:
             eval_interval = max(n_iter // 10, 50)
 
         self.train_loader = train_loader
         self.test_loader = test_loader
-        optimizer = torch.optim.AdamW(self.parameters(), lr=lr)
+        optimizer = torch.optim.AdamW(
+            self.parameters(), lr=lr, weight_decay=weight_decay
+        )
         lr_scheduler = build_llama_scheduler(
             optimizer,
             n_iter,
@@ -465,6 +474,7 @@ class Transformer(MiCoModel):
         X, Y = next(self.train_loader)
         iters = tqdm(range(n_iter), disable= not verbose)
         loss = torch.tensor(np.inf)
+        best_test_acc = -np.inf
         for iter_num in iters:
             iters.set_description(f"Step {iter_num}, Loss: {loss.item():.3f}")
             if iter_num % eval_interval == 0:
@@ -474,6 +484,15 @@ class Transformer(MiCoModel):
                       f"val loss {losses['TestLoss']:.4f},",
                       f"val acc {losses['TestAcc']*100:.2f}%,",
                       f"lr {optimizer.param_groups[0]['lr']:.2e}")
+
+                if (best_checkpoint_path is not None
+                        and losses["TestAcc"] > best_test_acc):
+                    best_test_acc = losses["TestAcc"]
+                    torch.save({
+                        "model": self.state_dict(),
+                        "iter_num": iter_num,
+                        "metrics": losses,
+                    }, best_checkpoint_path)
                 
                 self.checkpoint = {
                     "model": self.state_dict(),
@@ -488,6 +507,8 @@ class Transformer(MiCoModel):
             X, Y = next(self.train_loader)
 
             loss.backward()
+            if grad_clip is not None and grad_clip > 0:
+                torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
             optimizer.step()
             if lr_scheduler is not None:
                 lr_scheduler.step()

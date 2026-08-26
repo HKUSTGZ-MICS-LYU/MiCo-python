@@ -14,6 +14,7 @@ from MiCoQLayers import BitConv2d, BitLinear, weight_quant
 from MiCoUtils import weight_export, fuse_model, fuse_model_seq, get_model_macs
 
 from models.LLaMa import Transformer, ModelArgs
+from DimTransform import LLaMaInBlockTransformer
 
 def serialize_fp32(file, tensor):
     """ writes one fp32 tensor to file that is open in wb mode """
@@ -147,20 +148,28 @@ def mico_llama_export(model: Transformer, filepath: str,
 if __name__ == "__main__":
     from models import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa7M, TinyLLaMa28M
 
-    model_path = "output/ckpt/tinyllama_28m.pth"
+    model_path = "output/ckpt/tinyllama_3m.pth"
     # bin_path = "project/llama2/llama_3M_W8A8_1layer.bin"
-    bin_path = "project/llama2/llama_28M_W8A8.bin"
+    bin_path = "project/llama2/llama_3M_Mixed.bin"
 
     ckpt = torch.load(model_path, map_location='cpu', weights_only=False)
-    model = TinyLLaMa28M()
+    model = TinyLLaMa3M()
     model.load_state_dict(ckpt)
     model.eval()
-    qscheme = [
-        [8] * model.n_layers, # weight qscheme
-        [8] * model.n_layers, # activation qscheme
+    # qscheme = [
+    #     [2] * model.n_layers, # weight qscheme
+    #     [8] * model.n_layers, # activation qscheme
+    # ]
+    # qscheme[0][-1] = 8
+    # qscheme[1][-1] = 8
+
+    mixed_scheme = [
+        # WQ, WK, WV, WO, FF1, FF2, FF3, Output
+        4, 4, 4, 4, 4, 4, 4, 8,
+        4, 4, 8, 8, 4, 4, 8, 8,
     ]
-    qscheme[0][-1] = 8
-    qscheme[1][-1] = 8
+    out_scheme = LLaMaInBlockTransformer(model.n_layers * 2)(mixed_scheme)
+    qscheme = [out_scheme[:model.n_layers], out_scheme[model.n_layers:]]
 
     model.set_qscheme(qscheme)
 

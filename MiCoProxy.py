@@ -117,6 +117,8 @@ class MiCoProxy:
             "raw+": self._get_raw_plus_features,
             "bops": self._get_bops_features,
             "bops+": self._get_bops_plus_features,
+            "sumq": self._get_sumq_features,
+            "maxq": self._get_maxq_features,
             "cbops": self._get_cbops_features,
             "cbops+": self._get_cbops_plus_features
         }
@@ -135,6 +137,22 @@ class MiCoProxy:
         QW = X[:, -1]
         BOPS = MACS * QW * QA
         return np.column_stack((BOPS,))
+
+    def _get_sumq_features(self, X):
+        """Approximate cost using MACS multiplied by total bitwidth."""
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        SUM_Q = MACS * (QW + QA)
+        return np.column_stack((SUM_Q,))
+
+    def _get_maxq_features(self, X):
+        """Approximate cost using MACS multiplied by the larger bitwidth."""
+        MACS = X[:, 0]
+        QA = X[:, -2]
+        QW = X[:, -1]
+        MAX_Q = MACS * np.maximum(QA, QW)
+        return np.column_stack((MAX_Q,))
     
     def _get_cbops_features(self, X):
         MACS = X[:, 0]

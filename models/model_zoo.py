@@ -39,25 +39,28 @@ NUM_WORKERS = 8
 
 IMAGENET_ROOT = "~/work/MiCo/nn/data/"
 
-def from_zoo(name: str, shuffle = False, batch_size: int = 32):
+def from_zoo(name: str, shuffle = False, batch_size: int = 32,
+             num_workers: int = None):
+
+    workers = NUM_WORKERS if num_workers is None else max(0, int(num_workers))
 
     model = None
     train_loader, test_loader = None, None
     if name == "mlp_mnist":
         model = MLP(256, config={"Layers": [64, 64, 64, 10]}).to(device)
-        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, resize=16, num_works=NUM_WORKERS)
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, resize=16, num_works=workers)
     elif name == "lenet_mnist":
         model = LeNet(1).to(device)
-        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
-    elif "cifar10" in name:
+        train_loader, test_loader = mnist(shuffle=shuffle, batch_size=batch_size, num_works=workers)
+    elif name.endswith("_cifar10") or name.endswith("_cifar100"):
         # Parse Model + Dataset
         model_name, dataset_name = name.split("_")
         n_classes = 10
         if dataset_name == "cifar10":
-            train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+            train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=workers)
         elif dataset_name == "cifar100":
             n_classes = 100
-            train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+            train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=workers)
         model_dict = {
             "vit": ViT(3,n_classes),
             "vit1m": TinyViT1M(n_classes),
@@ -73,6 +76,15 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         }
         model = model_dict[model_name].to(device)
         model.default_dataset = dataset_name.capitalize()
+    elif name == "tinyllama":
+        from models.LLaMa import TinyLLaMa1M
+        model = TinyLLaMa1M().to(device)
+        train_loader, test_loader = tinystories(
+            max_seq_len=model.params.max_seq_len,
+            vocab_size=model.params.vocab_size,
+            device=device,
+            batch_size=batch_size,
+            num_works=workers)
     elif "tinyllama" in name:
         from models.LLaMa import TinyLLaMa1M, TinyLLaMa3M, TinyLLaMa11M, TinyLLaMa28M, TinyLLaMa2c110M
         model_dict = {
@@ -88,56 +100,56 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             vocab_size=model.params.vocab_size,
             device=device,
             batch_size=batch_size,
-            num_works=NUM_WORKERS)
+            num_works=workers)
     elif "imagenet" in name:
         model = name.replace("_imagenet", "")
         train_loader, test_loader = imagenet(shuffle=shuffle,batch_size=batch_size, 
-                                             num_works=NUM_WORKERS, root=IMAGENET_ROOT)
+                                             num_works=workers, root=IMAGENET_ROOT)
     elif name == "har_mlp":
         model = HARMLP().to(device)
-        train_loader, test_loader = uci_har(shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+        train_loader, test_loader = uci_har(shuffle=shuffle, batch_size=batch_size, num_works=workers)
     elif name == "kws_conv1d":
         from models import KWSConv1d
         from MiCoDatasets import speechcommands
 
         model = KWSConv1d(n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+            shuffle=shuffle, batch_size=batch_size, num_works=workers)
     elif name == "m5_kws":
         from models.M5 import M5
         from MiCoDatasets import speechcommands
 
         model = M5(n_input=1, n_output=35, stride=16, n_channel=32).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS)
+            shuffle=shuffle, batch_size=batch_size, num_works=workers)
     elif name == "dscnn_kws":
         from models.DSCNN import DSCNN
         from MiCoDatasets import speechcommands
 
         model = DSCNN(n_classes=35, input_size=[64, 81]).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS, 
+            shuffle=shuffle, batch_size=batch_size, num_works=workers,
             preprocess="mfcc")
     elif name == "kws_transformer":
         from MiCoDatasets import speechcommands
 
         model = tiny_kws_transformer(n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS,
+            shuffle=shuffle, batch_size=batch_size, num_works=workers,
             preprocess="mfcc")
     elif name in ["kwt", "tiny_kwt", "kwt-1", "kwt-2", "kwt-3"]:
         from MiCoDatasets import speechcommands
 
         model = kwt_from_name(name, n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS,
+            shuffle=shuffle, batch_size=batch_size, num_works=workers,
             preprocess="mfcc")
     elif name == "waveformer":
         from MiCoDatasets import speechcommands
 
         model = tiny_waveformer(n_classes=35).to(device)
         train_loader, test_loader = speechcommands(
-            shuffle=shuffle, batch_size=batch_size, num_works=NUM_WORKERS,
+            shuffle=shuffle, batch_size=batch_size, num_works=workers,
             preprocess="raw")
     # Parameter Golf GPT models with FineWeb dataset
     elif name == "parameter_golf_gpt" or name == "parameter_golf_gpt_baseline":
@@ -145,7 +157,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = fineweb(
             batch_size=batch_size,
             max_seq_len=model.config.max_seq_len,
-            num_workers=NUM_WORKERS,
+            num_workers=workers,
             shuffle=shuffle,
         )
     elif name == "parameter_golf_gpt_small":
@@ -153,7 +165,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
         train_loader, test_loader = fineweb(
             batch_size=batch_size,
             max_seq_len=model.config.max_seq_len,
-            num_workers=NUM_WORKERS,
+            num_workers=workers,
             shuffle=shuffle,
         )
     elif name in ["bert_micro_local", "bert_tiny_local"]:
@@ -187,7 +199,7 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32):
             batch_size=batch_size,
             max_seq_len=model.params.max_seq_len,
             tokenizer=model.tokenizer,
-            num_workers=NUM_WORKERS,
+            num_workers=workers,
             shuffle=shuffle,
         )
     else:

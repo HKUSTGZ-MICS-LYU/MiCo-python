@@ -429,7 +429,7 @@ class MiCoEval:
 
     def _proxy_accepts_macs_bitwidth_only(self, proxy) -> bool:
         preprocess_name = getattr(proxy, "preprocess_name", None)
-        return preprocess_name in {"macs+", "bops", "cbops"}
+        return preprocess_name in {"macs+", "bops", "sumq", "maxq", "cbops"}
 
     def calibrate_proxy(self, min_q: int = 2, max_q: int = 8, target: str = 'bitfusion'):
         

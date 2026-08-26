@@ -1,3 +1,6 @@
+import copy
+import random
+
 import torch
 from torch import nn
 import numpy as np
@@ -95,10 +98,38 @@ class MiCoModel(nn.Module):
 
     def train_loop(self, n_epoch, train_loader, test_loader, verbose = False,
                    lr = 0.001, scheduler = "none", early_stopping = True,
-                   warmup_epochs = 0, warmup_lr = 1e-6):
-        optimizer = torch.optim.Adam(self.parameters(), lr=lr)
+                   warmup_epochs = 0, warmup_lr = 1e-6,
+                   optimizer_name = "adamw", weight_decay = 1e-4,
+                   grad_clip = None, best_checkpoint_path = None,
+                   seed = None):
+        """Train a classification model with reproducible, resumable settings.
+
+        ``optimizer_name`` and ``weight_decay`` are intentionally optional to
+        preserve the old API.  The default AdamW path is better behaved for
+        transformer-style FP32/QAT fine-tuning, while ``adam`` remains
+        available for old experiments.
+        """
+        if seed is not None:
+            random.seed(seed)
+            np.random.seed(seed)
+            torch.manual_seed(seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(seed)
+
+        optimizer_name = (optimizer_name or "adamw").lower()
+        if optimizer_name == "adamw":
+            optimizer = torch.optim.AdamW(
+                self.parameters(), lr=lr, weight_decay=weight_decay
+            )
+        elif optimizer_name == "adam":
+            optimizer = torch.optim.Adam(
+                self.parameters(), lr=lr, weight_decay=weight_decay
+            )
+        else:
+            raise ValueError("optimizer_name must be 'adamw' or 'adam'")
         criterion = torch.nn.CrossEntropyLoss()
         run_device = self.current_device()
+        n_epoch = max(1, int(n_epoch))
         warmup_epochs = max(0, int(warmup_epochs))
         warmup_epochs = min(warmup_epochs, max(0, n_epoch - 1))
         use_warmup = scheduler == "cosine" and warmup_epochs > 0
@@ -111,20 +142,30 @@ class MiCoModel(nn.Module):
             )
         elif scheduler == "step":
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
-                                                        step_size=n_epoch // 10, 
+                                                        step_size=max(1, n_epoch // 10),
                                                         gamma = 0.75)
         elif scheduler == "cifar100-step":
+            milestones = sorted({
+                max(1, int(n_epoch * ratio))
+                for ratio in (0.5, 0.75, 0.9)
+                if int(n_epoch * ratio) < n_epoch
+            })
             scheduler = torch.optim.lr_scheduler.MultiStepLR(
-                optimizer, milestones=[60, 120, 160, 200], gamma=0.2)
+                optimizer, milestones=milestones, gamma=0.2)
         else:
             raise ValueError(f"Scheduler {scheduler} not recognized.")
 
         last_loss = np.inf
+        best_test_acc = -np.inf
+        best_epoch = 0
+        res = None
         for epoch in range(n_epoch):
             if use_warmup:
                 if epoch < warmup_epochs:
+                    progress = float(epoch + 1) / float(max(1, warmup_epochs))
+                    current_lr = warmup_lr + (lr - warmup_lr) * progress
                     for param_group in optimizer.param_groups:
-                        param_group["lr"] = warmup_lr
+                        param_group["lr"] = current_lr
                 elif epoch == warmup_epochs:
                     for param_group in optimizer.param_groups:
                         param_group["lr"] = lr
@@ -144,6 +185,8 @@ class MiCoModel(nn.Module):
                 _, predicted = torch.max(output.data, 1)
                 loss = criterion(output, y)
                 loss.backward()
+                if grad_clip is not None and grad_clip > 0:
+                    torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
                 train_loss.append(loss.item())
                 train_total += y.size(0)
                 train_correct += (predicted == y).sum().item()
@@ -184,7 +227,21 @@ class MiCoModel(nn.Module):
             res = {"TrainLoss": np.mean(train_loss),
                     "TestLoss": np.mean(test_loss),
                     "TrainAcc": train_acc,
-                    "TestAcc": test_acc}
+                    "TestAcc": test_acc,
+                    "BestTestAcc": max(best_test_acc, test_acc),
+                    "BestEpoch": best_epoch}
+
+            if test_acc > best_test_acc:
+                best_test_acc = test_acc
+                best_epoch = epoch + 1
+                res["BestTestAcc"] = best_test_acc
+                res["BestEpoch"] = best_epoch
+                if best_checkpoint_path is not None:
+                    torch.save({
+                        "model": copy.deepcopy(self.state_dict()),
+                        "epoch": best_epoch,
+                        "metrics": dict(res),
+                    }, best_checkpoint_path)
             
             if verbose: 
                 print(" ".join(log))

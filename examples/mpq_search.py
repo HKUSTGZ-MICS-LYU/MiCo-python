@@ -209,7 +209,7 @@ if __name__ == "__main__":
                     evaluator, n_inits=N_INIT, qtypes=bitwidths,
                     model_type=method)
 
-            if (method in ["nlp", "simple"]) \
+            if (method in ["nlp", "simple", "hawq"]) \
                 and (len(res_data[method]) > 0):
                 # NLP gives fixed solution
                 continue

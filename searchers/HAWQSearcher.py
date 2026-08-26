@@ -284,34 +284,67 @@ class HAWQSearcher(QSearcher):
             table += min_cost / max(self.n_layers, 1)
         return table
 
+    def _fixed_layers(self):
+        if not self.fix_first_last or self.n_layers < 1:
+            return []
+        fixed_layers = [0]
+        if self.n_layers > 1:
+            fixed_layers.append(self.n_layers - 1)
+        return fixed_layers
+
     def _solve_ilp(self, constr_value):
         if constr_value is None:
             raise ValueError("constr_value must be provided for HAWQ search.")
-        min_total_cost = float(np.sum(np.min(self.cost_table, axis=1)))
-        if min_total_cost > constr_value:
-            raise ValueError("Constraint is tighter than the minimum HAWQ qtype scheme.")
+
+        fixed_layers = self._fixed_layers()
+        fixed_layer_set = set(fixed_layers)
+        variable_layers = [
+            layer_idx for layer_idx in range(self.n_layers)
+            if layer_idx not in fixed_layer_set
+        ]
+        fixed_idx = self.qbits.index(self.first_last_bit)
+        fixed_cost = float(np.sum([
+            self.cost_table[layer_idx, fixed_idx]
+            for layer_idx in fixed_layers
+        ]))
+        variable_budget = float(constr_value) - fixed_cost
+        if variable_budget < 0:
+            raise ValueError(
+                "Constraint is tighter than the fixed first/last HAWQ layers: "
+                f"fixed_cost={fixed_cost}, constraint={constr_value}"
+            )
+
+        min_variable_cost = float(np.sum([
+            np.min(self.cost_table[layer_idx])
+            for layer_idx in variable_layers
+        ]))
+        if min_variable_cost > variable_budget:
+            raise ValueError(
+                "Constraint is tighter than the minimum HAWQ qtype scheme after "
+                "fixing first/last layers: "
+                f"min_variable_cost={min_variable_cost}, variable_budget={variable_budget}"
+            )
+
+        layer_bits = [
+            self.first_last_bit if layer_idx in fixed_layer_set else min(self.qbits)
+            for layer_idx in range(self.n_layers)
+        ]
+        if not variable_layers:
+            return layer_bits
 
         m = GEKKO(remote=False)
-        picks = []
-        for _ in range(self.n_layers):
+        picks = {}
+        for layer_idx in variable_layers:
             layer_picks = [m.Var(lb=0, ub=1, integer=True) for _ in self.qbits]
             m.Equation(m.sum(layer_picks) == 1)
-            picks.append(layer_picks)
-        if self.fix_first_last and self.n_layers >= 1:
-            fixed_idx = self.qbits.index(self.first_last_bit)
-            fixed_layers = [0]
-            if self.n_layers > 1:
-                fixed_layers.append(self.n_layers - 1)
-            for layer_idx in fixed_layers:
-                for bit_idx, pick in enumerate(picks[layer_idx]):
-                    m.Equation(pick == (1 if bit_idx == fixed_idx else 0))
+            picks[layer_idx] = layer_picks
 
         m.Equation(
             m.sum([
                 picks[layer_idx][bit_idx] * float(self.cost_table[layer_idx, bit_idx])
-                for layer_idx in range(self.n_layers)
+                for layer_idx in variable_layers
                 for bit_idx in range(len(self.qbits))
-            ]) <= float(constr_value)
+            ]) <= variable_budget
         )
 
         max_sensitivity = float(np.max(np.abs(self.sensitivity_table)))
@@ -319,23 +352,28 @@ class HAWQSearcher(QSearcher):
             max_sensitivity = 1.0
         objective = m.sum([
             picks[layer_idx][bit_idx] * float(self.sensitivity_table[layer_idx, bit_idx] / max_sensitivity)
-            for layer_idx in range(self.n_layers)
+            for layer_idx in variable_layers
             for bit_idx in range(len(self.qbits))
         ])
         m.Obj(objective)
         m.options.IMODE = 3
         m.options.SOLVER = 1
 
-        print("Solving HAWQ ILP with constraint:", constr_value)
+        print(
+            "Solving HAWQ ILP with constraint:",
+            constr_value,
+            f"(fixed_cost={fixed_cost}, variable_budget={variable_budget}, "
+            f"variable_layers={len(variable_layers)})"
+        )
         m.solve(disp=True)
 
-        layer_bits = []
-        for layer_picks in picks:
+        for layer_idx in variable_layers:
+            layer_picks = picks[layer_idx]
             values = [float(p.value[0]) for p in layer_picks]
             idx = max(range(len(values)), key=lambda i: values[i])
             if values[idx] < 0.5:
                 raise ValueError(f"Invalid HAWQ one-hot solution: {values}")
-            layer_bits.append(self.qbits[idx])
+            layer_bits[layer_idx] = self.qbits[idx]
         return layer_bits
 
     def search(self, n_iter: int, target: str, constr: str = None, constr_value=None):
