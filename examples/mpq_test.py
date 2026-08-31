@@ -70,19 +70,31 @@ def apply_attention_qat(model, args):
     quantize_k = (not args.no_quantize_kv) and (not args.no_quantize_k)
     quantize_v = (not args.no_quantize_kv) and (not args.no_quantize_v)
     attn_qscheme = build_attention_qscheme(args, n_attn_layers)
+    # Paper TKV uses per-token absmax quantization for fixed-length
+    # attention vectors. LLaMa keeps KIVI's per-channel K dimension.
+    if args.tkv:
+        tkv_q_dim = -1
+        tkv_k_dim = -2 if "llama" in args.model_name.lower() else -1
+        tkv_v_dim = -1
+        tkv_score_dim = -1
+    else:
+        tkv_q_dim = None
+        tkv_k_dim = -2
+        tkv_v_dim = -1
+        tkv_score_dim = None
     model.set_attn_qscheme(
         attn_qscheme,
         qat=True,
         bitnet_scale="max",
-        bitnet_group_size=None,
+        bitnet_group_size=32,
         bitnet_group_dim=-1,
         bitnet_clip=None,
         fp8_dtype=args.fp8_dtype,
         int_dim=None,
-        int_dim_q=None,
-        int_dim_k=-2,
-        int_dim_v=-1,
-        int_dim_score=None,
+        int_dim_q=tkv_q_dim,
+        int_dim_k=tkv_k_dim,
+        int_dim_v=tkv_v_dim,
+        int_dim_score=tkv_score_dim,
         quantize_q=not args.no_quantize_q,
         quantize_k=quantize_k,
         quantize_v=quantize_v,
@@ -157,6 +169,8 @@ def main():
     parser.add_argument("--qat-lr", type=float, default=0.0001)
 
     parser.add_argument("--mico-target", type=str, default="small")
+    parser.add_argument("--tkv", "--tkv-attn", dest="tkv", action="store_true",
+                        help="Paper TKV: ternary K/V, Int8 Q/score, and model-specific KV granularity.")
     parser.add_argument("--kivi-attn", action="store_true",
                         help="Shortcut for --attn-qat with Q=int8, K/V=bitnet, score=none, scope=kivi.")
     parser.add_argument("--attn-qat", action="store_true", default=False,
@@ -203,7 +217,19 @@ def main():
         raise ValueError("--qat-forward is only valid with --mode test. Use --mode qat-test otherwise.")
     if args.smoothquant and args.mode not in ["test", "qat-test"]:
         raise ValueError("--smoothquant is supported in direct --mode test/qat-test paths.")
-    if args.kivi_attn:
+    if args.tkv and args.mode not in ["test", "qat-test", "ptq"]:
+        raise ValueError("--tkv requires --mode test, --mode qat-test, or --mode ptq.")
+    if args.tkv and args.kivi_attn:
+        raise ValueError("Please use only one of --tkv or --kivi-attn.")
+    if args.tkv:
+        args.attn_qat = True
+        args.q_quant = "int8"
+        args.k_quant = "bitnet"
+        args.v_quant = "bitnet"
+        args.score_quant = "int8"
+        args.quantize_score = True
+        args.llama_kv_quant_scope = "kivi"
+    elif args.kivi_attn:
         args.attn_qat = True
         args.q_quant = "int8"
         args.k_quant = "bitnet"
@@ -299,8 +325,24 @@ def main():
 
 
     if args.mode == "ptq":
-        result = evaluator.eval(qscheme)
-        print(f"PTQ Accuracy: {result}")
+        if args.tkv:
+            # TKV is an attention-time transform, so it is outside the
+            # linear-only MiCoEval cache and must be evaluated live.
+            model.set_qscheme(
+                [weight_q, act_q],
+                qat=False,
+                device=run_device,
+                group_size=args.group_size,
+                use_norm=args.use_norm,
+            )
+            apply_attention_qat(model, args)
+            model.eval()
+            result = model.test(test_loader)["TestAcc"]
+            print(f"PTQ + TKV Accuracy: {result}")
+        else:
+            # This is a direct diagnostic; do not report a stale cached value.
+            result = evaluator.eval(qscheme, use_cache=False)
+            print(f"PTQ Accuracy: {result}")
 
     elif args.mode == "qat":
         result = evaluator.eval_qat(qscheme, epochs=args.qat_epochs)

@@ -40,7 +40,7 @@ NUM_WORKERS = 8
 IMAGENET_ROOT = "~/work/MiCo/nn/data/"
 
 def from_zoo(name: str, shuffle = False, batch_size: int = 32,
-             num_workers: int = None):
+             num_workers: int = None, train_recipe: str = None):
 
     workers = NUM_WORKERS if num_workers is None else max(0, int(num_workers))
 
@@ -57,10 +57,14 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32,
         model_name, dataset_name = name.split("_")
         n_classes = 10
         if dataset_name == "cifar10":
-            train_loader, test_loader = cifar10(shuffle=shuffle, batch_size=batch_size, num_works=workers)
+            train_loader, test_loader = cifar10(
+                shuffle=shuffle, batch_size=batch_size, num_works=workers,
+                recipe=train_recipe)
         elif dataset_name == "cifar100":
             n_classes = 100
-            train_loader, test_loader = cifar100(shuffle=shuffle, batch_size=batch_size, num_works=workers)
+            train_loader, test_loader = cifar100(
+                shuffle=shuffle, batch_size=batch_size, num_works=workers,
+                recipe=train_recipe)
         model_dict = {
             "vit": ViT(3,n_classes),
             "vit1m": TinyViT1M(n_classes),

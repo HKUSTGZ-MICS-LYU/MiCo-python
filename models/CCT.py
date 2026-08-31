@@ -372,7 +372,8 @@ class CCT(MiCoModel):
 
 def cct_2(n_classes=10):
     model = CCT(
-        img_size=32, embedding_dim=128, kernel_size=3, n_conv_layers=2,
+        img_size=32, embedding_dim=128, kernel_size=3, stride=1, padding=1,
+        n_conv_layers=2,
         num_layers=2, num_heads=2, mlp_ratio=1, num_classes=n_classes
     )
     model.default_dataset = "CIFAR10"
