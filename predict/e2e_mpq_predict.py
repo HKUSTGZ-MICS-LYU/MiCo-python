@@ -9,7 +9,8 @@ from scipy.stats import pearsonr, spearmanr
 from MiCoEval import MiCoEval
 from MiCoProxy import (
     get_bitfusion_matmul_proxy, get_bitfusion_conv2d_proxy,
-    get_mico_matmul_proxy, get_mico_conv2d_proxy, get_mico_misc_kernel_proxy
+    get_mico_matmul_proxy, get_mico_conv2d_proxy, get_mico_misc_kernel_proxy,
+    get_host_conv2d_proxy, get_host_matmul_proxy
 )
 
 from models import model_zoo
@@ -53,6 +54,11 @@ if __name__ == "__main__":
         conv2d_proxy = get_bitfusion_conv2d_proxy()
         evaluator.set_proxy(matmul_proxy, conv2d_proxy)
 
+    elif target == "latency_host":
+        matmul_proxy = get_host_matmul_proxy("lut")
+        conv2d_proxy = get_host_conv2d_proxy("lut")
+        evaluator.set_proxy(matmul_proxy, conv2d_proxy)
+
     dim = evaluator.n_layers * 2
     bitwidths = []
     if target == "latency_bitfusion":
@@ -61,6 +67,9 @@ if __name__ == "__main__":
     elif target.startswith("latency_mico"):
         bitwidths = [1, 2, 4, 8]
         evaluator.set_eval("latency_mico")
+    elif target == "latency_host":
+        bitwidths = [1, 2, 4, 8]
+        evaluator.set_eval("latency_host")
 
     X = []
     Y = []
@@ -75,8 +84,8 @@ if __name__ == "__main__":
         X.append(res)
         Y.append(res_pred)
         # print(scheme)
-        # print(f"Actual  Latency:{res:>10}")
-        # print(f"Predict Latency:{int(res_pred):>10}")
+        print(f"Actual  Latency:{res:>10}")
+        print(f"Predict Latency:{int(res_pred):>10}")
 
     X = np.array(X)
     Y = np.array(Y)

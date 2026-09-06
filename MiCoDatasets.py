@@ -59,16 +59,40 @@ def fashion_mnist(batch_size=32, num_works = 0, shuffle = True, augment = True):
     test_loader = DataLoader(test_data, batch_size, shuffle=shuffle, num_workers=num_works)
     return train_loader, test_loader
 
-def cifar10(batch_size=32, num_works = 0, shuffle = True, augment = True):
+def cifar10(batch_size=32, num_works = 0, shuffle = True, augment = True,
+            recipe = None):
 
-    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-    train_transform = transforms.Compose([
+    # CIFAR-10 statistics are materially different from ImageNet statistics.
+    normalize = transforms.Normalize(
+        mean=(0.4914, 0.4822, 0.4465),
+        std=(0.2470, 0.2435, 0.2616),
+    )
+    recipe = (recipe or "mico").lower()
+    if recipe in {"cct_original", "cct2_original", "shilabs"}:
+        # SHI-Labs' original CCT example applies CIFAR AutoAugment before
+        # crop/flip and does not add RandomErasing or a second dataset copy.
+        train_ops = []
+        if augment:
+            train_ops.append(
+                transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10)
+            )
+        train_ops.extend([
+            transforms.RandomCrop(32, padding=4),
             transforms.RandomHorizontalFlip(),
-            transforms.RandomCrop(32, 4),
             transforms.ToTensor(),
-            normalize
+            normalize,
         ])
+    else:
+        train_ops = [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+        ]
+        if augment:
+            train_ops.append(transforms.RandAugment(num_ops=2, magnitude=9))
+        train_ops.extend([transforms.ToTensor(), normalize])
+        if augment:
+            train_ops.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.20)))
+    train_transform = transforms.Compose(train_ops)
     test_transform = transforms.Compose([
         transforms.ToTensor(),
         normalize
@@ -76,66 +100,82 @@ def cifar10(batch_size=32, num_works = 0, shuffle = True, augment = True):
     train_data = datasets.CIFAR10(root='data', train=True, download=True, transform=train_transform)
     test_data = datasets.CIFAR10(root='data', train=False, transform=test_transform)
 
-    if augment:
-        # Data Augmentation
-        # augmented_transform = transforms.Compose([
-        #     transforms.RandomRotation(degrees=10),  
-        #     transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-        #     transforms.ToTensor(),
-        #     normalize
-        # ])
-        augmented_transform = transforms.Compose([
-            transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
-            transforms.ToTensor(),
-            normalize
-        ])
-        augmented_train_data = datasets.CIFAR10(root='data', train=True, transform=augmented_transform)
-        train_data = ConcatDataset([train_data, augmented_train_data])
-
     train_loader = DataLoader(train_data, batch_size, shuffle=shuffle, num_workers=num_works)
-    test_loader = DataLoader(test_data, batch_size, shuffle=shuffle, num_workers=num_works)
+    test_loader = DataLoader(test_data, batch_size, shuffle=False, num_workers=num_works)
     return train_loader, test_loader
 
-def cifar100(batch_size=32, num_works = 0, shuffle = True, augment = True):
+def cifar100(batch_size=32, num_works = 0, shuffle = True, augment = True,
+             recipe = None):
 
     mean = (0.5070751592371323, 0.48654887331495095, 0.4409178433670343)
     std = (0.2673342858792401, 0.2564384629170883, 0.27615047132568404)
 
-    train_transform = transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.RandomHorizontalFlip(),
-        transforms.RandomRotation(15),
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std)
-    ])
+    recipe = (recipe or "mico").lower()
+    if recipe in {"cct7_official", "cct7_timm", "shilabs_cct7"}:
+        if not augment:
+            train_transform = transforms.Compose([
+                transforms.ToTensor(),
+                transforms.Normalize(mean, std),
+            ])
+            test_transform = train_transform
+        else:
+            try:
+                from timm.data import create_transform
+            except ImportError as exc:
+                raise ImportError(
+                    "The cct7_official CIFAR100 recipe requires timm; "
+                    "install it with `pip install timm`."
+                ) from exc
 
-    train_data = datasets.CIFAR100(root='data', train=True, download=True, transform=train_transform)
+            # This mirrors SHI-Labs' cct_7-3x1_cifar100_300epochs.yml:
+            # RandomResizedCrop(scale=.8..1), random interpolation,
+            # RandAugment, and pixel-wise Random Erasing.
+            train_transform = create_transform(
+                input_size=32,
+                is_training=True,
+                scale=(0.8, 1.0),
+                ratio=(3.0 / 4.0, 4.0 / 3.0),
+                hflip=0.5,
+                vflip=0.0,
+                auto_augment="rand-m9-mstd0.5-inc1",
+                interpolation="random",
+                mean=mean,
+                std=std,
+                re_prob=0.25,
+                re_mode="pixel",
+                re_count=1,
+                crop_pct=1.0,
+            )
+            test_transform = create_transform(
+                input_size=32,
+                is_training=False,
+                interpolation="bicubic",
+                mean=mean,
+                std=std,
+                crop_pct=1.0,
+            )
+    else:
+        train_ops = [
+            transforms.RandomCrop(32, padding=4),
+            transforms.RandomHorizontalFlip(),
+        ]
+        if augment:
+            train_ops.append(transforms.RandAugment(num_ops=2, magnitude=9))
+        train_ops.extend([transforms.ToTensor(), transforms.Normalize(mean, std)])
+        if augment:
+            train_ops.append(transforms.RandomErasing(p=0.25, scale=(0.02, 0.20)))
+        train_transform = transforms.Compose(train_ops)
 
-    test_transform = transforms.Compose([
-        transforms.ToTensor(),
-        transforms.Normalize(mean, std)
-    ])
-
-    test_data = datasets.CIFAR100(root='data', train=False, transform=test_transform)
-
-    if augment:
-        # Data Augmentation
-        # augmented_transform = transforms.Compose([
-        #     transforms.RandomRotation(degrees=10),  
-        #     transforms.RandomAffine(degrees=10, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-        #     transforms.ToTensor(),
-        #     transforms.Normalize(mean, std)
-        # ])
-        augmented_transform = transforms.Compose([
-            transforms.AutoAugment(policy=transforms.AutoAugmentPolicy.CIFAR10),
+        test_transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.Normalize(mean, std)
         ])
-        augmented_train_data = datasets.CIFAR100(root='data', train=True, transform=augmented_transform)
-        train_data = ConcatDataset([train_data, augmented_train_data])
+
+    train_data = datasets.CIFAR100(root='data', train=True, download=True, transform=train_transform)
+    test_data = datasets.CIFAR100(root='data', train=False, transform=test_transform)
 
     train_loader = DataLoader(train_data, batch_size, shuffle=shuffle, num_workers=num_works)
-    test_loader = DataLoader(test_data, batch_size, shuffle=shuffle, num_workers=num_works)
+    test_loader = DataLoader(test_data, batch_size, shuffle=False, num_workers=num_works)
 
     return train_loader, test_loader
 

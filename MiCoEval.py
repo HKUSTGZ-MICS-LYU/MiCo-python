@@ -192,7 +192,10 @@ class MiCoEval:
         data_trace[cache_key] = data_trace.pop(legacy_key, {})
         return data_trace[cache_key].get(self.objective), True
 
-    def eval(self, scheme: list, offline: bool = False):
+    def eval(self, scheme: list, offline: bool = False, use_cache: bool = True):
+        if not use_cache:
+            return self.eval_f(scheme)
+
         cache_key = self._scheme_to_key(scheme)
         legacy_key = str(scheme)
         with self._cache_lock(exclusive=True):

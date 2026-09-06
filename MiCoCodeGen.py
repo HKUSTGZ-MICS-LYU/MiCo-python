@@ -54,7 +54,7 @@ extern size_t model_weight_start[];
 extern size_t model_weight_end[];
 
 // Profiler Timer
-extern unsigned long long QMATMUL_TIMER, QUANT_TIMER, IM2COL_TIMER;
+extern long QMATMUL_TIMER, QUANT_TIMER, IM2COL_TIMER;
 
 typedef struct {{
 {model_struct}

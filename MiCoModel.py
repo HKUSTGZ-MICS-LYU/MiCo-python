@@ -3,6 +3,7 @@ import random
 
 import torch
 from torch import nn
+import torch.nn.functional as F
 import numpy as np
 
 from typing import List, Tuple
@@ -23,6 +24,76 @@ class MiCoFunc:
         self.name = name
         self.input_names = input_names
         self.params = params
+
+
+def _optimizer_param_groups(model, weight_decay):
+    """Split parameters so norms, biases and learned tokens are not decayed."""
+    decay, no_decay = [], []
+    no_decay_terms = ("norm", "bn", "positional_emb", "pos_embedding",
+                      "cls_token", "class_emb")
+    for name, parameter in model.named_parameters():
+        if not parameter.requires_grad:
+            continue
+        name_lower = name.lower()
+        if (parameter.ndim <= 1 or name_lower.endswith(".bias")
+                or any(term in name_lower for term in no_decay_terms)):
+            no_decay.append(parameter)
+        else:
+            decay.append(parameter)
+    return [
+        {"params": decay, "weight_decay": weight_decay},
+        {"params": no_decay, "weight_decay": 0.0},
+    ]
+
+
+def _sample_beta(alpha):
+    return float(torch.distributions.Beta(alpha, alpha).sample().item())
+
+
+def _mix_batch(x, y, mixup_alpha=0.0, cutmix_alpha=0.0):
+    """Return a mixed batch and its two target sets, or the original batch."""
+    use_cutmix = x.ndim == 4 and cutmix_alpha > 0
+    use_mixup = mixup_alpha > 0
+    if not use_cutmix and not use_mixup:
+        return x, y, None, 1.0
+
+    if use_cutmix and use_mixup:
+        use_cutmix = bool(torch.rand((), device=x.device) < 0.5)
+    index = torch.randperm(x.size(0), device=x.device)
+
+    if use_cutmix:
+        lam = _sample_beta(cutmix_alpha)
+        height, width = x.shape[-2:]
+        cut_ratio = (1.0 - lam) ** 0.5
+        cut_h = max(1, int(height * cut_ratio))
+        cut_w = max(1, int(width * cut_ratio))
+        cy = int(torch.randint(height, (1,), device=x.device).item())
+        cx = int(torch.randint(width, (1,), device=x.device).item())
+        y1, y2 = max(0, cy - cut_h // 2), min(height, cy + cut_h // 2)
+        x1, x2 = max(0, cx - cut_w // 2), min(width, cx + cut_w // 2)
+        x[:, :, y1:y2, x1:x2] = x[index, :, y1:y2, x1:x2]
+        lam = 1.0 - ((y2 - y1) * (x2 - x1) / float(height * width))
+    else:
+        lam = _sample_beta(mixup_alpha)
+        x = x * lam + x[index] * (1.0 - lam)
+    return x, y, y[index], lam
+
+
+class _ShilabsLabelSmoothingCrossEntropy(nn.Module):
+    """The label-smoothed CE used by the original CCT example."""
+
+    def __init__(self, smoothing=0.1):
+        super().__init__()
+        self.smoothing = float(smoothing)
+        self.confidence = 1.0 - self.smoothing
+
+    def forward(self, logits, target):
+        log_prob = F.log_softmax(logits, dim=-1)
+        nll_loss = -log_prob.gather(dim=-1, index=target.unsqueeze(1))
+        nll_loss = nll_loss.squeeze(1)
+        smooth_loss = -log_prob.mean(dim=-1)
+        return (self.confidence * nll_loss
+                + self.smoothing * smooth_loss).mean()
 
 class MiCoModel(nn.Module):
     n_layers: int   
@@ -99,9 +170,14 @@ class MiCoModel(nn.Module):
     def train_loop(self, n_epoch, train_loader, test_loader, verbose = False,
                    lr = 0.001, scheduler = "none", early_stopping = True,
                    warmup_epochs = 0, warmup_lr = 1e-6,
+                   min_lr = 0.0,
                    optimizer_name = "adamw", weight_decay = 1e-4,
                    grad_clip = None, best_checkpoint_path = None,
-                   seed = None):
+                   seed = None, label_smoothing = 0.0,
+                   mixup_alpha = 0.0, cutmix_alpha = 0.0,
+                   ema_decay = None, warmup_mode = "linear",
+                   weight_decay_mode = "filtered",
+                   label_smoothing_impl = "torch"):
         """Train a classification model with reproducible, resumable settings.
 
         ``optimizer_name`` and ``weight_decay`` are intentionally optional to
@@ -117,28 +193,50 @@ class MiCoModel(nn.Module):
                 torch.cuda.manual_seed_all(seed)
 
         optimizer_name = (optimizer_name or "adamw").lower()
+        weight_decay_mode = (weight_decay_mode or "filtered").lower()
+        if weight_decay_mode == "all":
+            optimizer_params = self.parameters()
+        elif weight_decay_mode == "filtered":
+            optimizer_params = _optimizer_param_groups(self, weight_decay)
+        else:
+            raise ValueError("weight_decay_mode must be 'filtered' or 'all'")
         if optimizer_name == "adamw":
             optimizer = torch.optim.AdamW(
-                self.parameters(), lr=lr, weight_decay=weight_decay
+                optimizer_params, lr=lr, weight_decay=weight_decay
             )
         elif optimizer_name == "adam":
             optimizer = torch.optim.Adam(
-                self.parameters(), lr=lr, weight_decay=weight_decay
+                optimizer_params, lr=lr, weight_decay=weight_decay
             )
         else:
             raise ValueError("optimizer_name must be 'adamw' or 'adam'")
-        criterion = torch.nn.CrossEntropyLoss()
+        label_smoothing = max(0.0, min(float(label_smoothing), 1.0))
+        mixup_alpha = max(0.0, float(mixup_alpha))
+        cutmix_alpha = max(0.0, float(cutmix_alpha))
+        label_smoothing_impl = (label_smoothing_impl or "torch").lower()
+        if label_smoothing_impl in {"shilabs", "official"}:
+            criterion = _ShilabsLabelSmoothingCrossEntropy(label_smoothing)
+        elif label_smoothing_impl == "torch":
+            criterion = torch.nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+        else:
+            raise ValueError(
+                "label_smoothing_impl must be 'torch' or 'shilabs'"
+            )
         run_device = self.current_device()
         n_epoch = max(1, int(n_epoch))
         warmup_epochs = max(0, int(warmup_epochs))
         warmup_epochs = min(warmup_epochs, max(0, n_epoch - 1))
+        min_lr = max(0.0, float(min_lr))
+        warmup_mode = (warmup_mode or "linear").lower()
+        if warmup_mode not in {"linear", "shilabs", "official"}:
+            raise ValueError("warmup_mode must be 'linear' or 'shilabs'")
         use_warmup = scheduler == "cosine" and warmup_epochs > 0
 
         if scheduler == "none":
             scheduler = None
         elif scheduler == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                optimizer, max(1, n_epoch - warmup_epochs)
+                optimizer, max(1, n_epoch - warmup_epochs), eta_min=min_lr
             )
         elif scheduler == "step":
             scheduler = torch.optim.lr_scheduler.StepLR(optimizer, 
@@ -159,11 +257,20 @@ class MiCoModel(nn.Module):
         best_test_acc = -np.inf
         best_epoch = 0
         res = None
+        ema_decay = (None if ema_decay is None else float(ema_decay))
+        if ema_decay is not None and not 0.0 < ema_decay < 1.0:
+            raise ValueError("ema_decay must be between 0 and 1")
+        ema_state = ({name: value.detach().clone()
+                      for name, value in self.state_dict().items()}
+                     if ema_decay is not None else None)
         for epoch in range(n_epoch):
             if use_warmup:
                 if epoch < warmup_epochs:
-                    progress = float(epoch + 1) / float(max(1, warmup_epochs))
-                    current_lr = warmup_lr + (lr - warmup_lr) * progress
+                    if warmup_mode in {"shilabs", "official"}:
+                        current_lr = lr / float(max(1, warmup_epochs - epoch))
+                    else:
+                        progress = float(epoch + 1) / float(max(1, warmup_epochs))
+                        current_lr = warmup_lr + (lr - warmup_lr) * progress
                     for param_group in optimizer.param_groups:
                         param_group["lr"] = current_lr
                 elif epoch == warmup_epochs:
@@ -180,10 +287,19 @@ class MiCoModel(nn.Module):
             
             for i, (images, labels) in loop:
                 x, y = images.to(run_device), labels.to(run_device)
+                targets_a, targets_b, mix_lam = y, None, 1.0
+                if self.training and (mixup_alpha > 0 or cutmix_alpha > 0):
+                    x, targets_a, targets_b, mix_lam = _mix_batch(
+                        x, y, mixup_alpha=mixup_alpha,
+                        cutmix_alpha=cutmix_alpha)
                 optimizer.zero_grad()
                 output = self(x)
                 _, predicted = torch.max(output.data, 1)
-                loss = criterion(output, y)
+                if targets_b is None:
+                    loss = criterion(output, targets_a)
+                else:
+                    loss = (mix_lam * criterion(output, targets_a)
+                            + (1.0 - mix_lam) * criterion(output, targets_b))
                 loss.backward()
                 if grad_clip is not None and grad_clip > 0:
                     torch.nn.utils.clip_grad_norm_(self.parameters(), grad_clip)
@@ -191,14 +307,26 @@ class MiCoModel(nn.Module):
                 train_total += y.size(0)
                 train_correct += (predicted == y).sum().item()
                 optimizer.step()
+                if ema_state is not None:
+                    with torch.no_grad():
+                        for name, value in self.state_dict().items():
+                            if torch.is_floating_point(value):
+                                ema_state[name].mul_(ema_decay).add_(
+                                    value.detach(), alpha=1.0 - ema_decay)
+                            else:
+                                ema_state[name].copy_(value)
                 loop.set_description(
                     f"[Epoch {epoch+1}/{n_epoch} Loss: {loss.item():.3f}]")
             train_acc = train_correct / train_total
 
             if scheduler is not None and (not use_warmup or epoch >= warmup_epochs):
                 scheduler.step()
-            # Testing
+            # Testing. EMA is used only for validation/checkpoint selection.
             self.eval()
+            raw_state = None
+            if ema_state is not None:
+                raw_state = copy.deepcopy(self.state_dict())
+                self.load_state_dict(ema_state)
             test_loss = []
             test_total, test_correct = 0, 0
             with torch.no_grad():
@@ -211,23 +339,28 @@ class MiCoModel(nn.Module):
                     test_total += y.size(0)
                     test_correct += (predicted == y).sum().item()
             test_acc = test_correct / test_total
+            evaluated_state = copy.deepcopy(self.state_dict())
+            if raw_state is not None:
+                self.load_state_dict(raw_state)
+
+            train_loss_mean = float(np.mean(train_loss))
+            test_loss_mean = float(np.mean(test_loss))
 
             log = [ 
                     f"Epoch [{epoch+1}/{n_epoch}]",
                     f"LR: {optimizer.param_groups[0]['lr']:.2e}",
-                    f"Train Loss: {np.mean(train_loss):.3f}", 
-                    f"Test Loss: {np.mean(test_loss):.3f}",
+                    f"Train Loss: {train_loss_mean:.3f}",
+                    f"Test Loss: {test_loss_mean:.3f}",
                     f'Accuracy: {train_acc*100:.1f}%, {test_acc*100:.1f}%'
                 ]
             
-            if last_loss < np.mean(train_loss) and early_stopping:
-                break
-            last_loss = np.mean(train_loss)
+            should_stop = last_loss < train_loss_mean and early_stopping
+            last_loss = train_loss_mean
             
-            res = {"TrainLoss": np.mean(train_loss),
-                    "TestLoss": np.mean(test_loss),
-                    "TrainAcc": train_acc,
-                    "TestAcc": test_acc,
+            res = {"TrainLoss": train_loss_mean,
+                    "TestLoss": test_loss_mean,
+                    "TrainAcc": float(train_acc),
+                    "TestAcc": float(test_acc),
                     "BestTestAcc": max(best_test_acc, test_acc),
                     "BestEpoch": best_epoch}
 
@@ -238,13 +371,15 @@ class MiCoModel(nn.Module):
                 res["BestEpoch"] = best_epoch
                 if best_checkpoint_path is not None:
                     torch.save({
-                        "model": copy.deepcopy(self.state_dict()),
+                        "model": evaluated_state,
                         "epoch": best_epoch,
                         "metrics": dict(res),
                     }, best_checkpoint_path)
             
             if verbose: 
                 print(" ".join(log))
+            if should_stop:
+                break
         
         return res
     

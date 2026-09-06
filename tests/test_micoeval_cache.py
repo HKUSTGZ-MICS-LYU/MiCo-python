@@ -60,6 +60,14 @@ class TestMiCoEvalCache(unittest.TestCase):
         with self.assertRaises(ValueError):
             evaluator.eval([9, 9], offline=True)
 
+    def test_live_eval_can_bypass_cached_value(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            cache_path = os.path.join(tmpdir, "cache.json")
+            evaluator = _build_eval(cache_path, "json")
+            self.assertEqual(evaluator.eval([1, 2]), 3)
+            evaluator.eval_f = lambda scheme: 99
+            self.assertEqual(evaluator.eval([1, 2], use_cache=False), 99)
+
     def test_json_cache_concurrent_process_writes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             cache_path = os.path.join(tmpdir, "cache.json")
