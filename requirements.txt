@@ -1,5 +1,7 @@
 torch>=2.0.0
 torchvision>=0.15.0
+timm>=0.9.0
+tilelang>=0.1.10
 botorch>=0.9.0
 gekko>=1.0.0
 matplotlib>=3.5.0
