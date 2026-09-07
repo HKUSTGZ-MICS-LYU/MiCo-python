@@ -17,8 +17,20 @@ from MiCoUtils import (
     replace_quantize_layers,
     replace_quantize_attn_layers,
     replace_quantize_layers_torchao)
+from MiCoPruning import (
+    AttentionPruningResult,
+    AttentionPruningSpec,
+    CompressionScheme,
+    PruningSpec,
+    PruningResult,
+    apply_attention_pruning,
+    apply_pruning,
+)
+from MiCoPasses import build_compression_pipeline, normalize_compression_order
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+
 class MiCoFunc:
     def __init__(self, name, input_names=[], params=[]):
         self.name = name
@@ -122,6 +134,100 @@ class MiCoModel(nn.Module):
             set_to_qforward(self)
         return
     
+    def set_pruning(
+        self,
+        pscheme=None,
+        pruning_mode="structured",
+        materialize=True,
+    ) -> PruningResult:
+        """Materialize a pruning scheme in the current process state.
+
+        ``pscheme`` is a layer-order sequence or a qualified-path mapping. A
+        ``PruningSpec`` can be passed when non-default metadata is needed.
+        The model is updated in place, matching the existing ``set_qscheme``
+        convention; use ``apply_pruning`` for a copied model.
+        """
+        if isinstance(pscheme, PruningSpec):
+            spec = pscheme
+        else:
+            spec = PruningSpec(
+                ratios=() if pscheme is None else pscheme,
+                mode=pruning_mode,
+                materialize=materialize,
+            )
+        _, result = apply_pruning(self, spec, inplace=True)
+        self.n_layers = len(self.get_qlayers())
+        return result
+
+    def set_attention_pruning(
+        self,
+        pscheme=None,
+        pruning_mode="heads",
+        materialize=True,
+    ) -> AttentionPruningResult:
+        """Materialize attention head/group pruning in the current process state."""
+        if isinstance(pscheme, AttentionPruningSpec):
+            spec = pscheme
+        else:
+            spec = AttentionPruningSpec(
+                ratios=() if pscheme is None else pscheme,
+                mode=pruning_mode,
+                materialize=materialize,
+            )
+        _, result = apply_attention_pruning(self, spec, inplace=True)
+        return result
+
+    def set_compression_scheme(
+        self,
+        qscheme=None,
+        pscheme=None,
+        pruning_mode="none",
+        materialize=True,
+        attention_pscheme=None,
+        attention_pruning_mode="none",
+        attention_materialize=True,
+        order="prune_then_quantize",
+        attention_qscheme=None,
+        attention_qkwargs=None,
+        **qkwargs,
+    ) -> PruningResult | AttentionPruningResult | dict | None:
+        """Apply pruning and precision in an explicitly selected order.
+
+        ``order`` accepts ``"prune_then_quantize"`` (the default) or
+        ``"quantize_then_prune"``.  The latter preserves the quantized layer
+        classes and qtype state, ranks with effective Qweight, and rebuilds their reduced dense weights.
+        ``attention_qscheme`` is optional and uses the existing attention
+        precision API when supplied.
+        """
+        scheme_pruning = None
+        scheme_attention_pruning = None
+        if isinstance(qscheme, CompressionScheme):
+            scheme_pruning = qscheme.pruning
+            scheme_attention_pruning = qscheme.attention_pruning
+            qscheme = [list(qscheme.weight_bits), list(qscheme.activation_bits)]
+        if pscheme is None and scheme_pruning is not None:
+            pscheme = scheme_pruning
+        if attention_pscheme is None and scheme_attention_pruning is not None:
+            attention_pscheme = scheme_attention_pruning
+
+        pipeline = build_compression_pipeline(
+            qscheme=qscheme,
+            pscheme=pscheme,
+            pruning_mode=pruning_mode,
+            materialize=materialize,
+            attention_pscheme=attention_pscheme,
+            attention_pruning_mode=attention_pruning_mode,
+            attention_materialize=attention_materialize,
+            order=normalize_compression_order(order),
+            attention_qscheme=attention_qscheme,
+            attention_qkwargs=attention_qkwargs,
+            qkwargs=qkwargs,
+        )
+        pass_results = pipeline.apply(self)
+        if len(pass_results) == 2:
+            return pass_results
+        return next(iter(pass_results.values()), None)
+
     def unset_qscheme(self):
         unset_qforward(self)
         return
@@ -397,3 +503,44 @@ def from_torch(model: torch.nn.Module, n_layers: int = -1):
     print(f"Model with {model.n_layers} layers wrapped to MiCoModel.")
 
     return model
+
+
+def apply_compression(
+    model: MiCoModel,
+    qscheme=None,
+    pscheme=None,
+    attention_pscheme=None,
+    *,
+    order="prune_then_quantize",
+    pruning_mode="none",
+    materialize=True,
+    attention_pruning_mode="none",
+    attention_materialize=True,
+    attention_qscheme=None,
+    attention_qkwargs=None,
+    inplace=False,
+    **qkwargs,
+):
+    """Apply pruning and precision to a model in a selected order.
+
+    This is the functional counterpart to ``MiCoModel.set_compression_scheme``.
+    By default it returns an isolated model copy, which is convenient for
+    comparing both orders or evaluating multiple candidates.
+    """
+    if not isinstance(model, MiCoModel):
+        raise TypeError("apply_compression expects a MiCoModel instance")
+    target = model if inplace else copy.deepcopy(model)
+    result = target.set_compression_scheme(
+        qscheme=qscheme,
+        pscheme=pscheme,
+        pruning_mode=pruning_mode,
+        materialize=materialize,
+        attention_pscheme=attention_pscheme,
+        attention_pruning_mode=attention_pruning_mode,
+        attention_materialize=attention_materialize,
+        order=order,
+        attention_qscheme=attention_qscheme,
+        attention_qkwargs=attention_qkwargs,
+        **qkwargs,
+    )
+    return target, result

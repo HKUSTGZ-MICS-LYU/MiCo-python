@@ -1,4 +1,9 @@
 from MiCoModel import MiCoModel
+from MiCoPruning import (
+    PruningError,
+    attention_pruning_statistics as _attention_pruning_statistics,
+    sparsity_statistics,
+)
 
 import torch
 import numpy as np
@@ -55,3 +60,56 @@ def per_layer_weight_sparsity(model: MiCoModel, eps = 1e-3):
         sparsities.append(sparsity)
     sparsities = np.array(sparsities)
     return sparsities
+
+
+def pruning_statistics(model: MiCoModel) -> dict:
+    """Return structural pruning statistics attached by ``MiCoPruning``."""
+    try:
+        return sparsity_statistics(model)
+    except PruningError:
+        return {
+            "mode": "none",
+            "granularity": "channel",
+            "pattern": "l1",
+            "original_params": 0,
+            "remaining_params": 0,
+            "global_sparsity": 0.0,
+            "layers": [],
+        }
+
+
+def attention_pruning_statistics(model: MiCoModel) -> dict:
+    """Return structural attention head/group pruning statistics."""
+    try:
+        return _attention_pruning_statistics(model)
+    except PruningError:
+        return {
+            "mode": "none",
+            "granularity": "head",
+            "pattern": "l1",
+            "original_params": 0,
+            "remaining_params": 0,
+            "global_sparsity": 0.0,
+            "original_heads": 0,
+            "remaining_heads": 0,
+            "head_sparsity": 0.0,
+            "layers": [],
+        }
+
+
+def per_layer_attention_head_sparsity(model: MiCoModel) -> np.ndarray:
+    """Return realized KV-group sparsity for each attention module."""
+    stats = attention_pruning_statistics(model)
+    return np.asarray(
+        [layer["realized_ratio"] for layer in stats["layers"]],
+        dtype=float,
+    )
+
+
+def per_layer_structural_sparsity(model: MiCoModel) -> np.ndarray:
+    """Return realized output-channel sparsity for each pruned layer."""
+    stats = pruning_statistics(model)
+    return np.asarray(
+        [layer["realized_ratio"] for layer in stats["layers"]],
+        dtype=float,
+    )

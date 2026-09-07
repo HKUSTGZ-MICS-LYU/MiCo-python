@@ -103,11 +103,77 @@ def __replace_layer_torchao(model: nn.Module,
         if isinstance(module, nn.Linear):
             weight_type = weight_types_list.pop(0)
             act_type = act_types_list.pop(0)
+            if _is_fp_precision(weight_type, act_type):
+                _mark_fp_layer(module, weight_type, act_type)
+                continue
             quantize_(module, torchao_quantize(weight_type, act_type), 
                       device=device)
         else:
             __replace_layer_torchao(
                 module, weight_types_list, act_types_list, device)
+
+
+def _is_fp_precision(weight_type, act_type):
+    """Treat W32A32 as the explicit no-quantization sentinel."""
+    return float(weight_type) == 32.0 and float(act_type) == 32.0
+
+
+def _mark_fp_layer(module: nn.Module, weight_type, act_type):
+    module._mico_no_quantize = True
+    module._mico_weight_bits = weight_type
+    module._mico_activation_bits = act_type
+    return module
+
+
+def _restore_fp_layer(module: nn.Module):
+    """Convert an existing MiCo layer back to its native FP module."""
+    if isinstance(module, BitLinear):
+        restored = nn.Linear(
+            module.in_features,
+            module.out_features,
+            bias=module.bias is not None,
+            device=module.weight.device,
+            dtype=module.weight.dtype,
+        )
+    elif isinstance(module, BitConv2d):
+        restored = nn.Conv2d(
+            module.in_channels,
+            module.out_channels,
+            module.kernel_size,
+            stride=module.stride,
+            padding=module.padding,
+            dilation=module.dilation,
+            groups=module.groups,
+            bias=module.bias is not None,
+            padding_mode=module.padding_mode,
+            device=module.weight.device,
+            dtype=module.weight.dtype,
+        )
+    elif isinstance(module, BitConv1d):
+        restored = nn.Conv1d(
+            module.in_channels,
+            module.out_channels,
+            module.kernel_size,
+            stride=module.stride,
+            padding=module.padding,
+            dilation=module.dilation,
+            groups=module.groups,
+            bias=module.bias is not None,
+            padding_mode=module.padding_mode,
+            device=module.weight.device,
+            dtype=module.weight.dtype,
+        )
+    else:
+        return _mark_fp_layer(module, 32, 32)
+    with torch.no_grad():
+        restored.weight.copy_(module.weight)
+        if module.bias is not None:
+            restored.bias.copy_(module.bias)
+    restored.weight.requires_grad_(module.weight.requires_grad)
+    if module.bias is not None:
+        restored.bias.requires_grad_(module.bias.requires_grad)
+    restored.train(module.training)
+    return _mark_fp_layer(restored, 32, 32)
 
 
 def replace_quantize_layers(model: nn.Module,
@@ -426,6 +492,12 @@ def __replace_layer(model: nn.Module,
         if isinstance(module, nn.Linear):
             weight_type = weight_types_list.pop(0)
             act_type = act_types_list.pop(0)
+            if _is_fp_precision(weight_type, act_type):
+                if isinstance(module, BitLinear):
+                    setattr(model, name, _restore_fp_layer(module))
+                else:
+                    _mark_fp_layer(module, weight_type, act_type)
+                continue
             weights = module.weight
             bias = module.bias
             has_bias = True if (use_bias) and (module.bias is not None) else False
@@ -442,6 +514,12 @@ def __replace_layer(model: nn.Module,
         elif isinstance(module, nn.Conv2d):
             weight_type = weight_types_list.pop(0)
             act_type = act_types_list.pop(0)
+            if _is_fp_precision(weight_type, act_type):
+                if isinstance(module, BitConv2d):
+                    setattr(model, name, _restore_fp_layer(module))
+                else:
+                    _mark_fp_layer(module, weight_type, act_type)
+                continue
             weights = module.weight
             bias = module.bias
             has_bias = True if (use_bias) and (module.bias is not None) else False
@@ -459,6 +537,12 @@ def __replace_layer(model: nn.Module,
         elif isinstance(module, nn.Conv1d):
             weight_type = weight_types_list.pop(0)
             act_type = act_types_list.pop(0)
+            if _is_fp_precision(weight_type, act_type):
+                if isinstance(module, BitConv1d):
+                    setattr(model, name, _restore_fp_layer(module))
+                else:
+                    _mark_fp_layer(module, weight_type, act_type)
+                continue
             weights = module.weight
             bias = module.bias
             has_bias = True if (use_bias) and (module.bias is not None) else False
@@ -525,6 +609,9 @@ def get_model_size(model: nn.Module):
             params = module.get_params()
             if params:
                 size += params * module.qtype
+        elif isinstance(module, (nn.Linear, nn.Conv1d, nn.Conv2d)):
+            # Native FP layers represent the W32A32 sentinel.
+            size += module.weight.numel() * 32
         else:
             size += get_model_size(module)
     return size

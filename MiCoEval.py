@@ -1,6 +1,7 @@
 import torch
 from torchvision.models import get_model
 from torch.utils.data.dataloader import DataLoader
+from torch import nn
 
 import numpy as np
 
@@ -22,9 +23,19 @@ except ImportError:
 from tqdm import tqdm
 
 from MiCoModel import MiCoModel, from_torch
-from MiCoQLayers import BitConv2d, BitLinear
+from MiCoPasses import normalize_compression_order
+from MiCoQLayers import BitConv1d, BitConv2d, BitLinear
 from MiCoCodeGen import MiCoCodeGen
 from MiCoUtils import fuse_model
+from MiCoPruning import (
+    AttentionPruningSpec,
+    PruningSpec,
+    apply_attention_pruning,
+    apply_pruning,
+    build_attention_pruning_plan,
+    build_pruning_plan,
+    discover_attention_layers,
+)
 from SimUtils import gen_sim_bitfusion, sim_mico, run_host
 
 from copy import deepcopy
@@ -43,7 +54,12 @@ class MiCoEval:
                  objective='ptq_acc',
                  constraint='bops',
                  linear_group_size = 0,
-                 output_json='output/json/mico_eval.json') -> None:
+                 output_json='output/json/mico_eval.json',
+                  pruning_mode="none",
+                  pruning_types=None,
+                  attention_pruning_mode="none",
+                  attention_pruning_types=None,
+                  order="prune_then_quantize") -> None:
         
         self.model = model
         self.epochs = epochs
@@ -52,17 +68,53 @@ class MiCoEval:
         self.pretrained_model = pretrained_model
         self.group_size = linear_group_size
         self.lr = lr
+        self.pruning_mode = pruning_mode
+        self.pruning_types = list(pruning_types or [0.0, 0.25, 0.5, 0.75])
+        self.attention_pruning_mode = attention_pruning_mode
+        self.attention_pruning_types = list(
+            attention_pruning_types or [0.0, 0.25, 0.5, 0.75]
+        )
+        self.compression_order = normalize_compression_order(order)
 
         self.from_torch = isinstance(model, str)  # If model is a string, load from torchvision
 
         self.load_pretrain()
+        self.base_model = deepcopy(self.model)
+        self.pruning_dim = (
+            self.model.n_layers if pruning_mode != "none" else 0
+        ) if hasattr(self.model, "n_layers") else 0
+        self.n_attn_pruning_layers = (
+            len(discover_attention_layers(self.base_model))
+            if attention_pruning_mode != "none"
+            else 0
+        )
+        self.attention_pruning_dim = self.n_attn_pruning_layers
+        self.pruning_choices_by_dim = []
+        if self.pruning_dim:
+            pruning_choices = list(self.pruning_types)
+            if 0.0 not in pruning_choices:
+                pruning_choices.append(0.0)
+            self.pruning_choices_by_dim = [list(pruning_choices) for _ in range(self.pruning_dim)]
+            # The structured channel pruner protects the final classifier output.
+            self.pruning_choices_by_dim[-1] = [0.0]
+        attention_choices = list(self.attention_pruning_types)
+        if 0.0 not in attention_choices:
+            attention_choices.append(0.0)
+        self.attention_pruning_choices_by_dim = [
+            list(attention_choices)
+            for _ in range(self.attention_pruning_dim)
+        ]
+        if self.pruning_dim and pruning_mode not in {"structured"}:
+            raise ValueError("MiCoEval only supports structured pruning mode")
+        if self.attention_pruning_dim and attention_pruning_mode not in {"heads"}:
+            raise ValueError("MiCoEval only supports attention heads pruning mode")
         print("Pretrained Model Loaded.")
 
         self.output_json = output_json
         self.cache_format = 'csv' if str(self.output_json).lower().endswith('.csv') else 'json'
         self.model_name = model_name
         self.n_layers = self.model.n_layers
-        self.dim = self.n_layers * 2
+        self.dim = self.n_layers * 2 + self.pruning_dim + self.attention_pruning_dim
         
         self.data_trace = self._load_data_trace()
         
@@ -77,7 +129,12 @@ class MiCoEval:
         self.baseline_acc = res
         self.layers = self.model.get_qlayers()
         assert self.n_layers > 0, "No QLayer found! Please convert the model first."
-        
+        self.layer_paths = [
+            path for path, layer in self.model.named_modules()
+            if isinstance(layer, (nn.Conv1d, nn.Conv2d, nn.Linear))
+        ]
+        if len(self.layer_paths) != self.n_layers:
+            raise ValueError("quantizable layer path traversal does not match n_layers")
         self.layer_macs = [layer.get_mac() for layer in self.layers]
         self.layer_params = [layer.get_params() for layer in self.layers]
         self.layer_type = [type(layer) for layer in self.layers]
@@ -115,7 +172,9 @@ class MiCoEval:
         return layer_info
 
     def _scheme_to_key(self, scheme: list):
-        return ",".join(str(int(x)) for x in scheme)
+        if not (getattr(self, "pruning_dim", 0) or getattr(self, "attention_pruning_dim", 0)):
+            return ",".join(str(int(x)) for x in scheme)
+        return ",".join(f"{float(x):.12g}" for x in scheme)
 
     def _cache_lock_path(self):
         return f"{self.output_json}.lock"
@@ -330,61 +389,206 @@ class MiCoEval:
     def set_mico_target(self, mico_type: str):
         self.mico_target = mico_type
 
+    def _split_scheme(self, scheme: list):
+        values = list(scheme)
+        if len(values) == self.n_layers * 2 and self.dim != self.n_layers * 2:
+            values.extend([0.0] * (self.dim - self.n_layers * 2))
+        if len(values) != self.dim:
+            raise ValueError(
+                f"expected compression scheme length {self.dim}, got {len(values)}"
+            )
+        weight = values[:self.n_layers]
+        activation = values[self.n_layers:self.n_layers * 2]
+        cursor = self.n_layers * 2
+        pruning = values[cursor:cursor + self.pruning_dim]
+        cursor += self.pruning_dim
+        attention_pruning = values[cursor:cursor + self.attention_pruning_dim]
+        return weight, activation, pruning, attention_pruning
+
+    def _candidate_from_scheme(self, scheme: list, *, qat=False, quantize=True):
+        weight, activation, pruning, attention_pruning = self._split_scheme(scheme)
+        candidate = deepcopy(self.base_model)
+        pruning_result = None
+        attention_result = None
+        already_quantized = False
+
+        if quantize and (self.pruning_dim or self.attention_pruning_dim):
+            result = candidate.set_compression_scheme(
+                qscheme=[weight, activation],
+                pscheme=pruning if self.pruning_dim else None,
+                pruning_mode=self.pruning_mode,
+                attention_pscheme=attention_pruning if self.attention_pruning_dim else None,
+                attention_pruning_mode=self.attention_pruning_mode,
+                order=self.compression_order,
+                qat=qat,
+                group_size=self.group_size,
+            )
+            already_quantized = True
+            if isinstance(result, dict):
+                pruning_result = result.get("pruning")
+                attention_result = result.get("attention_pruning")
+            elif self.pruning_dim:
+                pruning_result = result
+            else:
+                attention_result = result
+        else:
+            if self.pruning_dim:
+                candidate, pruning_result = apply_pruning(
+                    candidate,
+                    PruningSpec(ratios=pruning, mode=self.pruning_mode),
+                )
+            if self.attention_pruning_dim:
+                candidate, attention_result = apply_attention_pruning(
+                    candidate,
+                    AttentionPruningSpec(
+                        ratios=attention_pruning,
+                        mode=self.attention_pruning_mode,
+                    ),
+                )
+        return (
+            candidate,
+            weight,
+            activation,
+            pruning_result,
+            attention_result,
+            already_quantized,
+        )
+
     def eval_fp(self):
-        self.model.unset_qscheme()
+        if self.pruning_dim or self.attention_pruning_dim:
+            self.model = deepcopy(self.base_model)
+        else:
+            self.model.unset_qscheme()
         return self.model.test(self.test_loader)
 
     def eval_ptq_loss(self, scheme: list):
-        wq = scheme[:self.n_layers]
-        aq = scheme[self.n_layers:]
-        # self.load_pretrain()
-        self.model.set_qscheme([wq, aq], group_size=self.group_size)
+        candidate, wq, aq, _, _, already_quantized = self._candidate_from_scheme(scheme)
+        if not already_quantized:
+            candidate.set_qscheme([wq, aq], group_size=self.group_size)
+        self.model = candidate
         return self.model.test(self.test_loader)['TestLoss']
 
     def eval_ptq(self, scheme: list):
-        wq = scheme[:self.n_layers]
-        aq = scheme[self.n_layers:]
-        # self.load_pretrain()
-        self.model.set_qscheme([wq, aq], group_size=self.group_size)
+        candidate, wq, aq, _, _, already_quantized = self._candidate_from_scheme(scheme)
+        if not already_quantized:
+            candidate.set_qscheme([wq, aq], group_size=self.group_size)
+        self.model = candidate
         return self.model.test(self.test_loader)['TestAcc']
     
     def eval_qat(self, scheme: list, epochs: int = None):
         if epochs is None:
             epochs = self.epochs
-        wq = scheme[:self.n_layers]
-        aq = scheme[self.n_layers:]
-        self.load_pretrain()
-        self.model.set_qscheme([wq, aq], qat=True, group_size=self.group_size)
-        self.model.train_loop(epochs, self.train_loader, self.test_loader, 
+        candidate, wq, aq, _, _, already_quantized = self._candidate_from_scheme(
+            scheme, qat=True
+        )
+        if not already_quantized:
+            candidate.set_qscheme([wq, aq], qat=True, group_size=self.group_size)
+        self.model = candidate
+        self.model.train_loop(epochs, self.train_loader, self.test_loader,
                               verbose=True, lr=self.lr)
         return self.model.test(self.test_loader)['TestAcc']
     
     def eval_torchao(self, scheme: list):
-        wq = scheme[:self.n_layers]
-        aq = scheme[self.n_layers:]
-        # self.load_pretrain()
-        self.model.set_qscheme_torchao([wq, aq])
+        if self.compression_order == "quantize_then_prune" and (
+            self.pruning_dim or self.attention_pruning_dim
+        ):
+            raise ValueError(
+                "TorchAO does not expose MiCo Qweight for quantize_then_prune"
+            )
+        candidate, wq, aq, _, _, _ = self._candidate_from_scheme(
+            scheme, quantize=False
+        )
+        candidate.set_qscheme_torchao([wq, aq])
+        self.model = candidate
         return self.model.test(self.test_loader)['TestAcc']
+
+    def _candidate_costs(self, scheme: list):
+        """Estimate costs after optional channel/head materialization.
+
+        Cost evaluation is kept analytical so near-constraint sampling does not
+        deep-copy, quantize, and run hundreds of temporary models.  The same
+        shape ratios are used by the materializers and are exact for dense
+        Conv/Linear MAC and weight counts.
+        """
+        if not (self.pruning_dim or self.attention_pruning_dim):
+            return np.array(self.layer_macs, dtype=float), np.array(self.layer_params, dtype=float), self.layers
+        cache_key = self._scheme_to_key(scheme)
+        cached = getattr(self, "_cost_cache", {}).get(cache_key)
+        if cached is not None:
+            return cached
+
+        macs = np.array(self.layer_macs, dtype=float)
+        params = np.array(self.layer_params, dtype=float)
+        path_to_index = {path: index for index, path in enumerate(self.layer_paths)}
+        base_modules = dict(self.base_model.named_modules())
+
+        if self.pruning_dim:
+            pruning = self._split_scheme(scheme)[2]
+            plan = build_pruning_plan(
+                self.base_model,
+                PruningSpec(ratios=pruning, mode=self.pruning_mode),
+            )
+            for layer in plan.layers:
+                index = path_to_index[layer.path]
+                input_size, output_size = layer.module.weight.shape[1], layer.module.weight.shape[0]
+                input_ratio = len(layer.input_indices) / input_size
+                output_ratio = len(layer.output_indices) / output_size
+                macs[index] *= input_ratio * output_ratio
+                params[index] = layer.module.weight.numel() * input_ratio * output_ratio
+
+        if self.attention_pruning_dim:
+            attention = self._split_scheme(scheme)[3]
+            plan = build_attention_pruning_plan(
+                self.base_model,
+                AttentionPruningSpec(ratios=attention, mode=self.attention_pruning_mode),
+            )
+            for layer in plan.layers:
+                layout_modules = {
+                    "q": base_modules[layer.q_path],
+                    "k": base_modules[layer.k_path],
+                    "v": base_modules[layer.v_path],
+                    "output": base_modules[layer.output_path],
+                }
+                projection_data = (
+                    (layer.q_path, layout_modules["q"], len(layer.query_heads) * layer.head_dim,
+                     layout_modules["q"].out_features),
+                    (layer.k_path, layout_modules["k"], len(layer.kv_heads) * layer.head_dim,
+                     layout_modules["k"].out_features),
+                    (layer.v_path, layout_modules["v"], len(layer.kv_heads) * layer.head_dim,
+                     layout_modules["v"].out_features),
+                    (layer.output_path, layout_modules["output"], len(layer.query_heads) * layer.head_dim,
+                     layout_modules["output"].in_features),
+                )
+                for path, module, kept_width, original_width in projection_data:
+                    index = path_to_index[path]
+                    ratio = kept_width / original_width
+                    macs[index] *= ratio
+                    params[index] = module.weight.numel() * ratio
+
+        result = (macs, params, self.layers)
+        if not hasattr(self, "_cost_cache"):
+            self._cost_cache = {}
+        self._cost_cache[cache_key] = result
+        return result
 
     # Classic Bit Operation Counts
     def eval_bops(self, scheme: list):
-        bops = 0
-        wq = np.array(scheme[:self.n_layers])
-        aq = np.array(scheme[self.n_layers:])
-        bops = np.dot(wq*aq, self.layer_macs)
-        return bops
+        wq, aq, _, _ = self._split_scheme(scheme)
+        macs, _, _ = self._candidate_costs(scheme)
+        return float(np.dot(np.array(wq) * np.array(aq), macs))
     
     def eval_cbops(self, scheme: list):
         return float(np.sum(self.eval_cbops_feat(scheme)))
 
     def eval_cbops_feat(self, scheme: list, layer_type=None):
         """Return aggregated 3D CBOPs features: [BMACS, W_LOADS, A_LOADS]."""
-        wq = np.array(scheme[:self.n_layers])
-        aq = np.array(scheme[self.n_layers:])
-        macs = np.array(self.layer_macs)
+        wq, aq, _, _ = self._split_scheme(scheme)
+        wq = np.array(wq)
+        aq = np.array(aq)
+        macs, _, layers = self._candidate_costs(scheme)
 
         if layer_type is not None:
-            mask = np.array([isinstance(layer, layer_type) for layer in self.layers])
+            mask = np.array([isinstance(layer, layer_type) for layer in layers])
             wq = wq[mask]
             aq = aq[mask]
             macs = macs[mask]
@@ -397,21 +601,23 @@ class MiCoEval:
 
     def eval_pred_latency(self, scheme: list):
 
-        wq = np.array(scheme[:self.n_layers])
-        aq = np.array(scheme[self.n_layers:])
+        wq, aq, _, _ = self._split_scheme(scheme)
+        wq = np.array(wq)
+        aq = np.array(aq)
+        macs, _, layers = self._candidate_costs(scheme)
 
         # Batch layers by type for vectorized prediction
         conv2d_features = []
         linear_features = []
         for i in range(self.n_layers):
-            if isinstance(self.layers[i], BitConv2d):
+            if isinstance(layers[i], BitConv2d):
                 feat = self._proxy_layer_feature(
-                    self.conv2d_proxy, i, aq[i], wq[i]
+                    self.conv2d_proxy, i, aq[i], wq[i], layers=layers, macs=macs
                 )
                 conv2d_features.append(feat)
-            elif isinstance(self.layers[i], BitLinear):
+            elif isinstance(layers[i], BitLinear):
                 feat = self._proxy_layer_feature(
-                    self.matmul_proxy, i, aq[i], wq[i]
+                    self.matmul_proxy, i, aq[i], wq[i], layers=layers, macs=macs
                 )
                 linear_features.append(feat)
 
@@ -424,11 +630,12 @@ class MiCoEval:
         pred_latency = self.slope * pred_latency + self.intercept
         return pred_latency
 
-    def _proxy_layer_feature(self, proxy, layer_idx: int, aq, wq):
-        macs = self.layer_macs[layer_idx]
+    def _proxy_layer_feature(self, proxy, layer_idx: int, aq, wq, layers=None, macs=None):
+        source_layers = self.layers if layers is None else layers
+        layer_macs = source_layers[layer_idx].get_mac() if macs is None else macs[layer_idx]
         if self._proxy_accepts_macs_bitwidth_only(proxy):
-            return [macs, aq, wq]
-        return [macs] + self.layer_features[layer_idx] + [aq, wq]
+            return [layer_macs, aq, wq]
+        return [layer_macs] + source_layers[layer_idx].layer_features + [aq, wq]
 
     def _proxy_accepts_macs_bitwidth_only(self, proxy) -> bool:
         preprocess_name = getattr(proxy, "preprocess_name", None)
@@ -455,27 +662,37 @@ class MiCoEval:
         return min_real, max_real
 
     def eval_size(self, scheme:list):
-        size = 0
-        wq = np.array(scheme[:self.n_layers])
-        size = np.dot(wq, self.layer_params)
-        return size
+        wq, _, _, _ = self._split_scheme(scheme)
+        _, params, _ = self._candidate_costs(scheme)
+        return float(np.dot(np.array(wq), params))
 
     def eval_latency(self, scheme: list, target: str = 'bitfusion'):
 
-        wq = scheme[:self.n_layers]
-        aq = scheme[self.n_layers:]
-
+        if target == "torchao":
+            if self.compression_order == "quantize_then_prune" and (
+                self.pruning_dim or self.attention_pruning_dim
+            ):
+                raise ValueError(
+                    "TorchAO does not expose MiCo Qweight for quantize_then_prune"
+                )
+            candidate, wq, aq, _, _, already_quantized = self._candidate_from_scheme(
+                scheme, quantize=False
+            )
+        else:
+            candidate, wq, aq, _, _, already_quantized = self._candidate_from_scheme(scheme)
+        gen_model = candidate
         res = -1
-        gen_model = deepcopy(self.model)
         if target == 'bitfusion':
-            gen_model.set_qscheme([wq, aq], group_size=self.group_size)
+            if not already_quantized:
+                gen_model.set_qscheme([wq, aq], group_size=self.group_size)
             self.input_size = self.train_loader.dataset[0][0].shape
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
             res = gen_sim_bitfusion(gen_model, 16, example_input) # Default Batch Size = 16
         elif target == 'mico':
             assert self.mico_target is not None, "MiCo Target not set."
             gen_model = fuse_model(gen_model)
-            gen_model.set_qscheme([wq, aq], group_size=self.group_size)
+            if not already_quantized:
+                gen_model.set_qscheme([wq, aq], group_size=self.group_size)
             codegen = MiCoCodeGen(gen_model)
             self.input_size = self.train_loader.dataset[0][0].shape
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
@@ -487,7 +704,8 @@ class MiCoEval:
 
         elif target == 'host':
             gen_model = fuse_model(gen_model)
-            gen_model.set_qscheme([wq, aq], group_size=self.group_size)
+            if not already_quantized:
+                gen_model.set_qscheme([wq, aq], group_size=self.group_size)
             codegen = MiCoCodeGen(gen_model)
             self.input_size = self.train_loader.dataset[0][0].shape
             example_input = torch.randn(1, *self.input_size).to(DEVICE)
@@ -499,9 +717,9 @@ class MiCoEval:
         elif target == 'proxy':
             res = self.eval_pred_latency(scheme)
         elif target == 'torchao':
-            self.model.set_qscheme_torchao([wq, aq])
+            gen_model.set_qscheme_torchao([wq, aq])
             start_time = time.time()
-            self.model.test(self.test_loader)
+            gen_model.test(self.test_loader)
             end_time = time.time()
             res = end_time - start_time
         else:

@@ -172,7 +172,9 @@ class CausalSelfAttention(nn.Module):
         q = q * self.q_gain.to(dtype=q.dtype)[None, :, None, None]
 
         y = _sdpa_gqa(q, k, v, self.num_heads, self.num_kv_heads)
-        y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, dim)
+        # The projection accepts the packed width after head pruning.  Its
+        # output still returns to ``dim`` for the residual connection.
+        y = y.transpose(1, 2).contiguous().reshape(bsz, seqlen, -1)
         return self.proj(y)
 
 
