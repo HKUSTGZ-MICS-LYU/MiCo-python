@@ -28,6 +28,7 @@ from MiCoDatasets import (
     imagenet,
     uci_har,
     fineweb,
+    fineweb_shards,
     local_mlm_text,
 )
 
@@ -158,19 +159,21 @@ def from_zoo(name: str, shuffle = False, batch_size: int = 32,
     # Parameter Golf GPT models with FineWeb dataset
     elif name == "parameter_golf_gpt" or name == "parameter_golf_gpt_baseline":
         model = ParameterGolfBaseline().to(device)
-        train_loader, test_loader = fineweb(
+        train_loader, test_loader = fineweb_shards(
             batch_size=batch_size,
             max_seq_len=model.config.max_seq_len,
             num_workers=workers,
             shuffle=shuffle,
+            device=device,
         )
     elif name == "parameter_golf_gpt_small":
         model = ParameterGolfSmall().to(device)
-        train_loader, test_loader = fineweb(
+        train_loader, test_loader = fineweb_shards(
             batch_size=batch_size,
             max_seq_len=model.config.max_seq_len,
             num_workers=workers,
             shuffle=shuffle,
+            device=device,
         )
     elif name in ["bert_micro_local", "bert_tiny_local"]:
         model_dict = {

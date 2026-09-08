@@ -827,6 +827,210 @@ def hf_text_dataset(
     
     return train_loader, test_loader
 
+# ---------------------------------------------------------------------------
+# Official Parameter Golf data path (pre-tokenized FineWeb shards, 1024 vocab)
+# ---------------------------------------------------------------------------
+
+_FINEWEB_SHARD_MAGIC = 20240520
+_FINEWEB_SHARD_VERSION = 1
+
+
+def load_fineweb_tokenizer(tokenizer_path=None, vocab_size: int = 1024):
+    """Load the official parameter-golf 1024-vocab SentencePiece tokenizer.
+
+    Returns a SentencePieceProcessor whose vocabulary size is validated
+    against vocab_size (the baseline uses fineweb_1024_bpe.model with
+    vocab 1024, matching ParameterGolfConfig).
+    """
+    if tokenizer_path is None:
+        tokenizer_path = os.environ.get(
+            "TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model"
+        )
+    try:
+        import sentencepiece as spm
+    except ImportError as exc:
+        raise ImportError(
+            "sentencepiece is required for the parameter-golf tokenizer. "
+            "Install with: pip install sentencepiece"
+        ) from exc
+    sp = spm.SentencePieceProcessor(model_file=tokenizer_path)
+    if int(sp.vocab_size()) != vocab_size:
+        raise ValueError(
+            f"vocab_size={vocab_size} does not match tokenizer "
+            f"vocab_size={int(sp.vocab_size())}"
+        )
+    return sp
+
+
+def _load_data_shard(file):
+    """Parse a parameter-golf FineWeb shard (256-int header + uint16 tokens)."""
+    header_bytes = 256 * np.dtype("<i4").itemsize
+    header = np.fromfile(file, dtype="<i4", count=256)
+    if (
+        header.size != 256
+        or int(header[0]) != _FINEWEB_SHARD_MAGIC
+        or int(header[1]) != _FINEWEB_SHARD_VERSION
+    ):
+        raise ValueError(f"Unexpected shard header for {file}")
+    num_tokens = int(header[2])
+    expected_size = header_bytes + num_tokens * np.dtype("<u2").itemsize
+    if file.stat().st_size != expected_size:
+        raise ValueError(
+            f"Shard size mismatch for {file}: expected {expected_size} bytes, "
+            f"got {file.stat().st_size}"
+        )
+    tokens_np = np.fromfile(file, dtype="<u2", count=num_tokens, offset=header_bytes)
+    if tokens_np.size != num_tokens:
+        raise ValueError(f"Short read for {file}")
+    return torch.from_numpy(tokens_np.astype(np.uint16, copy=False)).to(torch.int64)
+
+
+class _TokenStream:
+    """Sequentially streams tokens from the shard list, wrapping around forever."""
+
+    def __init__(self, shard_files):
+        self.files = list(shard_files)
+        self.file_idx = 0
+        self.tokens = _load_data_shard(self.files[0])
+        self.pos = 0
+
+    def _advance_file(self):
+        self.file_idx = (self.file_idx + 1) % len(self.files)
+        self.tokens = _load_data_shard(self.files[self.file_idx])
+        self.pos = 0
+
+    def take(self, n: int):
+        chunks = []
+        remaining = n
+        while remaining > 0:
+            avail = self.tokens.numel() - self.pos
+            if avail <= 0:
+                self._advance_file()
+                continue
+            k = min(remaining, avail)
+            chunks.append(self.tokens[self.pos : self.pos + k])
+            self.pos += k
+            remaining -= k
+        return chunks[0] if len(chunks) == 1 else torch.cat(chunks)
+
+
+class _ShardTextLoader:
+    """Re-iterable loader over pre-tokenized shards, yielding (x, y) batches."""
+
+    def __init__(self, shard_files, batch_size: int, seq_len: int, device=None):
+        from pathlib import Path
+        self.shard_files = [Path(f) for f in sorted(shard_files)]
+        if not self.shard_files:
+            raise FileNotFoundError(f"No FineWeb shards found")
+        self.batch_size = batch_size
+        self.seq_len = seq_len
+        self.device = device
+        self.chunk_len = batch_size * seq_len
+        self.num_tokens = sum(int(_load_data_shard(f).numel()) for f in self.shard_files)
+
+    def __len__(self):
+        return max(1, (self.num_tokens - 1) // self.chunk_len)
+
+    def __iter__(self):
+        stream = _TokenStream(self.shard_files)
+        n = (self.num_tokens - 1) // self.chunk_len
+        for _ in range(n):
+            span = stream.take(self.chunk_len + 1)
+            x = span[:-1].reshape(self.batch_size, self.seq_len)
+            y = span[1:].reshape(self.batch_size, self.seq_len)
+            if self.device is not None:
+                yield x.to(self.device), y.to(self.device)
+            else:
+                yield x, y
+
+
+def fineweb_bpb_luts(sp, vocab_size: int, device):
+    """Build tokenizer-agnostic bits-per-byte lookup tables from an SP model.
+
+    Returns (base_bytes, has_leading_space, is_boundary_token) tensors on
+    device, matching the official build_sentencepiece_luts.
+    """
+    sp_vocab_size = int(sp.vocab_size())
+    table_size = max(sp_vocab_size, vocab_size)
+    base_bytes_np = np.zeros((table_size,), dtype=np.int16)
+    has_leading_space_np = np.zeros((table_size,), dtype=np.bool_)
+    is_boundary_token_np = np.ones((table_size,), dtype=np.bool_)
+    for token_id in range(sp_vocab_size):
+        if sp.is_control(token_id) or sp.is_unknown(token_id) or sp.is_unused(token_id):
+            continue
+        is_boundary_token_np[token_id] = False
+        if sp.is_byte(token_id):
+            base_bytes_np[token_id] = 1
+            continue
+        piece = sp.id_to_piece(token_id)
+        if piece.startswith(chr(9601)):
+            has_leading_space_np[token_id] = True
+            piece = piece[1:]
+        base_bytes_np[token_id] = len(piece.encode("utf-8"))
+    return (
+        torch.tensor(base_bytes_np, dtype=torch.int16, device=device),
+        torch.tensor(has_leading_space_np, dtype=torch.bool, device=device),
+        torch.tensor(is_boundary_token_np, dtype=torch.bool, device=device),
+    )
+
+
+def fineweb_shards(
+    data_path: str = None,
+    tokenizer_path: str = None,
+    batch_size: int = 8,
+    max_seq_len: int = 1024,
+    num_workers: int = 0,
+    shuffle: bool = False,
+    train_glob: str = "fineweb_train_*.bin",
+    val_glob: str = "fineweb_val_*.bin",
+    device=None,
+    **kwargs,
+):
+    """Load the official parameter-golf FineWeb export (pre-tokenized shards).
+
+    Mirrors the challenge's canonical data layout
+    (https://github.com/openai/parameter-golf): uint16 shards
+    fineweb_train_*.bin / fineweb_val_*.bin paired with the 1024-vocab
+    SentencePiece tokenizer fineweb_1024_bpe.model. Returns re-iterable
+    loaders yielding (input_ids, labels) Int tensors of shape
+    (batch_size, max_seq_len) taken from the frozen exported token stream.
+
+    Args:
+        data_path: Directory holding fineweb_train_*.bin / fineweb_val_*.bin.
+        tokenizer_path: SentencePiece .model path.
+        batch_size: Number of sequences per batch.
+        max_seq_len: Sequence length (the baseline uses 1024).
+        num_workers / shuffle: Accepted for API compatibility (the shard stream
+            is deterministic and sequential).
+        device: Optional device to move batches onto.
+    """
+    import glob
+
+    if data_path is None:
+        data_path = os.environ.get("DATA_PATH", "./data/datasets/fineweb10B_sp1024")
+    if tokenizer_path is None:
+        tokenizer_path = os.environ.get("TOKENIZER_PATH", "./data/tokenizers/fineweb_1024_bpe.model")
+
+    train_files = sorted(glob.glob(os.path.join(data_path, train_glob)))
+    val_files = sorted(glob.glob(os.path.join(data_path, val_glob)))
+    if not train_files:
+        raise FileNotFoundError(
+            f"No training shards found at {os.path.join(data_path, train_glob)}. "
+            f"Download the parameter-golf export with e.g. "
+            f"'python data/cached_challenge_fineweb.py --variant sp1024 --train-shards N'."
+        )
+    if not val_files:
+        raise FileNotFoundError(
+            f"No validation shards found at {os.path.join(data_path, val_glob)}."
+        )
+
+    # Validate the 1024-vocab tokenizer before returning (the model uses vocab 1024).
+    load_fineweb_tokenizer(tokenizer_path, vocab_size=1024)
+
+    train_loader = _ShardTextLoader(train_files, batch_size, max_seq_len, device=device)
+    test_loader = _ShardTextLoader(val_files, batch_size, max_seq_len, device=device)
+    return train_loader, test_loader
+
 def fineweb(
     batch_size: int = 8,
     max_seq_len: int = 1024,

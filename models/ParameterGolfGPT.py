@@ -151,6 +151,7 @@ class CausalSelfAttention(nn.Module):
         self.c_k = nn.Linear(dim, kv_dim, bias=False)
         self.c_v = nn.Linear(dim, kv_dim, bias=False)
         self.proj = nn.Linear(dim, dim, bias=False)
+        self.proj._zero_init = True
         self.q_gain = nn.Parameter(
             torch.full((config.num_heads,), config.qk_gain_init, dtype=torch.float32)
         )
@@ -186,6 +187,7 @@ class GolfMLP(nn.Module):
         hidden = config.mlp_mult * config.model_dim
         self.fc = nn.Linear(config.model_dim, hidden, bias=False)
         self.proj = nn.Linear(hidden, config.model_dim, bias=False)
+        self.proj._zero_init = True
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = torch.relu(self.fc(x))
@@ -216,6 +218,90 @@ class Block(nn.Module):
         x = x + self.mlp_scale.to(dtype=x.dtype)[None, None, :] * self.mlp(self.mlp_norm(x))
         return x
 
+
+# ---------------------------------------------------------------------------
+# Official-aligned Muon optimizer (from the parameter-golf train_gpt.py)
+# ---------------------------------------------------------------------------
+
+CONTROL_TENSOR_NAME_PATTERNS = tuple(
+    pattern
+    for pattern in (
+        "attn_scale,attn_scales,mlp_scale,mlp_scales,resid_mix,resid_mixes,"
+        "q_gain,skip_weight,skip_weights"
+    ).split(",")
+    if pattern
+)
+
+
+def _zeropower_via_ns5(G, steps: int = 10, eps: float = 1e-7):
+    """Newton-Schulz orthogonalisation of a matrix update (Muon)."""
+    a, b, c = (3.4445, -4.7750, 2.0315)
+    X = G.bfloat16()
+    X = X / (X.norm() + eps)
+    transposed = G.size(0) > G.size(1)
+    if transposed:
+        X = X.T
+    for _ in range(steps):
+        A = X @ X.T
+        B = b * A + c * A @ A
+        X = a * X + B @ X
+    return X.T if transposed else X
+
+
+class Muon(torch.optim.Optimizer):
+    """Muon optimizer on matrix-shaped parameters, with Newton-Schulz."""
+
+    def __init__(self, params, lr: float, momentum: float, backend_steps: int = 5, nesterov: bool = True):
+        super().__init__(
+            params,
+            dict(lr=lr, momentum=momentum, backend_steps=backend_steps, nesterov=nesterov),
+        )
+
+    @torch.no_grad()
+    def step(self, closure=None):
+        loss = None
+        if closure is not None:
+            with torch.enable_grad():
+                loss = closure()
+        for group in self.param_groups:
+            params = group["params"]
+            if not params:
+                continue
+            lr = group["lr"]
+            momentum = group["momentum"]
+            backend_steps = group["backend_steps"]
+            nesterov = group["nesterov"]
+            for p in params:
+                if p.grad is None:
+                    continue
+                g = p.grad
+                state = self.state[p]
+                if "momentum_buffer" not in state:
+                    state["momentum_buffer"] = torch.zeros_like(g)
+                buf = state["momentum_buffer"]
+                buf.mul_(momentum).add_(g)
+                if nesterov:
+                    g = g.add(buf, alpha=momentum)
+                g = _zeropower_via_ns5(g, steps=backend_steps)
+                g = g * max(1, g.size(0) / g.size(1)) ** 0.5
+                p.add_(g, alpha=-lr)
+        return loss
+
+
+def _split_muon_params(model):
+    """Split model params into Muon (2D matrices) and Adam (scalars) groups."""
+    block_named = list(model.blocks.named_parameters())
+    matrix = [
+        p for name, p in block_named
+        if p.ndim == 2 and not any(pat in name for pat in CONTROL_TENSOR_NAME_PATTERNS)
+    ]
+    scalar = [
+        p for name, p in block_named
+        if p.ndim < 2 or any(pat in name for pat in CONTROL_TENSOR_NAME_PATTERNS)
+    ]
+    if model.skip_weights.numel() > 0:
+        scalar.append(model.skip_weights)
+    return matrix, scalar
 
 class ParameterGolfGPT(MiCoModel):
     """
@@ -256,6 +342,8 @@ class ParameterGolfGPT(MiCoModel):
             if config.tie_embeddings
             else nn.Linear(config.model_dim, config.vocab_size, bias=False)
         )
+        if self.lm_head is not None:
+            self.lm_head._zero_init = True
 
         self._init_weights()
         self.n_layers = len(self.get_qlayers())
@@ -269,6 +357,11 @@ class ParameterGolfGPT(MiCoModel):
             nn.init.normal_(self.tok_emb.weight, mean=0.0, std=0.02)
             if self.lm_head is not None:
                 nn.init.zeros_(self.lm_head.weight)
+        # Match the official parameter-golf baseline: every projection (attention
+        # out, MLP out, untied head) is initialised to zero (see train_gpt.py).
+        for module in self.modules():
+            if isinstance(module, nn.Linear) and getattr(module, "_zero_init", False):
+                nn.init.zeros_(module.weight)
 
     def _compute_logits(self, x: torch.Tensor) -> torch.Tensor:
         if self.config.tie_embeddings:
@@ -347,27 +440,62 @@ class ParameterGolfGPT(MiCoModel):
             idx = torch.cat((idx, idx_next), dim=1)
         return idx
 
-    def test(self, test_loader, n_eval_batches: int = 100):
-        """
-        Evaluate the model on ``test_loader``.
-
-        Returns a dict with ``TestLoss`` (cross-entropy) and ``Perplexity``.
-        """
+    def eval_bpb(self, test_loader, bpb_luts, n_eval_batches: Optional[int] = None) -> float:
+        """Tokenizer-agnostic bits-per-byte on the validation loader (challenge metric)."""
+        base_bytes, has_leading_space, is_boundary = bpb_luts
+        run_device = self.current_device()
         self.eval()
+        n_bytes = 0.0
+        n_tokens = 0
         losses = []
-        with torch.no_grad():
+        with torch.inference_mode():
             for i, (x, y) in enumerate(test_loader):
-                if i >= n_eval_batches:
+                if n_eval_batches is not None and i >= n_eval_batches:
                     break
-                x, y = x.to(device), y.to(device)
-                self(x, y)
+                x, y = x.to(run_device), y.to(run_device)
+                logits = self(x, y)
                 if self.last_loss is not None:
                     losses.append(self.last_loss.item())
+                tgt = y.reshape(-1)
+                token_bytes = base_bytes.to(run_device)[tgt].to(torch.int16)
+                token_bytes = token_bytes + (
+                    has_leading_space.to(run_device)[tgt]
+                    & ~is_boundary.to(run_device)[x.reshape(-1)]
+                ).to(torch.int16)
+                n_bytes += token_bytes.to(torch.float64).sum().item()
+                n_tokens += int(tgt.numel())
+        self.train()
+        if not losses or n_bytes <= 0:
+            return float("nan")
+        val_loss = float(np.mean(losses))
+        return (val_loss / math.log(2.0)) * (n_tokens / n_bytes)
+
+    def test(self, test_loader, n_eval_batches: Optional[int] = 100):
+        """
+        Evaluate the model on test_loader.
+
+        Returns a dict with TestLoss (cross-entropy), TestAcc (token top-1
+        accuracy) and Perplexity, matching the MiCoModel convention consumed
+        by MiCoEval (eval_fp / eval_ptq / eval_qat / eval_torchao).
+        """
+        self.eval()
+        run_device = self.current_device()
+        losses = []
+        accs = []
+        with torch.no_grad():
+            for i, (x, y) in enumerate(test_loader):
+                if n_eval_batches is not None and i >= n_eval_batches:
+                    break
+                x, y = x.to(run_device), y.to(run_device)
+                logits = self(x, y)
+                if self.last_loss is not None:
+                    losses.append(self.last_loss.item())
+                accs.append((logits.argmax(dim=-1) == y).float().mean().item())
         if not losses:
-            return {"TestLoss": float("nan"), "Perplexity": float("nan")}
+            return {"TestLoss": float("nan"), "TestAcc": float("nan"), "Perplexity": float("nan")}
         avg_loss = float(np.mean(losses))
-        perplexity = math.exp(avg_loss)
-        return {"TestLoss": avg_loss, "Perplexity": perplexity}
+        avg_acc = float(np.mean(accs))
+        return {"TestLoss": avg_loss, "TestAcc": avg_acc, "Perplexity": math.exp(avg_loss)}
 
     def train_loop(
         self,
@@ -377,69 +505,107 @@ class ParameterGolfGPT(MiCoModel):
         verbose: bool = False,
         lr: float = 3e-4,
         eval_interval: Optional[int] = None,
+        train_batch_tokens: Optional[int] = None,
+        bpb_luts: Optional[tuple] = None,
+        n_eval_batches: Optional[int] = 100,
+        warmup_iters: int = 0,
+        warmdown_iters: int = 0,
+        grad_clip: Optional[float] = None,
     ):
         """
-        Iterate-based training loop for the language model.
+        Iteration-based training loop aligned with the official parameter-golf
+        baseline (Muon on matrix params + Adam on scalars / embeddings, bf16
+        autocast, gradient accumulation to train_batch_tokens).
 
-        Args:
-            n_iter: Total number of gradient steps.
-            train_loader: DataLoader yielding (input_ids, labels) batches.
-            test_loader: DataLoader used for periodic validation.
-            verbose: Whether to show a tqdm progress bar.
-            lr: Peak learning rate for AdamW.
-            eval_interval: How often (in steps) to run validation.
-                           Defaults to every 10 % of ``n_iter``.
+        The signature is compatible with MiCoEval.eval_qat which calls
+        train_loop(epochs, train_loader, test_loader, verbose=True, lr=...).
 
-        Returns:
-            dict with the final ``TestLoss`` and ``Perplexity``.
+        Returns a dict with TestLoss / TestAcc / Perplexity (and val_bpb when
+        bpb_luts is provided).
         """
         if eval_interval is None:
-            eval_interval = max(n_iter // 10, 50)
+            eval_interval = max(n_iter // 10, 1)
 
-        optimizer = torch.optim.AdamW(self.parameters(), lr=lr)
-        scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, n_iter)
+        run_device = self.current_device()
+        self.train()
+        iterator = iter(train_loader)
+        sample_x, _ = next(iterator)
+        micro_tokens = int(sample_x.numel())
+        if train_batch_tokens is None:
+            train_batch_tokens = micro_tokens
+        grad_accum = max(1, int(math.ceil(train_batch_tokens / micro_tokens)))
+        grad_scale = 1.0 / grad_accum
 
-        train_iter = iter(train_loader)
+        matrix_params, scalar_params = _split_muon_params(self)
+        tied = self.config.tie_embeddings
+        token_lr = 0.05 if tied else lr
+        optimizer_tok = torch.optim.Adam(
+            [{"params": [self.tok_emb.weight], "lr": token_lr, "base_lr": token_lr}],
+            betas=(0.9, 0.95), eps=1e-8,
+        )
+        optimizer_muon = Muon(matrix_params, lr=0.04, momentum=0.95, backend_steps=5)
+        for g in optimizer_muon.param_groups:
+            g["base_lr"] = 0.04
+        optimizer_scalar = torch.optim.Adam(
+            [{"params": scalar_params, "lr": 0.04, "base_lr": 0.04}],
+            betas=(0.9, 0.95), eps=1e-8,
+        )
+        optimizers = [optimizer_tok, optimizer_muon, optimizer_scalar]
+
+        it = iter(train_loader)
 
         def get_batch():
-            nonlocal train_iter
+            nonlocal it
             try:
-                return next(train_iter)
+                return next(it)
             except StopIteration:
-                train_iter = iter(train_loader)
-                return next(train_iter)
+                it = iter(train_loader)
+                return next(it)
 
-        self.train()
-        iters = tqdm(range(n_iter), disable=not verbose)
-        running_loss = float("inf")
-        for iter_num in iters:
-            iters.set_description(f"Step {iter_num} Loss: {running_loss:.4f}")
+        def zero_grad_all():
+            for opt in optimizers:
+                opt.zero_grad(set_to_none=True)
 
-            if iter_num % eval_interval == 0:
-                results = self.test(test_loader, n_eval_batches=50)
-                print(
-                    f"step {iter_num}: val_loss {results['TestLoss']:.4f}, "
-                    f"perplexity {results['Perplexity']:.2f}"
+        use_amp = run_device.type == "cuda"
+        running = float("inf")
+        for step in range(1, n_iter + 1):
+            zero_grad_all()
+            loss_sum = 0.0
+            for _ in range(grad_accum):
+                x, y = get_batch()
+                x, y = x.to(run_device), y.to(run_device)
+                if use_amp:
+                    with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                        logits = self(x, y)
+                        loss = F.cross_entropy(logits.float().reshape(-1, logits.size(-1)), y.reshape(-1))
+                else:
+                    logits = self(x, y)
+                    loss = F.cross_entropy(logits.float().reshape(-1, logits.size(-1)), y.reshape(-1))
+                loss_sum += loss.item()
+                (loss * grad_scale).backward()
+            for opt in optimizers:
+                opt.step()
+            running = loss_sum / grad_accum
+
+            if step % eval_interval == 0 or step == n_iter:
+                results = self.test(test_loader, n_eval_batches=n_eval_batches)
+                msg = (
+                    f"step {step}/{n_iter}: train_loss {running:.4f} "
+                    f"val_loss {results['TestLoss']:.4f} val_acc {results['TestAcc']:.4f}"
                 )
+                if bpb_luts is not None:
+                    msg += f" val_bpb {self.eval_bpb(test_loader, bpb_luts, n_eval_batches=n_eval_batches):.4f}"
+                print(msg)
                 self.train()
 
-            x, y = get_batch()
-            x, y = x.to(device), y.to(device)
-
-            optimizer.zero_grad(set_to_none=True)
-            self(x, y)
-            loss = self.last_loss
-            loss.backward()
-            optimizer.step()
-            scheduler.step()
-            running_loss = loss.item()
-
-        final_results = self.test(test_loader, n_eval_batches=100)
+        results = self.test(test_loader, n_eval_batches=n_eval_batches)
         print(
-            f"Final: val_loss {final_results['TestLoss']:.4f}, "
-            f"perplexity {final_results['Perplexity']:.2f}"
+            f"Final: val_loss {results['TestLoss']:.4f}, "
+            f"val_acc {results['TestAcc']:.4f}, "
+            f"perplexity {results['Perplexity']:.2f}"
         )
-        return final_results
+        results["TrainLoss"] = running
+        return results
 
 
 # ---------------------------------------------------------------------------
