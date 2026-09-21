@@ -35,6 +35,7 @@ from MiCoPruning import (
     build_attention_pruning_plan,
     build_pruning_plan,
     discover_attention_layers,
+    prunable_head_indices,
 )
 from SimUtils import gen_sim_bitfusion, sim_mico, run_host
 
@@ -95,8 +96,15 @@ class MiCoEval:
             if 0.0 not in pruning_choices:
                 pruning_choices.append(0.0)
             self.pruning_choices_by_dim = [list(pruning_choices) for _ in range(self.pruning_dim)]
-            # The structured channel pruner protects the final classifier output.
-            self.pruning_choices_by_dim[-1] = [0.0]
+            # Only residual-safe channel groups may carry a nonzero ratio; for
+            # sequential models this is every layer except the protected output.
+            head_indices = prunable_head_indices(self.base_model)
+            if head_indices is None:
+                self.pruning_choices_by_dim[-1] = [0.0]
+            else:
+                for index in range(self.pruning_dim):
+                    if index not in head_indices:
+                        self.pruning_choices_by_dim[index] = [0.0]
         attention_choices = list(self.attention_pruning_types)
         if 0.0 not in attention_choices:
             attention_choices.append(0.0)
@@ -136,6 +144,7 @@ class MiCoEval:
         if len(self.layer_paths) != self.n_layers:
             raise ValueError("quantizable layer path traversal does not match n_layers")
         self.layer_macs = [layer.get_mac() for layer in self.layers]
+        self.pruning_layer_macs = list(self.layer_macs)
         self.layer_params = [layer.get_params() for layer in self.layers]
         self.layer_type = [type(layer) for layer in self.layers]
         self.layer_features = [layer.layer_features for layer in self.layers]
